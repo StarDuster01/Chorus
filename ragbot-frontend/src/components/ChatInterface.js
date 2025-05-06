@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Row, Col, Form, Button, Card, Spinner, Alert } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, Card, Spinner, Alert, Dropdown, Modal } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import botService from '../services/botService';
-import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaProjectDiagram } from 'react-icons/fa';
-import MermaidDiagram from './MermaidDiagram';
+import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt } from 'react-icons/fa';
 
 const ChatInterface = () => {
   const { botId } = useParams();
@@ -20,9 +19,19 @@ const ChatInterface = () => {
   const [debugInfo, setDebugInfo] = useState(null);
   const [imageAttachment, setImageAttachment] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [flowchartData, setFlowchartData] = useState(null);
-  const [loadingFlowchart, setLoadingFlowchart] = useState(false);
   const [lastMessageContent, setLastMessageContent] = useState('');
+  
+  // Add state for image generation mode
+  const [imageGenMode, setImageGenMode] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
+  const [imageGenPrompt, setImageGenPrompt] = useState('');
+  const [, setGeneratedImage] = useState(null);
+  
+  // Add state for model chorus
+  const [useModelChorus, setUseModelChorus] = useState(false);
+  const [availableChorus, setAvailableChorus] = useState([]);
+  const [selectedChorusId, setSelectedChorusId] = useState('');
+  const [showChorusDropdown, setShowChorusDropdown] = useState(false);
 
   useEffect(() => {
     // Fetch bot details
@@ -32,6 +41,12 @@ const ChatInterface = () => {
         const foundBot = bots.find(b => b.id === botId);
         if (foundBot) {
           setBot(foundBot);
+          
+          // If bot has a chorus associated with it, enable model chorus by default
+          if (foundBot.chorus_id) {
+            setUseModelChorus(true);
+            setSelectedChorusId(foundBot.chorus_id);
+          }
           
           // Check dataset status
           try {
@@ -43,6 +58,9 @@ const ChatInterface = () => {
           } catch (statusErr) {
             console.error('Error checking dataset status:', statusErr);
           }
+
+          // Load available chorus configurations
+          loadChorusConfigurations();
         } else {
           setError('Bot not found');
           setTimeout(() => navigate('/bots'), 3000);
@@ -54,6 +72,33 @@ const ChatInterface = () => {
     
     loadBot();
   }, [botId, navigate]);
+
+  const loadChorusConfigurations = async () => {
+    try {
+      // Load all bots to get their choruses
+      const bots = await botService.getBots();
+      const configs = [];
+      
+      // Try to load chorus configs for each bot
+      for (const bot of bots) {
+        try {
+          const config = await botService.getChorusConfig(bot.id);
+          configs.push({
+            ...config,
+            id: bot.id,
+            botId: bot.id,
+            botName: bot.name
+          });
+        } catch (err) {
+          // No chorus config for this bot - just skip it
+        }
+      }
+      
+      setAvailableChorus(configs);
+    } catch (err) {
+      console.error('Failed to load chorus configs:', err);
+    }
+  };
 
   useEffect(() => {
     // Scroll to bottom whenever messages change
@@ -91,13 +136,34 @@ const ChatInterface = () => {
     }
   };
 
+  const handleSelectChorus = async (chorusId) => {
+    setSelectedChorusId(chorusId);
+    setUseModelChorus(true);
+    setShowChorusDropdown(false);
+    
+    // Optionally update the bot's associated chorus
+    try {
+      await botService.setBotChorus(botId, chorusId);
+    } catch (err) {
+      console.error('Error setting bot chorus:', err);
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     
     if (loading) return;
+    
+    // Handle image generation mode
+    if (imageGenMode) {
+      if (!imageGenPrompt.trim()) return;
+      await handleGenerateImage();
+      return;
+    }
+    
     if (!message.trim() && !imageAttachment) return;
     
-    // Store the message for flowchart generation if needed later
+    // Store the message for later use if needed
     const currentMessage = message.trim();
     setLastMessageContent(currentMessage);
     
@@ -148,8 +214,11 @@ const ChatInterface = () => {
         // Clear image attachment
         removeImage();
       } else {
+        // Use selected chorus ID if available
+        const effectiveChorusId = selectedChorusId || (bot && bot.chorus_id) || '';
+        
         // Send text-only message
-        response = await botService.chatWithBot(botId, currentMessage, debugMode);
+        response = await botService.chatWithBot(botId, currentMessage, debugMode, useModelChorus, effectiveChorusId);
       }
       
       // Add bot response to chat
@@ -165,11 +234,6 @@ const ChatInterface = () => {
       // Store debug info if in debug mode
       if (debugMode && response.debug) {
         setDebugInfo(response.debug);
-        
-        // Generate flowchart for the debug visualization
-        if (currentMessage) {
-          generateFlowchart(currentMessage);
-        }
       }
       
       // Update lastMessageContent
@@ -184,48 +248,103 @@ const ChatInterface = () => {
     }
   };
 
-  const formatTime = (date) => {
-    return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const generateFlowchart = async (messageToAnalyze) => {
-    if (!messageToAnalyze || !messageToAnalyze.trim() || loadingFlowchart) return;
+  // Add function to handle image generation
+  const handleGenerateImage = async () => {
+    if (!imageGenPrompt.trim() || generatingImage) return;
     
-    console.log("Generating flowchart for message:", messageToAnalyze);
-    setLoadingFlowchart(true);
-    setFlowchartData(null); // Clear any existing flowchart
+    setGeneratingImage(true);
     
     try {
-      const response = await botService.generateDebugFlowchart(botId, messageToAnalyze);
-      
-      // Validate response structure
-      if (!response || !response.mermaid_code || !response.data) {
-        console.error("Invalid flowchart response format:", response);
-        throw new Error("Received invalid flowchart data from server");
-      }
-      
-      console.log("Successfully generated flowchart");
-      
-      // Ensure the flowchart data is properly formatted with all necessary components
-      const responseData = {
-        ...response,
-        data: {
-          ...response.data,
-          // Default any missing data to prevent UI errors
-          votes: response.data.votes || [0, 0, 0, 0, 0],
-          responses: response.data.responses || [],
-          logs: response.data.logs || []
-        }
+      // Add user prompt to chat
+      const newUserMessage = {
+        id: Date.now(),
+        sender: 'user',
+        content: `Generate image: ${imageGenPrompt}`,
+        timestamp: new Date()
       };
       
-      setFlowchartData(responseData);
+      setMessages(prev => [...prev, newUserMessage]);
+      
+      // Call image generation API
+      const result = await botService.generateImage(imageGenPrompt, {
+        model: "gpt-image-1",
+        size: "1024x1024",
+        quality: "medium"
+      });
+      
+      if (result.image_url) {
+        const fullUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000' + result.image_url;
+        setGeneratedImage(fullUrl);
+        
+        // Add bot response with the generated image
+        const botMessage = {
+          id: Date.now(),
+          sender: 'bot',
+          content: (
+            <div>
+              <p>Here's the generated image:</p>
+              <img 
+                src={fullUrl} 
+                alt="AI Generated" 
+                style={{ maxHeight: '300px', maxWidth: '100%', borderRadius: '8px' }} 
+              />
+              <div className="mt-2">
+                <a 
+                  href={fullUrl} 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  className="btn btn-sm btn-outline-primary"
+                >
+                  Open Full Size
+                </a>
+                <Button 
+                  variant="outline-secondary" 
+                  size="sm" 
+                  className="ms-2"
+                  onClick={() => {
+                    // Clear prompt but stay in image gen mode
+                    setImageGenPrompt('');
+                  }}
+                >
+                  Generate Another
+                </Button>
+              </div>
+            </div>
+          ),
+          timestamp: new Date()
+        };
+        
+        setMessages(prev => [...prev, botMessage]);
+      }
     } catch (err) {
-      console.error('Failed to generate flowchart:', err);
-      // Don't display the error in the UI since this is a secondary feature
-      // Just log it to console for debugging
+      console.error('Error generating image:', err);
+      
+      // Add error message
+      const errorMessage = {
+        id: Date.now(),
+        sender: 'bot',
+        content: `Sorry, I couldn't generate that image: ${err.message || 'Unknown error'}`,
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
-      setLoadingFlowchart(false);
+      setGeneratingImage(false);
+      setImageGenPrompt('');
+      scrollToBottom();
     }
+  };
+  
+  // Toggle between chat and image generation mode
+  const toggleImageGenMode = () => {
+    setImageGenMode(!imageGenMode);
+    if (imageGenMode) {
+      setImageGenPrompt('');
+    }
+  };
+
+  const formatTime = (date) => {
+    return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -282,7 +401,7 @@ const ChatInterface = () => {
                           {debugInfo.contexts.map((ctx, idx) => (
                             <div key={idx} className="debug-context-item">
                               <strong>Context {idx + 1}:</strong>
-                              <p className="mb-0">{ctx.substring(0, 150)}...</p>
+                              <p className="mb-0">{typeof ctx === 'string' ? ctx.substring(0, 150) : JSON.stringify(ctx).substring(0, 150)}...</p>
                             </div>
                           ))}
                         </div>
@@ -296,8 +415,8 @@ const ChatInterface = () => {
                           <div className="debug-content">
                             {debugInfo.all_responses.map((resp, idx) => (
                               <div key={idx} className="debug-response-item">
-                                <strong>Response {idx + 1} (Votes: {debugInfo.votes[idx]})</strong>
-                                <p className="mb-0">{resp.substring(0, 100)}...</p>
+                                <strong>Response {idx + 1} (Votes: {debugInfo.votes[idx]}) - {resp.provider} {resp.model}</strong>
+                                <p className="mb-0">{typeof resp === 'string' ? resp.substring(0, 100) : (resp.response && typeof resp.response === 'string' ? resp.response.substring(0, 100) : JSON.stringify(resp).substring(0, 100))}...</p>
                               </div>
                             ))}
                           </div>
@@ -318,72 +437,6 @@ const ChatInterface = () => {
                           </div>
                         </div>
                       )}
-                      
-                      {/* Add the flowchart section */}
-                      <div className="debug-section">
-                        <div className="debug-header">
-                          <span><FaProjectDiagram className="me-2" />Decision Process Flowchart</span>
-                        </div>
-                        <div className="debug-content">
-                          {loadingFlowchart ? (
-                            <div className="text-center p-4">
-                              <Spinner animation="border" size="sm" className="me-2" />
-                              <span>Generating flowchart...</span>
-                            </div>
-                          ) : flowchartData ? (
-                            <div className="flowchart-container">
-                              <MermaidDiagram chart={flowchartData.mermaid_code} />
-                              
-                              {/* Add response comparison */}
-                              <div className="mt-4">
-                                <h6>Response Comparison</h6>
-                                <div className="response-comparison">
-                                  {flowchartData.data.responses.map((response, idx) => {
-                                    // Find winner index - handle possible array emptiness
-                                    const votes = flowchartData.data.votes || [0, 0, 0, 0, 0];
-                                    const maxVotes = Math.max(...votes);
-                                    const winnerIndices = votes.map((v, i) => v === maxVotes ? i : -1).filter(i => i !== -1);
-                                    const isWinner = winnerIndices.includes(idx);
-                                    
-                                    return (
-                                      <div 
-                                        key={idx} 
-                                        className={`response-item ${isWinner ? 'winner' : ''}`}
-                                      >
-                                        <h6>Response {idx + 1} (Votes: {votes[idx] || 0})</h6>
-                                        <p>{response.substring(0, 150)}...</p>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                              
-                              {/* Add button to regenerate flowchart if needed */}
-                              <div className="text-center mt-3">
-                                <Button 
-                                  variant="outline-secondary" 
-                                  size="sm" 
-                                  onClick={() => generateFlowchart(lastMessageContent)}
-                                  disabled={loadingFlowchart}
-                                >
-                                  {loadingFlowchart ? (
-                                    <>
-                                      <Spinner animation="border" size="sm" className="me-1" />
-                                      Regenerating...
-                                    </>
-                                  ) : (
-                                    <>Regenerate Flowchart</>
-                                  )}
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-center p-4 text-muted">
-                              <p>Flowchart will appear here after a response</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
                     </>
                   ) : (
                     <div className="p-4 text-center text-muted">
@@ -421,6 +474,13 @@ const ChatInterface = () => {
                     title={debugMode ? "Disable Debug Mode" : "Enable Debug Mode"}
                   >
                     <FaBug />
+                  </Button>
+                  <Button
+                    variant="outline-primary"
+                    onClick={() => setShowChorusDropdown(true)}
+                    title="Change Model Chorus"
+                  >
+                    <FaExchangeAlt className="me-1" /><FaUsers />
                   </Button>
                 </div>
               </Card.Header>
@@ -461,65 +521,160 @@ const ChatInterface = () => {
               </Card.Body>
               
               <Card.Footer className="p-3">
+                {/* Mode toggle buttons */}
+                <div className="mb-2 d-flex justify-content-between align-items-center">
+                  <div>
+                    <Button 
+                      variant={imageGenMode ? "outline-primary" : "primary"} 
+                      size="sm" 
+                      className="me-2" 
+                      onClick={() => {
+                        setImageGenMode(false);
+                        removeImage();
+                      }}
+                      title="Text Chat Mode"
+                    >
+                      <FaRobot className="me-1" /> Chat
+                    </Button>
+                    <Button 
+                      variant={imageGenMode ? "primary" : "outline-primary"} 
+                      size="sm" 
+                      className="me-2"
+                      onClick={toggleImageGenMode}
+                      title="Image Generation Mode"
+                    >
+                      <FaMagic className="me-1" /> Generate Images
+                    </Button>
+                    <Dropdown className="d-inline-block me-2">
+                      <Dropdown.Toggle
+                        variant={useModelChorus ? "primary" : "outline-primary"}
+                        size="sm"
+                        id="dropdown-chorus"
+                        title={useModelChorus ? `Using Model Chorus${selectedChorusId ? `: ${availableChorus.find(c => c.id === selectedChorusId)?.name || ''}` : ''}` : "Enable Model Chorus"}
+                      >
+                        <FaUsers className="me-1" /> Model Chorus
+                      </Dropdown.Toggle>
+
+                      <Dropdown.Menu>
+                        <Dropdown.Header>Select Model Chorus</Dropdown.Header>
+                        {availableChorus.length === 0 ? (
+                          <Dropdown.Item disabled>No chorus configurations found</Dropdown.Item>
+                        ) : (
+                          availableChorus.map(chorus => (
+                            <Dropdown.Item 
+                              key={chorus.id} 
+                              active={selectedChorusId === chorus.id}
+                              onClick={() => handleSelectChorus(chorus.id)}
+                            >
+                              {chorus.name} - {chorus.botName}
+                            </Dropdown.Item>
+                          ))
+                        )}
+                        <Dropdown.Divider />
+                        <Dropdown.Item onClick={() => setUseModelChorus(false)}>
+                          <FaTimes className="me-1" /> Disable Model Chorus
+                        </Dropdown.Item>
+                        <Dropdown.Item onClick={() => setShowChorusDropdown(true)}>
+                          <FaExchangeAlt className="me-1" /> Change Chorus
+                        </Dropdown.Item>
+                      </Dropdown.Menu>
+                    </Dropdown>
+                  </div>
+                  <div>
+                    <Button
+                      variant={debugMode ? "danger" : "outline-danger"}
+                      size="sm"
+                      onClick={() => setDebugMode(!debugMode)}
+                      title={debugMode ? "Disable Debug Mode" : "Enable Debug Mode"}
+                    >
+                      <FaBug />
+                    </Button>
+                  </div>
+                </div>
+                
                 <Form onSubmit={handleSendMessage}>
-                  {imagePreview && (
-                    <div className="image-preview mb-3 position-relative">
-                      <img 
-                        src={imagePreview} 
-                        alt="Preview" 
-                        style={{ maxHeight: '150px', maxWidth: '100%', borderRadius: '8px' }} 
+                  {imageGenMode ? (
+                    <Form.Group className="mb-3">
+                      <Form.Label>Describe the image you want to generate</Form.Label>
+                      <Form.Control
+                        as="textarea"
+                        rows={3}
+                        value={imageGenPrompt}
+                        onChange={(e) => setImageGenPrompt(e.target.value)}
+                        placeholder="Describe the image you want to create..."
+                        disabled={generatingImage}
                       />
-                      <Button 
-                        variant="danger" 
-                        size="sm" 
-                        className="position-absolute" 
-                        style={{ top: '5px', right: '5px', borderRadius: '50%', padding: '4px 8px' }}
-                        onClick={removeImage}
-                      >
-                        <FaTimes />
-                      </Button>
-                    </div>
+                    </Form.Group>
+                  ) : (
+                    <>
+                      {imageAttachment && (
+                        <div className="mb-3 position-relative d-inline-block">
+                          <img 
+                            src={imagePreview} 
+                            alt="Preview" 
+                            style={{ 
+                              maxHeight: '100px', 
+                              maxWidth: '200px', 
+                              borderRadius: '8px',
+                              border: '1px solid #ddd' 
+                            }} 
+                          />
+                          <Button 
+                            variant="danger" 
+                            size="sm" 
+                            className="position-absolute top-0 end-0" 
+                            style={{ margin: '5px' }}
+                            onClick={removeImage}
+                          >
+                            <FaTimes />
+                          </Button>
+                        </div>
+                      )}
+                    
+                      <div className="d-flex gap-2">
+                        <Form.Control
+                          type="text"
+                          value={message}
+                          onChange={(e) => setMessage(e.target.value)}
+                          placeholder="Type your message..."
+                          disabled={loading}
+                        />
+                        
+                        <Button 
+                          variant="outline-secondary"
+                          onClick={() => fileInputRef.current?.click()}
+                          title="Attach Image"
+                        >
+                          <FaImage />
+                        </Button>
+                        
+                        <Form.Control
+                          type="file"
+                          ref={fileInputRef}
+                          accept="image/*"
+                          className="d-none"
+                          onChange={handleImageSelect}
+                        />
+                      </div>
+                    </>
                   )}
-                  <Row className="align-items-center">
-                    <Col xs={9}>
-                      <Form.Control
-                        type="text"
-                        placeholder="Type your message..."
-                        value={message}
-                        onChange={(e) => setMessage(e.target.value)}
-                        disabled={loading}
-                        className="rounded-pill"
-                      />
-                    </Col>
-                    <Col xs={1} className="p-0 text-center">
-                      <Button 
-                        variant="outline-secondary" 
-                        className="rounded-circle p-2" 
-                        onClick={() => fileInputRef.current.click()}
-                        disabled={loading}
-                        title="Attach image"
-                      >
-                        <FaImage />
-                      </Button>
-                      <Form.Control
-                        type="file"
-                        accept="image/*"
-                        ref={fileInputRef}
-                        style={{ display: 'none' }}
-                        onChange={handleImageSelect}
-                      />
-                    </Col>
-                    <Col xs={2}>
-                      <Button 
-                        variant="primary" 
-                        type="submit" 
-                        className="w-100 rounded-pill" 
-                        disabled={loading || (!message.trim() && !imageAttachment)}
-                      >
-                        Send
-                      </Button>
-                    </Col>
-                  </Row>
+                  
+                  <div className="mt-3 d-flex justify-content-end">
+                    <Button 
+                      variant="primary" 
+                      type="submit" 
+                      disabled={loading || generatingImage || (imageGenMode && !imageGenPrompt.trim()) || (!imageGenMode && !message.trim() && !imageAttachment)}
+                    >
+                      {loading || generatingImage ? (
+                        <>
+                          <Spinner as="span" animation="border" size="sm" className="me-2" />
+                          {imageGenMode ? 'Generating...' : 'Sending...'}
+                        </>
+                      ) : (
+                        imageGenMode ? 'Generate Image' : 'Send'
+                      )}
+                    </Button>
+                  </div>
                 </Form>
               </Card.Footer>
             </Card>
@@ -529,6 +684,51 @@ const ChatInterface = () => {
         <div className="text-center my-5">
           {!error && <Spinner animation="border" variant="primary" />}
         </div>
+      )}
+
+      {/* Add the Chorus Selection Modal */}
+      {bot && (
+        <Modal show={showChorusDropdown} onHide={() => setShowChorusDropdown(false)}>
+          <Modal.Header closeButton>
+            <Modal.Title>Change Chorus for {bot.name}</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <Form.Group>
+              <Form.Label>Select a Chorus</Form.Label>
+              <Form.Select
+                value={selectedChorusId}
+                onChange={(e) => setSelectedChorusId(e.target.value)}
+              >
+                <option value="">No Chorus (Standard Mode)</option>
+                {availableChorus.map(chorus => (
+                  <option key={chorus.id} value={chorus.id}>
+                    {chorus.name} ({chorus.response_model_count || 0} models, {chorus.evaluator_model_count || 0} evaluators)
+                  </option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowChorusDropdown(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="primary" 
+              onClick={async () => {
+                try {
+                  await botService.setBotChorus(botId, selectedChorusId);
+                  setUseModelChorus(selectedChorusId !== '');
+                  setShowChorusDropdown(false);
+                } catch (err) {
+                  console.error('Error setting chorus:', err);
+                  setError('Error setting chorus configuration');
+                }
+              }}
+            >
+              Save Changes
+            </Button>
+          </Modal.Footer>
+        </Modal>
       )}
     </Container>
   );

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Container, Row, Col, Form, ListGroup, Badge, Alert, Spinner } from 'react-bootstrap';
+import { Card, Button, Container, Row, Col, Form, ListGroup, Badge, Alert, Spinner, Modal, Dropdown } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import botService from '../services/botService';
-import { FaRobot, FaPlus, FaTimes, FaDatabase, FaComment } from 'react-icons/fa';
+import { FaRobot, FaPlus, FaTimes, FaDatabase, FaComment, FaUsers, FaTrash, FaExchangeAlt } from 'react-icons/fa';
 
 const BotPanel = () => {
   const [bots, setBots] = useState([]);
   const [datasets, setDatasets] = useState([]);
+  const [chorusConfigs, setChorusConfigs] = useState([]);
+  const [availableChoruses, setAvailableChoruses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -15,15 +17,32 @@ const BotPanel = () => {
   const [newBot, setNewBot] = useState({
     name: '',
     dataset_id: '',
+    chorus_id: '',
     system_instruction: 'You are a helpful AI assistant. Answer questions based on the provided context.'
   });
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [botToDelete, setBotToDelete] = useState(null);
+  const [showChorusModal, setShowChorusModal] = useState(false);
+  const [botToChangeChorus, setBotToChangeChorus] = useState(null);
+  const [selectedChorusId, setSelectedChorusId] = useState('');
   
   const navigate = useNavigate();
 
   useEffect(() => {
     loadBots();
     loadDatasets();
+    loadChorusConfigs();
+    loadAvailableChoruses();
   }, []);
+
+  const loadAvailableChoruses = async () => {
+    try {
+      const choruses = await botService.getAllChoruses();
+      setAvailableChoruses(choruses);
+    } catch (err) {
+      console.error('Failed to load available choruses:', err);
+    }
+  };
 
   const loadBots = async () => {
     setLoading(true);
@@ -46,6 +65,94 @@ const BotPanel = () => {
     }
   };
 
+  const loadChorusConfigs = async () => {
+    try {
+      // Load all bots to get their IDs
+      const botsData = await botService.getBots();
+      const configs = [];
+      
+      // Try to load chorus configs for each bot
+      for (const bot of botsData) {
+        try {
+          const config = await botService.getChorusConfig(bot.id);
+          configs.push({
+            ...config,
+            id: bot.id, // Use the bot ID as the chorus config ID
+            botId: bot.id,
+            botName: bot.name
+          });
+        } catch (err) {
+          // No chorus config for this bot - just skip it
+        }
+      }
+      
+      setChorusConfigs(configs);
+    } catch (err) {
+      console.error('Failed to load chorus configs:', err);
+    }
+  };
+
+  const handleDeleteBot = async () => {
+    if (!botToDelete) return;
+    
+    setLoading(true);
+    try {
+      await botService.deleteBot(botToDelete.id);
+      setBots(bots.filter(bot => bot.id !== botToDelete.id));
+      setShowDeleteModal(false);
+      setBotToDelete(null);
+      setSuccess('Bot deleted successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError('Failed to delete bot');
+      console.error('Error deleting bot:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleChangeChorus = async () => {
+    if (!botToChangeChorus) return;
+    
+    setLoading(true);
+    try {
+      await botService.setBotChorus(botToChangeChorus.id, selectedChorusId);
+      
+      // Update the bot in the local state
+      const updatedBots = bots.map(bot => {
+        if (bot.id === botToChangeChorus.id) {
+          return { ...bot, chorus_id: selectedChorusId };
+        }
+        return bot;
+      });
+      
+      setBots(updatedBots);
+      setShowChorusModal(false);
+      setBotToChangeChorus(null);
+      setSelectedChorusId('');
+      setSuccess('Chorus updated successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError('Failed to update chorus');
+      console.error('Error updating chorus:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmDeleteBot = (bot, e) => {
+    e.stopPropagation();
+    setBotToDelete(bot);
+    setShowDeleteModal(true);
+  };
+
+  const showChangeChorusModal = (bot, e) => {
+    e.stopPropagation();
+    setBotToChangeChorus(bot);
+    setSelectedChorusId(bot.chorus_id || '');
+    setShowChorusModal(true);
+  };
+
   const handleCreateBot = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -56,6 +163,7 @@ const BotPanel = () => {
       setNewBot({
         name: '',
         dataset_id: '',
+        chorus_id: '',
         system_instruction: 'You are a helpful AI assistant. Answer questions based on the provided context.'
       });
       setSuccess('Bot created successfully!');
@@ -80,6 +188,33 @@ const BotPanel = () => {
     });
   };
 
+  const handleCreateNewChorus = () => {
+    // First save the bot, then redirect to chorus creation
+    if (newBot.name && newBot.dataset_id) {
+      handleCreateBot({ preventDefault: () => {} });
+      
+      // Navigate to chorus configuration after bot is created
+      // This needs to be improved to wait for bot creation
+      setTimeout(() => {
+        // Get the list of bots again to ensure we have the newly created one
+        botService.getBots().then(updatedBots => {
+          // Find the created bot (should be the most recently created one)
+          const createdBot = updatedBots[updatedBots.length - 1];
+          if (createdBot) {
+            // Show the change chorus modal directly
+            setBotToChangeChorus(createdBot);
+            setSelectedChorusId(createdBot.chorus_id || '');
+            setShowChorusModal(true);
+          }
+        }).catch(err => {
+          console.error('Error getting updated bots:', err);
+        });
+      }, 1000);
+    } else {
+      setError('Please fill in the bot name and select a dataset first');
+    }
+  };
+
   return (
     <Container className="my-5">
       <div className="d-flex justify-content-between align-items-center mb-4">
@@ -95,6 +230,53 @@ const BotPanel = () => {
       
       {error && <Alert variant="danger" onClose={() => setError(null)} dismissible>{error}</Alert>}
       {success && <Alert variant="success" onClose={() => setSuccess(null)} dismissible>{success}</Alert>}
+
+      <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Confirm Deletion</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          Are you sure you want to delete the bot "{botToDelete?.name}"? This action cannot be undone.
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={handleDeleteBot} disabled={loading}>
+            {loading ? <Spinner animation="border" size="sm" /> : <><FaTrash className="me-1" /> Delete</>}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal show={showChorusModal} onHide={() => setShowChorusModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Change Chorus for {botToChangeChorus?.name}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form.Group>
+            <Form.Label>Select a Chorus</Form.Label>
+            <Form.Select
+              value={selectedChorusId}
+              onChange={(e) => setSelectedChorusId(e.target.value)}
+            >
+              <option value="">No Chorus (Standard Mode)</option>
+              {availableChoruses.map(chorus => (
+                <option key={chorus.id} value={chorus.id}>
+                  {chorus.name} ({chorus.response_model_count} models, {chorus.evaluator_model_count} evaluators)
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowChorusModal(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleChangeChorus} disabled={loading}>
+            {loading ? <Spinner animation="border" size="sm" /> : 'Save Changes'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       {createMode && (
         <Card className="mb-4 border-0 shadow-sm">
@@ -138,6 +320,42 @@ const BotPanel = () => {
                 </Col>
               </Row>
 
+              <Row>
+                <Col md={12}>
+                  <Form.Group className="mb-3">
+                    <Form.Label>
+                      <FaUsers className="me-1" /> Model Chorus Configuration
+                    </Form.Label>
+                    <div className="d-flex">
+                      <Form.Select
+                        name="chorus_id"
+                        value={newBot.chorus_id}
+                        onChange={handleInputChange}
+                        className="rounded-pill me-2"
+                      >
+                        <option value="">No Model Chorus (optional)</option>
+                        {chorusConfigs.map(config => (
+                          <option key={config.id} value={config.id}>
+                            {config.name} - {config.botName}
+                          </option>
+                        ))}
+                      </Form.Select>
+                      <Button 
+                        variant="outline-primary" 
+                        className="rounded-pill"
+                        onClick={() => navigate('/chorus')}
+                      >
+                        Browse
+                      </Button>
+                    </div>
+                    <Form.Text className="text-muted">
+                      A Model Chorus combines multiple AI models to produce higher quality responses.
+                      You can select an existing configuration or create a new one after saving your bot.
+                    </Form.Text>
+                  </Form.Group>
+                </Col>
+              </Row>
+
               <Form.Group className="mb-3">
                 <Form.Label>System Instructions</Form.Label>
                 <Form.Control
@@ -155,6 +373,13 @@ const BotPanel = () => {
               </Form.Group>
 
               <div className="d-flex justify-content-end">
+                <Button 
+                  variant="outline-primary" 
+                  className="px-4 rounded-pill me-2"
+                  onClick={handleCreateNewChorus}
+                >
+                  Create Bot & Change Chorus
+                </Button>
                 <Button variant="success" type="submit" disabled={loading} className="px-4 rounded-pill">
                   {loading ? <><Spinner as="span" animation="border" size="sm" /> Creating...</> : 'Create Bot'}
                 </Button>
@@ -203,6 +428,12 @@ const BotPanel = () => {
                             <p className="mb-3 text-muted small">
                               <FaDatabase className="me-1" />
                               {datasets.find(d => d.id === bot.dataset_id)?.name || 'Unknown dataset'}
+                              {bot.chorus_id && (
+                                <Badge className="ms-2" bg="info">
+                                  <FaUsers className="me-1" />
+                                  Model Chorus
+                                </Badge>
+                              )}
                             </p>
                           </div>
                           <div className="bot-icon">
@@ -210,20 +441,40 @@ const BotPanel = () => {
                           </div>
                         </div>
                         <Card.Text className="small text-truncate">
-                          {bot.system_instruction.substring(0, 100)}...
+                          {typeof bot.system_instruction === 'string' 
+                            ? bot.system_instruction.substring(0, 100) 
+                            : (bot.system_instruction 
+                              ? String(bot.system_instruction).substring(0, 100) 
+                              : 'No system instruction')}...
                         </Card.Text>
                       </Card.Body>
                       <Card.Footer className="bg-white border-top-0">
-                        <Button 
-                          variant="primary" 
-                          className="w-100 rounded-pill"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectBot(bot);
-                          }}
-                        >
-                          <FaComment className="me-1" /> Chat Now
-                        </Button>
+                        <div className="d-flex justify-content-between">
+                          <Button 
+                            variant="primary" 
+                            className="rounded-pill flex-grow-1 me-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectBot(bot);
+                            }}
+                          >
+                            <FaComment className="me-1" /> Chat Now
+                          </Button>
+                          <Button 
+                            variant="outline-danger" 
+                            className="rounded-pill me-1"
+                            onClick={(e) => confirmDeleteBot(bot, e)}
+                          >
+                            <FaTrash className="me-1" />
+                          </Button>
+                          <Button 
+                            variant="outline-secondary" 
+                            className="rounded-pill"
+                            onClick={(e) => showChangeChorusModal(bot, e)}
+                          >
+                            <FaExchangeAlt className="me-1" />
+                          </Button>
+                        </div>
                       </Card.Footer>
                     </Card>
                   </Col>

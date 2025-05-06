@@ -10,6 +10,9 @@ import DatasetPanel from './components/DatasetPanel';
 import ChatInterface from './components/ChatInterface';
 import Login from './components/Login';
 import Register from './components/Register';
+import ImageGeneration from './components/ImageGeneration';
+import ModelChorusConfig from './components/ModelChorusConfig';
+import ModelChorusManagement from './components/ModelChorusManagement';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -49,8 +52,8 @@ function App() {
         <Navbar bg="custom-primary" variant="dark" expand="lg">
           <Container>
             <Navbar.Brand as={Link} to="/">
-              <img src={logo} alt="RAGBot Logo" />
-              RAGBot
+              <img src={logo} alt="Chorus Logo" />
+              Chorus <span style={{ fontSize: '0.7em', fontWeight: 'normal', opacity: 0.7 }}>Viridity Technologies</span>
             </Navbar.Brand>
             <Navbar.Toggle aria-controls="basic-navbar-nav" />
             <Navbar.Collapse id="basic-navbar-nav">
@@ -59,6 +62,8 @@ function App() {
                   <Nav className="me-auto">
                     <Nav.Link as={Link} to="/bots">Bots</Nav.Link>
                     <Nav.Link as={Link} to="/datasets">Datasets</Nav.Link>
+                    <Nav.Link as={Link} to="/images">Images</Nav.Link>
+                    <Nav.Link as={Link} to="/chorus">Model Chorus</Nav.Link>
                   </Nav>
                   <Nav>
                     <Navbar.Text className="me-3 text-white">
@@ -106,6 +111,18 @@ function App() {
             <Route 
               path="/chat/:botId" 
               element={isAuthenticated ? <ChatInterface /> : <Navigate to="/login" />} 
+            />
+            <Route 
+              path="/images" 
+              element={isAuthenticated ? <ImageGeneration /> : <Navigate to="/login" />} 
+            />
+            <Route 
+              path="/chorus" 
+              element={isAuthenticated ? <ModelChorusManagement /> : <Navigate to="/login" />} 
+            />
+            <Route 
+              path="/bots/:botId/chorus" 
+              element={isAuthenticated ? <ModelChorusConfig /> : <Navigate to="/login" />} 
             />
           </Routes>
         </Container>

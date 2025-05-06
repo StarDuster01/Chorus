@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal } from 'react-bootstrap';
 import botService from '../services/botService';
-import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList } from 'react-icons/fa';
+import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle } from 'react-icons/fa';
 
 const DatasetPanel = () => {
   const [datasets, setDatasets] = useState([]);
@@ -21,6 +21,8 @@ const DatasetPanel = () => {
   const [documentListLoading, setDocumentListLoading] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState(null);
+  const [showConfirmDatasetDelete, setShowConfirmDatasetDelete] = useState(false);
+  const [datasetToDelete, setDatasetToDelete] = useState(null);
 
   useEffect(() => {
     loadDatasets();
@@ -165,6 +167,33 @@ const DatasetPanel = () => {
         return <FaFileAlt style={{color: '#7f8c8d'}} />;
       default:
         return <FaFile />;
+    }
+  };
+
+  const confirmRemoveDataset = (dataset) => {
+    setDatasetToDelete(dataset);
+    setShowConfirmDatasetDelete(true);
+  };
+
+  const handleRemoveDataset = async () => {
+    if (!datasetToDelete) return;
+    
+    setLoading(true);
+    try {
+      await botService.deleteDataset(datasetToDelete.id);
+      
+      // Remove dataset from the list
+      setDatasets(datasets.filter(ds => ds.id !== datasetToDelete.id));
+      
+      setSuccess('Dataset removed successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setShowConfirmDatasetDelete(false);
+      setDatasetToDelete(null);
+      setLoading(false);
+    } catch (err) {
+      setError('Failed to remove dataset');
+      setShowConfirmDatasetDelete(false);
+      setLoading(false);
     }
   };
 
@@ -415,11 +444,19 @@ const DatasetPanel = () => {
                               variant="outline-secondary" 
                               size="sm"
                               onClick={() => startViewDocuments(dataset)}
-                              className="rounded-pill"
+                              className="rounded-pill me-2"
                             >
                               <FaList className="me-1" /> Documents
                             </Button>
                           )}
+                          <Button 
+                            variant="outline-danger" 
+                            size="sm"
+                            onClick={() => confirmRemoveDataset(dataset)}
+                            className="rounded-pill"
+                          >
+                            <FaTrash className="me-1" /> Delete
+                          </Button>
                         </div>
                       </div>
                     </ListGroup.Item>
@@ -459,6 +496,40 @@ const DatasetPanel = () => {
           </Button>
           <Button variant="danger" onClick={handleRemoveDocument} disabled={loading}>
             {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Document'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal 
+        show={showConfirmDatasetDelete} 
+        onHide={() => setShowConfirmDatasetDelete(false)}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>Confirm Dataset Removal</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>Are you sure you want to remove this dataset?</p>
+          {datasetToDelete && (
+            <div className="my-3 p-3 bg-light rounded">
+              <div className="d-flex align-items-center">
+                <div className="dataset-icon me-3">
+                  <FaDatabase size={24} className="text-primary" />
+                </div>
+                <div>
+                  <strong>{datasetToDelete.name}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+          <p className="mb-0 text-danger">This action cannot be undone.</p>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowConfirmDatasetDelete(false)}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={handleRemoveDataset} disabled={loading}>
+            {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Dataset'}
           </Button>
         </Modal.Footer>
       </Modal>

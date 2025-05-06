@@ -141,11 +141,11 @@ const createBot = async (bot) => {
   }
 };
 
-const chatWithBot = async (botId, message, debugMode = false) => {
+const chatWithBot = async (botId, message, debugMode = false, useModelChorus = false, chorusId = '') => {
   try {
     const response = await axios.post(
       `${API_URL}/bots/${botId}/chat`,
-      { message, debug_mode: debugMode },
+      { message, debug_mode: debugMode, use_model_chorus: useModelChorus, chorus_id: chorusId },
       {
         headers: getAuthHeader()
       }
@@ -176,51 +176,15 @@ const chatWithImage = async (botId, formData) => {
   }
 };
 
-const generateDebugFlowchart = async (botId, message) => {
-  try {
-    console.log(`Generating flowchart for bot ${botId} with message: ${message}`);
-    const response = await axios.post(
-      `${API_URL}/bots/${botId}/debug-flowchart`,
-      { message },
-      {
-        headers: getAuthHeader(),
-        timeout: 30000 // Allow up to 30 seconds for the request to complete
-      }
-    );
-    
-    console.log('Flowchart generation successful', response.data);
-    
-    // Validate response structure
-    if (!response.data.mermaid_code) {
-      console.error('Invalid flowchart response format:', response.data);
-      throw new Error('Flowchart data missing from server response');
-    }
-    
-    return response.data;
-  } catch (error) {
-    console.error('Error generating debug flowchart:', error);
-    
-    // Provide more detailed error information
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      console.error('Error response data:', error.response.data);
-      console.error('Error response status:', error.response.status);
-    } else if (error.request) {
-      // The request was made but no response was received
-      console.error('No response received:', error.request);
-    }
-    
-    throw error;
-  }
-};
-
 // Image generation
 const generateImage = async (prompt, options = {}) => {
   try {
     const response = await axios.post(
       `${API_URL}/images/generate`,
-      { prompt, ...options },
+      { 
+        prompt, 
+        ...options 
+      },
       {
         headers: getAuthHeader()
       }
@@ -232,15 +196,8 @@ const generateImage = async (prompt, options = {}) => {
   }
 };
 
-const editImage = async (image, prompt, mask = null) => {
+const editImage = async (formData) => {
   try {
-    const formData = new FormData();
-    formData.append('image', image);
-    formData.append('prompt', prompt);
-    if (mask) {
-      formData.append('mask', mask);
-    }
-    
     const response = await axios.post(
       `${API_URL}/images/edit`,
       formData,
@@ -258,6 +215,161 @@ const editImage = async (image, prompt, mask = null) => {
   }
 };
 
+// Model chorus functions
+const getChorusConfig = async (botId) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/bots/${botId}/chorus`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching chorus configuration:', error);
+    throw error;
+  }
+};
+
+const saveChorusConfig = async (botId, chorusConfig) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/bots/${botId}/chorus`,
+      chorusConfig,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error saving chorus configuration:', error);
+    throw error;
+  }
+};
+
+const setBotChorus = async (botId, chorusId) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/bots/${botId}/set-chorus`,
+      { chorus_id: chorusId },
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error setting bot chorus:', error);
+    throw error;
+  }
+};
+
+const deleteBot = async (botId) => {
+  try {
+    const response = await axios.delete(
+      `${API_URL}/bots/${botId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting bot:', error);
+    throw error;
+  }
+};
+
+const getAllChoruses = async () => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/choruses`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching choruses:', error);
+    throw error;
+  }
+};
+
+const getChorus = async (chorusId) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/choruses/${chorusId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching chorus:', error);
+    throw error;
+  }
+};
+
+const createChorus = async (chorusData) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/choruses`,
+      chorusData,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error creating chorus:', error);
+    throw error;
+  }
+};
+
+const updateChorus = async (chorusId, chorusData) => {
+  try {
+    const response = await axios.put(
+      `${API_URL}/choruses/${chorusId}`,
+      chorusData,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error updating chorus:', error);
+    throw error;
+  }
+};
+
+const deleteChorus = async (chorusId) => {
+  try {
+    const response = await axios.delete(
+      `${API_URL}/choruses/${chorusId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting chorus:', error);
+    throw error;
+  }
+};
+
+const deleteDataset = async (datasetId) => {
+  try {
+    const response = await axios.delete(
+      `${API_URL}/datasets/${datasetId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting dataset:', error);
+    throw error;
+  }
+};
+
 const botService = {
   getDatasets,
   createDataset,
@@ -270,9 +382,18 @@ const botService = {
   createBot,
   chatWithBot,
   chatWithImage,
-  generateDebugFlowchart,
   generateImage,
-  editImage
+  editImage,
+  getChorusConfig,
+  saveChorusConfig,
+  setBotChorus,
+  deleteBot,
+  getAllChoruses,
+  getChorus,
+  createChorus,
+  updateChorus,
+  deleteChorus,
+  deleteDataset
 };
 
 export default botService; 

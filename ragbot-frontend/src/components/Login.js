@@ -45,8 +45,8 @@ const Login = ({ onLogin }) => {
     <div className="auth-container">
       <Card className="auth-card">
         <Card.Body>
-          <img src={logo} alt="RAGBot Logo" className="auth-logo" />
-          <h2 className="auth-title">Login to RAGBot</h2>
+          <img src={logo} alt="Chorus Logo" className="auth-logo" />
+          <h2 className="auth-title">Login to Chorus</h2>
           
           {error && (
             <Alert variant="danger" onClose={() => setError(null)} dismissible>

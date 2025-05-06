@@ -57,7 +57,7 @@ const Register = ({ onLogin }) => {
     <div className="auth-container">
       <Card className="auth-card">
         <Card.Body>
-          <img src={logo} alt="RAGBot Logo" className="auth-logo" />
+          <img src={logo} alt="Chorus Logo" className="auth-logo" />
           <h2 className="auth-title">Create an Account</h2>
           
           {error && (
