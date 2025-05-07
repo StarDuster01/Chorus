@@ -9,6 +9,7 @@ const ImageGeneration = () => {
   const [quality, setQuality] = useState('auto');
   const [outputFormat, setOutputFormat] = useState('png');
   const [generatedImage, setGeneratedImage] = useState(null);
+  const [moderation, setModeration] = useState('auto');
   
   // State for editing
   const [editPrompt, setEditPrompt] = useState('');
@@ -21,6 +22,7 @@ const ImageGeneration = () => {
   
   // Status states
   const [loading, setLoading] = useState(false);
+  const [enhancingPrompt, setEnhancingPrompt] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   
@@ -39,7 +41,8 @@ const ImageGeneration = () => {
         size,
         quality,
         prompt,
-        output_format: outputFormat
+        output_format: outputFormat,
+        moderation
       };
       
       const result = await botService.generateImage(prompt, options);
@@ -107,6 +110,37 @@ const ImageGeneration = () => {
     }
   };
   
+  // Handle prompt enhancement
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim()) {
+      setError('Please enter a prompt to enhance');
+      return;
+    }
+    
+    setEnhancingPrompt(true);
+    setError(null);
+    setMessage(null);
+    
+    try {
+      const result = await botService.enhancePrompt(prompt);
+      
+      if (result.success && result.enhanced_prompt) {
+        setPrompt(result.enhanced_prompt);
+        setMessage('Prompt enhanced successfully!');
+        
+        // Clear message after 3 seconds
+        setTimeout(() => {
+          setMessage(null);
+        }, 3000);
+      }
+    } catch (err) {
+      console.error('Error enhancing prompt:', err);
+      setError(err.response?.data?.error || err.message || 'Failed to enhance prompt');
+    } finally {
+      setEnhancingPrompt(false);
+    }
+  };
+  
   // Handle file selection for editing
   const handleFileSelect = (e) => {
     if (e.target.files) {
@@ -144,6 +178,21 @@ const ImageGeneration = () => {
                       placeholder="Describe the image you want to generate..."
                       required
                     />
+                    <div className="d-flex justify-content-end mt-1">
+                      <Button 
+                        variant="outline-primary"
+                        size="sm"
+                        onClick={handleEnhancePrompt}
+                        disabled={enhancingPrompt || !prompt.trim()}
+                      >
+                        {enhancingPrompt ? (
+                          <>
+                            <Spinner as="span" size="sm" animation="border" className="me-1" />
+                            Enhancing...
+                          </>
+                        ) : 'Enhance Prompt'}
+                      </Button>
+                    </div>
                   </Form.Group>
                   
                   <Row>
@@ -177,17 +226,36 @@ const ImageGeneration = () => {
                     </Col>
                   </Row>
                   
-                  <Form.Group className="mb-3">
-                    <Form.Label>Output Format</Form.Label>
-                    <Form.Select 
-                      value={outputFormat}
-                      onChange={(e) => setOutputFormat(e.target.value)}
-                    >
-                      <option value="png">PNG</option>
-                      <option value="jpeg">JPEG</option>
-                      <option value="webp">WebP</option>
-                    </Form.Select>
-                  </Form.Group>
+                  <Row>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label>Output Format</Form.Label>
+                        <Form.Select 
+                          value={outputFormat}
+                          onChange={(e) => setOutputFormat(e.target.value)}
+                        >
+                          <option value="png">PNG</option>
+                          <option value="jpeg">JPEG</option>
+                          <option value="webp">WebP</option>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label>Moderation</Form.Label>
+                        <Form.Select 
+                          value={moderation}
+                          onChange={(e) => setModeration(e.target.value)}
+                        >
+                          <option value="auto">Auto (Standard filtering)</option>
+                          <option value="low">Low (Less restrictive)</option>
+                        </Form.Select>
+                        <Form.Text className="text-muted">
+                          Controls content policy filtering strictness
+                        </Form.Text>
+                      </Form.Group>
+                    </Col>
+                  </Row>
                   
                   <Button 
                     variant="primary" 
@@ -397,8 +465,10 @@ const ImageGeneration = () => {
           <li><strong>Size options:</strong> 1024x1024 (square), 1536x1024 (landscape), or 1024x1536 (portrait)</li>
           <li><strong>Quality options:</strong> low (faster), medium, high (more detailed), or auto</li>
           <li><strong>Format options:</strong> png, jpeg, or webp</li>
+          <li><strong>Moderation options:</strong> auto (standard filtering), low (less restrictive filtering)</li>
         </ul>
         <p>For best results, provide detailed descriptions in your prompts.</p>
+        <p className="small text-muted">Note: All prompts and images are filtered against OpenAI's content policy regardless of moderation setting.</p>
       </Card>
     </Container>
   );

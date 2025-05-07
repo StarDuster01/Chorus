@@ -196,6 +196,22 @@ const generateImage = async (prompt, options = {}) => {
   }
 };
 
+const enhancePrompt = async (prompt) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/images/enhance-prompt`,
+      { prompt },
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error enhancing prompt:', error);
+    throw error;
+  }
+};
+
 const editImage = async (formData) => {
   try {
     const response = await axios.post(
@@ -392,6 +408,7 @@ const botService = {
   chatWithBot,
   chatWithImage,
   generateImage,
+  enhancePrompt,
   editImage,
   getChorusConfig,
   saveChorusConfig,

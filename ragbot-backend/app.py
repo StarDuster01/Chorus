@@ -2214,6 +2214,7 @@ def generate_image(user_data):
         quality = data.get('quality', 'auto')  # 'low', 'medium', 'high', or 'auto'
         n = data.get('n', 1)  # Number of images to generate
         output_format = data.get('output_format', 'png')  # 'png', 'jpeg', or 'webp'
+        moderation = data.get('moderation', 'auto')  # 'auto' or 'low'
         
         # Build the API request params with only supported parameters
         generation_params = {
@@ -2221,7 +2222,8 @@ def generate_image(user_data):
             "prompt": prompt,
             "n": n,
             "size": size,
-            "quality": quality
+            "quality": quality,
+            "moderation": moderation
         }
         
         # Generate image with OpenAI
@@ -2281,6 +2283,47 @@ def generate_image(user_data):
         print(f"Error generating image: {str(e)}")
         return jsonify({"error": f"Image generation failed: {str(e)}"}), 500
 
+# Add a new endpoint for enhancing prompts with GPT-4o
+@app.route('/api/images/enhance-prompt', methods=['POST'])
+@require_auth
+def enhance_prompt(user_data):
+    try:
+        # Get request data
+        data = request.json
+        original_prompt = data.get('prompt')
+        
+        if not original_prompt:
+            return jsonify({"error": "Prompt is required"}), 400
+        
+        # Craft system message for GPT-4o to enhance the prompt
+        system_message = """You are an expert at creating detailed image prompts for AI image generation. 
+Your task is to enhance the user's prompt by adding more descriptive elements, artistic style, lighting, mood, and details.
+Keep the original intent and subject matter, but make it much more detailed and visually compelling.
+Respond with ONLY the enhanced prompt text, nothing else. No explanations or additional text."""
+        
+        # Call GPT-4o to enhance the prompt
+        response = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Enhance this image prompt: {original_prompt}"}
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        enhanced_prompt = response.choices[0].message.content.strip()
+        
+        return jsonify({
+            "success": True,
+            "original_prompt": original_prompt,
+            "enhanced_prompt": enhanced_prompt
+        }), 200
+        
+    except Exception as e:
+        print(f"Error enhancing prompt: {str(e)}")
+        return jsonify({"error": f"Prompt enhancement failed: {str(e)}"}), 500
+        
 # Route to serve generated images
 @app.route('/api/images/<filename>', methods=['GET'])
 def get_image(filename):
