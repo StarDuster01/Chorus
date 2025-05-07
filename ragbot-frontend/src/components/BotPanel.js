@@ -189,30 +189,8 @@ const BotPanel = () => {
   };
 
   const handleCreateNewChorus = () => {
-    // First save the bot, then redirect to chorus creation
-    if (newBot.name && newBot.dataset_id) {
-      handleCreateBot({ preventDefault: () => {} });
-      
-      // Navigate to chorus configuration after bot is created
-      // This needs to be improved to wait for bot creation
-      setTimeout(() => {
-        // Get the list of bots again to ensure we have the newly created one
-        botService.getBots().then(updatedBots => {
-          // Find the created bot (should be the most recently created one)
-          const createdBot = updatedBots[updatedBots.length - 1];
-          if (createdBot) {
-            // Show the change chorus modal directly
-            setBotToChangeChorus(createdBot);
-            setSelectedChorusId(createdBot.chorus_id || '');
-            setShowChorusModal(true);
-          }
-        }).catch(err => {
-          console.error('Error getting updated bots:', err);
-        });
-      }, 1000);
-    } else {
-      setError('Please fill in the bot name and select a dataset first');
-    }
+    // Navigate directly to the create chorus page
+    navigate('/chorus/new');
   };
 
   return (
@@ -334,9 +312,9 @@ const BotPanel = () => {
                         className="rounded-pill me-2"
                       >
                         <option value="">No Model Chorus (optional)</option>
-                        {chorusConfigs.map(config => (
+                        {availableChoruses.map(config => (
                           <option key={config.id} value={config.id}>
-                            {config.name} - {config.botName}
+                            {config.name}
                           </option>
                         ))}
                       </Form.Select>
@@ -350,7 +328,7 @@ const BotPanel = () => {
                     </div>
                     <Form.Text className="text-muted">
                       A Model Chorus combines multiple AI models to produce higher quality responses.
-                      You can select an existing configuration or create a new one after saving your bot.
+                      You can select an existing chorus or create a new one.
                     </Form.Text>
                   </Form.Group>
                 </Col>
@@ -378,7 +356,7 @@ const BotPanel = () => {
                   className="px-4 rounded-pill me-2"
                   onClick={handleCreateNewChorus}
                 >
-                  Create Bot & Change Chorus
+                  Create New Chorus
                 </Button>
                 <Button variant="success" type="submit" disabled={loading} className="px-4 rounded-pill">
                   {loading ? <><Spinner as="span" animation="border" size="sm" /> Creating...</> : 'Create Bot'}

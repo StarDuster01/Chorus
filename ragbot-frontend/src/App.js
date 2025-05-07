@@ -124,6 +124,14 @@ function App() {
               path="/bots/:botId/chorus" 
               element={isAuthenticated ? <ModelChorusConfig /> : <Navigate to="/login" />} 
             />
+            <Route 
+              path="/chorus/new" 
+              element={isAuthenticated ? <ModelChorusConfig /> : <Navigate to="/login" />} 
+            />
+            <Route 
+              path="/chorus/:chorusId" 
+              element={isAuthenticated ? <ModelChorusConfig /> : <Navigate to="/login" />} 
+            />
           </Routes>
         </Container>
       </div>

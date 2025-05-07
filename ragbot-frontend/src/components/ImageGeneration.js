@@ -5,23 +5,16 @@ import botService from '../services/botService';
 const ImageGeneration = () => {
   // State for generation
   const [prompt, setPrompt] = useState('');
-  const [model, setModel] = useState('gpt-image-1');
   const [size, setSize] = useState('1024x1024');
-  const [quality, setQuality] = useState('standard');
+  const [quality, setQuality] = useState('auto');
   const [outputFormat, setOutputFormat] = useState('png');
-  const [background, setBackground] = useState('auto');
-  const [outputCompression, setOutputCompression] = useState(80);
-  const [moderation, setModeration] = useState('auto');
   const [generatedImage, setGeneratedImage] = useState(null);
   
   // State for editing
   const [editPrompt, setEditPrompt] = useState('');
-  const [editModel, setEditModel] = useState('gpt-image-1');
   const [editQuality, setEditQuality] = useState('auto');
   const [editSize, setEditSize] = useState('auto');
   const [editOutputFormat, setEditOutputFormat] = useState('png');
-  const [editBackground, setEditBackground] = useState('auto');
-  const [editCompression, setEditCompression] = useState(80);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [maskFile, setMaskFile] = useState(null);
   const [editedImage, setEditedImage] = useState(null);
@@ -40,32 +33,20 @@ const ImageGeneration = () => {
     setGeneratedImage(null);
     
     try {
-      // Prepare options based on selected model
+      // Prepare options for gpt-image-1
       const options = {
-        model,
+        model: "gpt-image-1",
         size,
-        prompt
+        quality,
+        prompt,
+        output_format: outputFormat
       };
-      
-      if (model === 'gpt-image-1') {
-        options.quality = quality;
-        options.output_format = outputFormat;
-        options.background = background !== 'auto' ? background : undefined;
-        options.moderation = moderation !== 'auto' ? moderation : undefined;
-        
-        if (outputFormat !== 'png' && outputCompression) {
-          options.output_compression = parseInt(outputCompression, 10);
-        }
-      } else {
-        // DALL-E options
-        options.quality = quality;
-        options.style = 'vivid'; // Default for DALL-E 3
-      }
       
       const result = await botService.generateImage(prompt, options);
       
-      if (result.image_url) {
-        const fullUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000' + result.image_url;
+      if (result.images && result.images.length > 0) {
+        const imageData = result.images[0];
+        const fullUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000' + imageData.image_url;
         setGeneratedImage(fullUrl);
         setMessage('Image generated successfully!');
       }
@@ -106,15 +87,10 @@ const ImageGeneration = () => {
       
       // Add other parameters
       formData.append('prompt', editPrompt);
-      formData.append('model', editModel);
+      formData.append('model', 'gpt-image-1');
       formData.append('quality', editQuality);
       formData.append('size', editSize);
       formData.append('output_format', editOutputFormat);
-      formData.append('background', editBackground);
-      
-      if (editOutputFormat !== 'png' && editCompression) {
-        formData.append('output_compression', editCompression);
-      }
       
       const result = await botService.editImage(formData);
       
@@ -170,18 +146,6 @@ const ImageGeneration = () => {
                     />
                   </Form.Group>
                   
-                  <Form.Group className="mb-3">
-                    <Form.Label>Model</Form.Label>
-                    <Form.Select 
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                    >
-                      <option value="gpt-image-1">GPT-Image-1 (Latest)</option>
-                      <option value="dall-e-3">DALL-E 3</option>
-                      <option value="dall-e-2">DALL-E 2</option>
-                    </Form.Select>
-                  </Form.Group>
-                  
                   <Row>
                     <Col md={6}>
                       <Form.Group className="mb-3">
@@ -190,26 +154,10 @@ const ImageGeneration = () => {
                           value={size}
                           onChange={(e) => setSize(e.target.value)}
                         >
-                          {model === 'gpt-image-1' ? (
-                            <>
-                              <option value="1024x1024">1024x1024 (Square)</option>
-                              <option value="1536x1024">1536x1024 (Landscape)</option>
-                              <option value="1024x1536">1024x1536 (Portrait)</option>
-                              <option value="auto">Auto</option>
-                            </>
-                          ) : model === 'dall-e-3' ? (
-                            <>
-                              <option value="1024x1024">1024x1024</option>
-                              <option value="1792x1024">1792x1024</option>
-                              <option value="1024x1792">1024x1792</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="256x256">256x256</option>
-                              <option value="512x512">512x512</option>
-                              <option value="1024x1024">1024x1024</option>
-                            </>
-                          )}
+                          <option value="1024x1024">1024x1024 (Square)</option>
+                          <option value="1536x1024">1536x1024 (Landscape)</option>
+                          <option value="1024x1536">1024x1536 (Portrait)</option>
+                          <option value="auto">Auto</option>
                         </Form.Select>
                       </Form.Group>
                     </Col>
@@ -220,80 +168,26 @@ const ImageGeneration = () => {
                           value={quality}
                           onChange={(e) => setQuality(e.target.value)}
                         >
-                          {model === 'gpt-image-1' ? (
-                            <>
-                              <option value="low">Low</option>
-                              <option value="medium">Medium</option>
-                              <option value="high">High</option>
-                              <option value="auto">Auto</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="standard">Standard</option>
-                              <option value="hd">HD</option>
-                            </>
-                          )}
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="auto">Auto</option>
                         </Form.Select>
                       </Form.Group>
                     </Col>
                   </Row>
                   
-                  {model === 'gpt-image-1' && (
-                    <>
-                      <Row>
-                        <Col md={6}>
-                          <Form.Group className="mb-3">
-                            <Form.Label>Output Format</Form.Label>
-                            <Form.Select 
-                              value={outputFormat}
-                              onChange={(e) => setOutputFormat(e.target.value)}
-                            >
-                              <option value="png">PNG</option>
-                              <option value="jpeg">JPEG</option>
-                              <option value="webp">WebP</option>
-                            </Form.Select>
-                          </Form.Group>
-                        </Col>
-                        <Col md={6}>
-                          <Form.Group className="mb-3">
-                            <Form.Label>Background</Form.Label>
-                            <Form.Select 
-                              value={background}
-                              onChange={(e) => setBackground(e.target.value)}
-                              disabled={outputFormat === 'jpeg'}
-                            >
-                              <option value="auto">Auto</option>
-                              <option value="transparent">Transparent</option>
-                            </Form.Select>
-                          </Form.Group>
-                        </Col>
-                      </Row>
-                      
-                      {(outputFormat === 'jpeg' || outputFormat === 'webp') && (
-                        <Form.Group className="mb-3">
-                          <Form.Label>Compression ({outputCompression}%)</Form.Label>
-                          <Form.Range
-                            min="0"
-                            max="100"
-                            step="1"
-                            value={outputCompression}
-                            onChange={(e) => setOutputCompression(e.target.value)}
-                          />
-                        </Form.Group>
-                      )}
-                      
-                      <Form.Group className="mb-3">
-                        <Form.Label>Moderation</Form.Label>
-                        <Form.Select 
-                          value={moderation}
-                          onChange={(e) => setModeration(e.target.value)}
-                        >
-                          <option value="auto">Auto (Standard)</option>
-                          <option value="low">Low (Less strict)</option>
-                        </Form.Select>
-                      </Form.Group>
-                    </>
-                  )}
+                  <Form.Group className="mb-3">
+                    <Form.Label>Output Format</Form.Label>
+                    <Form.Select 
+                      value={outputFormat}
+                      onChange={(e) => setOutputFormat(e.target.value)}
+                    >
+                      <option value="png">PNG</option>
+                      <option value="jpeg">JPEG</option>
+                      <option value="webp">WebP</option>
+                    </Form.Select>
+                  </Form.Group>
                   
                   <Button 
                     variant="primary" 
@@ -361,15 +255,13 @@ const ImageGeneration = () => {
                     <Form.Label>Images to Edit</Form.Label>
                     <Form.Control
                       type="file"
-                      multiple={editModel === 'gpt-image-1'}
+                      multiple={true}
                       onChange={handleFileSelect}
                       accept="image/*"
                       required
                     />
                     <Form.Text className="text-muted">
-                      {editModel === 'gpt-image-1' 
-                        ? 'You can select multiple images for reference' 
-                        : 'Select an image to edit'}
+                      You can select multiple images for reference
                     </Form.Text>
                   </Form.Group>
                   
@@ -397,96 +289,48 @@ const ImageGeneration = () => {
                     />
                   </Form.Group>
                   
-                  <Form.Group className="mb-3">
-                    <Form.Label>Model</Form.Label>
-                    <Form.Select 
-                      value={editModel}
-                      onChange={(e) => setEditModel(e.target.value)}
-                    >
-                      <option value="gpt-image-1">GPT-Image-1 (Latest)</option>
-                      <option value="dall-e-2">DALL-E 2</option>
-                    </Form.Select>
-                    <Form.Text className="text-muted">
-                      Note: DALL-E 3 doesn't support editing
-                    </Form.Text>
-                  </Form.Group>
+                  <Row>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label>Size</Form.Label>
+                        <Form.Select 
+                          value={editSize}
+                          onChange={(e) => setEditSize(e.target.value)}
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="1024x1024">1024x1024 (Square)</option>
+                          <option value="1536x1024">1536x1024 (Landscape)</option>
+                          <option value="1024x1536">1024x1536 (Portrait)</option>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group className="mb-3">
+                        <Form.Label>Quality</Form.Label>
+                        <Form.Select 
+                          value={editQuality}
+                          onChange={(e) => setEditQuality(e.target.value)}
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                  </Row>
                   
-                  {editModel === 'gpt-image-1' && (
-                    <>
-                      <Row>
-                        <Col md={6}>
-                          <Form.Group className="mb-3">
-                            <Form.Label>Size</Form.Label>
-                            <Form.Select 
-                              value={editSize}
-                              onChange={(e) => setEditSize(e.target.value)}
-                            >
-                              <option value="auto">Auto</option>
-                              <option value="1024x1024">1024x1024 (Square)</option>
-                              <option value="1536x1024">1536x1024 (Landscape)</option>
-                              <option value="1024x1536">1024x1536 (Portrait)</option>
-                            </Form.Select>
-                          </Form.Group>
-                        </Col>
-                        <Col md={6}>
-                          <Form.Group className="mb-3">
-                            <Form.Label>Quality</Form.Label>
-                            <Form.Select 
-                              value={editQuality}
-                              onChange={(e) => setEditQuality(e.target.value)}
-                            >
-                              <option value="auto">Auto</option>
-                              <option value="low">Low</option>
-                              <option value="medium">Medium</option>
-                              <option value="high">High</option>
-                            </Form.Select>
-                          </Form.Group>
-                        </Col>
-                      </Row>
-                      
-                      <Row>
-                        <Col md={6}>
-                          <Form.Group className="mb-3">
-                            <Form.Label>Output Format</Form.Label>
-                            <Form.Select 
-                              value={editOutputFormat}
-                              onChange={(e) => setEditOutputFormat(e.target.value)}
-                            >
-                              <option value="png">PNG</option>
-                              <option value="jpeg">JPEG</option>
-                              <option value="webp">WebP</option>
-                            </Form.Select>
-                          </Form.Group>
-                        </Col>
-                        <Col md={6}>
-                          <Form.Group className="mb-3">
-                            <Form.Label>Background</Form.Label>
-                            <Form.Select 
-                              value={editBackground}
-                              onChange={(e) => setEditBackground(e.target.value)}
-                              disabled={editOutputFormat === 'jpeg'}
-                            >
-                              <option value="auto">Auto</option>
-                              <option value="transparent">Transparent</option>
-                            </Form.Select>
-                          </Form.Group>
-                        </Col>
-                      </Row>
-                      
-                      {(editOutputFormat === 'jpeg' || editOutputFormat === 'webp') && (
-                        <Form.Group className="mb-3">
-                          <Form.Label>Compression ({editCompression}%)</Form.Label>
-                          <Form.Range
-                            min="0"
-                            max="100"
-                            step="1"
-                            value={editCompression}
-                            onChange={(e) => setEditCompression(e.target.value)}
-                          />
-                        </Form.Group>
-                      )}
-                    </>
-                  )}
+                  <Form.Group className="mb-3">
+                    <Form.Label>Output Format</Form.Label>
+                    <Form.Select 
+                      value={editOutputFormat}
+                      onChange={(e) => setEditOutputFormat(e.target.value)}
+                    >
+                      <option value="png">PNG</option>
+                      <option value="jpeg">JPEG</option>
+                      <option value="webp">WebP</option>
+                    </Form.Select>
+                  </Form.Group>
                   
                   <Button 
                     variant="primary" 
@@ -545,6 +389,17 @@ const ImageGeneration = () => {
           </Row>
         </Tab>
       </Tabs>
+      
+      <Card className="mt-4 p-3">
+        <h5>About GPT Image Generation</h5>
+        <p>This tool uses OpenAI's gpt-image-1 model to generate images based on text prompts.</p>
+        <ul>
+          <li><strong>Size options:</strong> 1024x1024 (square), 1536x1024 (landscape), or 1024x1536 (portrait)</li>
+          <li><strong>Quality options:</strong> low (faster), medium, high (more detailed), or auto</li>
+          <li><strong>Format options:</strong> png, jpeg, or webp</li>
+        </ul>
+        <p>For best results, provide detailed descriptions in your prompts.</p>
+      </Card>
     </Container>
   );
 };

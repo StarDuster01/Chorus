@@ -1,8 +1,57 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Row, Col, Form, Button, Card, Spinner, Alert, Dropdown, Modal } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, Card, Spinner, Alert, Dropdown, Modal, Badge } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import botService from '../services/botService';
-import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt } from 'react-icons/fa';
+import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck } from 'react-icons/fa';
+
+// Add some custom styles for the chorus UI
+const chorusStyles = {
+  activeChorus: {
+    background: '#e8f4fe',
+    borderColor: '#3498db',
+    boxShadow: '0 0 0 2px rgba(52, 152, 219, 0.25)',
+    fontWeight: 'bold',
+    padding: '0.5rem 0.8rem',
+  },
+  chorusName: {
+    display: 'inline-block',
+    maxWidth: '150px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    verticalAlign: 'middle',
+  },
+  chorusBadge: {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    fontSize: '0.7rem',
+    padding: '0.2rem 0.4rem',
+    borderRadius: '10px',
+  },
+  selectedChorusInfo: {
+    background: '#f8f9fa',
+    border: '1px solid #e9ecef',
+    borderRadius: '8px',
+    padding: '16px',
+    marginTop: '16px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+  },
+  modelCounts: {
+    display: 'flex',
+    gap: '10px',
+    marginTop: '10px',
+  },
+  modelCountBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '5px 10px',
+    borderRadius: '50px',
+    fontSize: '0.8rem',
+    fontWeight: 'bold'
+  }
+};
 
 const ChatInterface = () => {
   const { botId } = useParams();
@@ -75,28 +124,18 @@ const ChatInterface = () => {
 
   const loadChorusConfigurations = async () => {
     try {
-      // Load all bots to get their choruses
-      const bots = await botService.getBots();
-      const configs = [];
+      // Load all available choruses directly
+      const choruses = await botService.getAllChoruses();
       
-      // Try to load chorus configs for each bot
-      for (const bot of bots) {
-        try {
-          const config = await botService.getChorusConfig(bot.id);
-          configs.push({
-            ...config,
-            id: bot.id,
-            botId: bot.id,
-            botName: bot.name
-          });
-        } catch (err) {
-          // No chorus config for this bot - just skip it
-        }
+      // Make sure we never set to undefined or null
+      setAvailableChorus(Array.isArray(choruses) ? choruses : []);
+      
+      if (!Array.isArray(choruses) || choruses.length === 0) {
+        console.log('No choruses found or chorus data is invalid');
       }
-      
-      setAvailableChorus(configs);
     } catch (err) {
       console.error('Failed to load chorus configs:', err);
+      setAvailableChorus([]);
     }
   };
 
@@ -545,19 +584,35 @@ const ChatInterface = () => {
                     >
                       <FaMagic className="me-1" /> Generate Images
                     </Button>
-                    <Dropdown className="d-inline-block me-2">
+                    <Dropdown className="d-inline-block me-2 position-relative">
+                      {useModelChorus && (
+                        <Badge 
+                          bg="info" 
+                          style={chorusStyles.chorusBadge}
+                        >
+                          CHORUS
+                        </Badge>
+                      )}
                       <Dropdown.Toggle
                         variant={useModelChorus ? "primary" : "outline-primary"}
                         size="sm"
                         id="dropdown-chorus"
-                        title={useModelChorus ? `Using Model Chorus${selectedChorusId ? `: ${availableChorus.find(c => c.id === selectedChorusId)?.name || ''}` : ''}` : "Enable Model Chorus"}
+                        style={useModelChorus ? chorusStyles.activeChorus : {}}
+                        title={useModelChorus ? `Using Model Chorus: ${availableChorus?.find(c => c.id === selectedChorusId)?.name || 'Active'}` : "Enable Model Chorus"}
                       >
-                        <FaUsers className="me-1" /> Model Chorus
+                        <FaUsers className="me-1" /> 
+                        {useModelChorus ? (
+                          <span style={chorusStyles.chorusName}>
+                            {availableChorus?.find(c => c.id === selectedChorusId)?.name || 'Model Chorus'}
+                          </span>
+                        ) : (
+                          'Model Chorus'
+                        )}
                       </Dropdown.Toggle>
 
                       <Dropdown.Menu>
-                        <Dropdown.Header>Select Model Chorus</Dropdown.Header>
-                        {availableChorus.length === 0 ? (
+                        <Dropdown.Header className="fw-bold">Select Model Chorus</Dropdown.Header>
+                        {!availableChorus || availableChorus.length === 0 ? (
                           <Dropdown.Item disabled>No chorus configurations found</Dropdown.Item>
                         ) : (
                           availableChorus.map(chorus => (
@@ -565,17 +620,25 @@ const ChatInterface = () => {
                               key={chorus.id} 
                               active={selectedChorusId === chorus.id}
                               onClick={() => handleSelectChorus(chorus.id)}
+                              className={selectedChorusId === chorus.id ? "bg-primary text-white" : ""}
                             >
-                              {chorus.name} - {chorus.botName}
+                              {selectedChorusId === chorus.id && <FaCheck className="me-2" />}
+                              {chorus.name} 
+                              <Badge bg="info" className="ms-2">
+                                {chorus.response_model_count || 0} models
+                              </Badge>
                             </Dropdown.Item>
                           ))
                         )}
                         <Dropdown.Divider />
-                        <Dropdown.Item onClick={() => setUseModelChorus(false)}>
+                        <Dropdown.Item 
+                          onClick={() => setUseModelChorus(false)}
+                          className={!useModelChorus ? "bg-light fw-bold" : ""}
+                        >
                           <FaTimes className="me-1" /> Disable Model Chorus
                         </Dropdown.Item>
                         <Dropdown.Item onClick={() => setShowChorusDropdown(true)}>
-                          <FaExchangeAlt className="me-1" /> Change Chorus
+                          <FaCog className="me-1" /> Manage Choruses
                         </Dropdown.Item>
                       </Dropdown.Menu>
                     </Dropdown>
@@ -689,8 +752,11 @@ const ChatInterface = () => {
       {/* Add the Chorus Selection Modal */}
       {bot && (
         <Modal show={showChorusDropdown} onHide={() => setShowChorusDropdown(false)}>
-          <Modal.Header closeButton>
-            <Modal.Title>Change Chorus for {bot.name}</Modal.Title>
+          <Modal.Header closeButton className="bg-light">
+            <Modal.Title>
+              <FaUsers className="me-2" />
+              Change Chorus for {bot.name}
+            </Modal.Title>
           </Modal.Header>
           <Modal.Body>
             <Form.Group>
@@ -698,14 +764,44 @@ const ChatInterface = () => {
               <Form.Select
                 value={selectedChorusId}
                 onChange={(e) => setSelectedChorusId(e.target.value)}
+                className="mb-3"
+                size="lg"
               >
                 <option value="">No Chorus (Standard Mode)</option>
-                {availableChorus.map(chorus => (
-                  <option key={chorus.id} value={chorus.id}>
-                    {chorus.name} ({chorus.response_model_count || 0} models, {chorus.evaluator_model_count || 0} evaluators)
-                  </option>
-                ))}
+                {availableChorus && availableChorus.length > 0 ? (
+                  availableChorus.map(chorus => (
+                    <option key={chorus.id} value={chorus.id}>
+                      {chorus.name} ({chorus.response_model_count || 0} models, {chorus.evaluator_model_count || 0} evaluators)
+                    </option>
+                  ))
+                ) : (
+                  <option disabled>No available choruses</option>
+                )}
               </Form.Select>
+              
+              {selectedChorusId && availableChorus && (
+                <div style={chorusStyles.selectedChorusInfo}>
+                  <h5 className="mb-1">{availableChorus.find(c => c.id === selectedChorusId)?.name}</h5>
+                  <p className="text-muted mb-2">
+                    {availableChorus.find(c => c.id === selectedChorusId)?.description || 'No description available'}
+                  </p>
+                  <div style={chorusStyles.modelCounts}>
+                    <div style={{...chorusStyles.modelCountBadge, background: '#e8f4fe', color: '#2980b9'}}>
+                      <FaRobot size={14} /> {availableChorus.find(c => c.id === selectedChorusId)?.response_model_count || 0} Response Models
+                    </div>
+                    <div style={{...chorusStyles.modelCountBadge, background: '#f8e9fb', color: '#8e44ad'}}>
+                      <FaVoteYea size={14} /> {availableChorus.find(c => c.id === selectedChorusId)?.evaluator_model_count || 0} Evaluators
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {!selectedChorusId && (
+                <Alert variant="info" className="mt-3">
+                  <FaRobot className="me-2" />
+                  Without a chorus, the bot will use a single model to answer questions.
+                </Alert>
+              )}
             </Form.Group>
           </Modal.Body>
           <Modal.Footer>
@@ -725,7 +821,7 @@ const ChatInterface = () => {
                 }
               }}
             >
-              Save Changes
+              Apply Chorus
             </Button>
           </Modal.Footer>
         </Modal>

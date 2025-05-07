@@ -234,12 +234,13 @@ const getChorusConfig = async (botId) => {
 const saveChorusConfig = async (botId, chorusConfig) => {
   try {
     const response = await axios.post(
-      `${API_URL}/bots/${botId}/chorus`,
+      `${API_URL}/choruses`,
       chorusConfig,
       {
         headers: getAuthHeader()
       }
     );
+    await setBotChorus(botId, response.data.id);
     return response.data;
   } catch (error) {
     console.error('Error saving chorus configuration:', error);
@@ -286,7 +287,15 @@ const getAllChoruses = async () => {
         headers: getAuthHeader()
       }
     );
-    return response.data;
+    
+    // Add response and evaluator model counts for each chorus
+    const choruses = response.data.map(chorus => ({
+      ...chorus,
+      response_model_count: chorus.response_models?.length || 0,
+      evaluator_model_count: chorus.evaluator_models?.length || 0
+    }));
+    
+    return choruses;
   } catch (error) {
     console.error('Error fetching choruses:', error);
     throw error;

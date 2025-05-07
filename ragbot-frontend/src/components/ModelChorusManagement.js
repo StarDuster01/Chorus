@@ -66,16 +66,12 @@ const ModelChorusManagement = () => {
   }, []);
   
   const handleCreateNew = () => {
-    // Navigate to create new chorus config - first select a bot
-    if (bots.length > 0) {
-      navigate(`/bots/${bots[0].id}/chorus`);
-    } else {
-      setError("You need to create a bot first before configuring a model chorus");
-    }
+    // Navigate to create new chorus page directly
+    navigate('/chorus/new');
   };
   
-  const handleEdit = (botId) => {
-    navigate(`/bots/${botId}/chorus`);
+  const handleEdit = (chorusId) => {
+    navigate(`/chorus/${chorusId}`);
   };
   
   const handleApplyToBot = (chorusId) => {
@@ -126,7 +122,7 @@ const ModelChorusManagement = () => {
   
   const handleDeleteChorus = async (chorusId) => {
     // Find the chorus config to get its name
-    const chorus = chorusConfigs.find(c => c.botId === chorusId);
+    const chorus = chorusConfigs.find(c => c.id === chorusId);
     setChorusToDelete(chorus);
     setShowDeleteModal(true);
   };
@@ -137,10 +133,10 @@ const ModelChorusManagement = () => {
     }
     
     try {
-      await botService.deleteChorus(chorusToDelete.botId);
+      await botService.deleteChorus(chorusToDelete.id);
       
       // Remove from local state
-      setChorusConfigs(prev => prev.filter(c => c.botId !== chorusToDelete.botId));
+      setChorusConfigs(prev => prev.filter(c => c.id !== chorusToDelete.id));
       
       setSuccess('Chorus deleted successfully');
       setTimeout(() => setSuccess(null), 3000);
@@ -232,7 +228,7 @@ const ModelChorusManagement = () => {
               </thead>
               <tbody>
                 {chorusConfigs.map(config => (
-                  <tr key={config.botId}>
+                  <tr key={config.id}>
                     <td>
                       <strong>{config.name}</strong>
                       {config.description && <div className="small text-muted">{config.description}</div>}
@@ -251,7 +247,7 @@ const ModelChorusManagement = () => {
                       <Button 
                         variant="outline-primary" 
                         size="sm" 
-                        onClick={() => handleEdit(config.botId)}
+                        onClick={() => handleEdit(config.id)}
                         className="me-2"
                         title="Edit Configuration"
                       >
@@ -269,7 +265,7 @@ const ModelChorusManagement = () => {
                       <Button
                         variant="outline-info"
                         size="sm"
-                        onClick={() => handleApplyToBot(config.botId)}
+                        onClick={() => handleApplyToBot(config.id)}
                         className="me-2"
                         title="Apply to Another Bot"
                       >
@@ -278,7 +274,7 @@ const ModelChorusManagement = () => {
                       <Button
                         variant="outline-danger"
                         size="sm"
-                        onClick={() => handleDeleteChorus(config.botId)}
+                        onClick={() => handleDeleteChorus(config.id)}
                         title="Delete Chorus"
                       >
                         <FaTrash />

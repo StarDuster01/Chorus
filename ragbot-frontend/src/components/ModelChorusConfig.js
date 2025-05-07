@@ -6,7 +6,7 @@ import {
 } from 'react-bootstrap';
 import { 
   FaChevronLeft, FaSave, FaPlus, FaTrash, 
-  FaRobot, FaVoteYea, FaGavel
+  FaRobot, FaVoteYea, FaGavel, FaUsers
 } from 'react-icons/fa';
 import botService from '../services/botService';
 
@@ -18,7 +18,7 @@ const MODEL_OPTIONS = [
 ];
 
 const ModelChorusConfig = () => {
-  const { botId } = useParams();
+  const { botId, chorusId: chorusIdParam } = useParams();
   const navigate = useNavigate();
   
   const [bot, setBot] = useState(null);
@@ -26,11 +26,13 @@ const ModelChorusConfig = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(true); // All choruses are standalone now
   
   // Chorus configuration state
   const [chorusName, setChorusName] = useState('');
   const [chorusDescription, setChorusDescription] = useState('');
   const [isActive, setIsActive] = useState(false);
+  const [chorusId, setChorusId] = useState('');
   
   // Models configuration
   const [responseModels, setResponseModels] = useState([]);
@@ -44,51 +46,27 @@ const ModelChorusConfig = () => {
   const [newModelTemperature, setNewModelTemperature] = useState(0.7);
   const [newModelWeight, setNewModelWeight] = useState(1);
   
-  // Load bot details and existing chorus config if any
+  // Load chorus data if editing an existing one
   useEffect(() => {
-    const loadBotAndChorus = async () => {
+    const loadChorus = async () => {
       try {
         setLoading(true);
         
-        // Load bot details
-        const bots = await botService.getBots();
-        const foundBot = bots.find(b => b.id === botId);
-        
-        if (!foundBot) {
-          setError('Bot not found');
-          setTimeout(() => navigate('/bots'), 3000);
-          return;
-        }
-        
-        setBot(foundBot);
-        
-        // Load chorus configuration if it exists
-        try {
-          let chorusConfig;
-          
-          // If the bot has a chorus ID, try to load it directly
-          if (foundBot.chorus_id) {
-            try {
-              chorusConfig = await botService.getChorus(foundBot.chorus_id);
-            } catch (err) {
-              console.log('Could not load chorus by ID, falling back to bot chorus config');
-              // Fall back to bot chorus config
-              chorusConfig = await botService.getChorusConfig(botId);
-            }
-          } else {
-            // Try to load from bot-specific endpoint
-            chorusConfig = await botService.getChorusConfig(botId);
-          }
+        // Check if we're editing an existing chorus
+        if (chorusIdParam && chorusIdParam !== 'new') {
+          // Load the chorus by ID
+          const chorusData = await botService.getChorus(chorusIdParam);
           
           // Populate the form with existing configuration
-          setChorusName(chorusConfig.name || '');
-          setChorusDescription(chorusConfig.description || '');
-          setIsActive(chorusConfig.is_active || false);
-          setResponseModels(chorusConfig.response_models || []);
-          setEvaluatorModels(chorusConfig.evaluator_models || []);
-        } catch (err) {
-          // If no chorus exists yet, just set up default values
-          setChorusName(`${foundBot.name} Chorus`);
+          setChorusId(chorusData.id);
+          setChorusName(chorusData.name || '');
+          setChorusDescription(chorusData.description || '');
+          setIsActive(chorusData.is_active || false);
+          setResponseModels(chorusData.response_models || []);
+          setEvaluatorModels(chorusData.evaluator_models || []);
+        } else {
+          // Creating a new chorus
+          setChorusName('New Model Chorus');
           setChorusDescription('Model chorus configuration');
           setIsActive(false);
           setResponseModels([
@@ -99,14 +77,14 @@ const ModelChorusConfig = () => {
           ]);
         }
       } catch (err) {
-        setError(`Failed to load bot details: ${err.message}`);
+        setError(`Failed to load chorus details: ${err.message}`);
       } finally {
         setLoading(false);
       }
     };
     
-    loadBotAndChorus();
-  }, [botId, navigate]);
+    loadChorus();
+  }, [chorusIdParam]);
   
   const handleAddModel = () => {
     const newModel = {
@@ -165,13 +143,20 @@ const ModelChorusConfig = () => {
         evaluator_models: evaluatorModels
       };
       
-      // Save the chorus configuration and link it to this bot
-      await botService.saveChorusConfig(botId, chorusConfig);
+      // If we have a chorus ID, we're updating an existing chorus
+      if (chorusIdParam && chorusIdParam !== 'new') {
+        // Update existing chorus
+        await botService.updateChorus(chorusIdParam, chorusConfig);
+        setSuccess('Chorus configuration updated successfully');
+      } else {
+        // Create a new chorus
+        const result = await botService.createChorus(chorusConfig);
+        setSuccess('Chorus configuration created successfully');
+      }
       
-      setSuccess('Chorus configuration saved successfully');
+      // Redirect to chorus management after successful save
+      setTimeout(() => navigate('/chorus'), 1000);
       
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       setError(`Failed to save chorus configuration: ${err.message}`);
     } finally {
@@ -201,19 +186,19 @@ const ModelChorusConfig = () => {
     <Container className="py-4">
       <Card className="shadow-sm">
         <Card.Header className="d-flex justify-content-between align-items-center">
-          <div className="d-flex align-items-center">
+          <div>
             <Button 
               variant="link" 
-              className="p-0 text-dark me-3" 
+              className="p-0 text-decoration-none" 
               onClick={() => navigate('/chorus')}
-              title="Back to Model Chorus"
             >
-              <FaChevronLeft />
+              <FaChevronLeft className="me-2" />
+              Back to Chorus Management
             </Button>
-            <div>
-              <h3 className="mb-0">Model Chorus Configuration</h3>
-              <p className="mb-0 text-muted small">{bot?.name}</p>
-            </div>
+            <h3 className="mt-2 mb-0">
+              <FaUsers className="me-2" />
+              {chorusIdParam && chorusIdParam !== 'new' ? 'Edit Model Chorus' : 'Create New Model Chorus'}
+            </h3>
           </div>
         </Card.Header>
         

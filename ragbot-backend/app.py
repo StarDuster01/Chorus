@@ -685,8 +685,13 @@ def chat_with_bot(user_data, bot_id):
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
         
-    # Get dataset info
-    dataset_id = bot["dataset_id"]
+    # Get dataset IDs from the bot
+    dataset_ids = bot.get("dataset_ids", [])
+    
+    if not dataset_ids:
+        return jsonify({
+            "response": "I don't have any datasets to work with. Please add a dataset to help me answer your questions."
+        }), 200
     
     # Check if the bot has a chorus configuration associated with it
     # If so, use model chorus by default unless explicitly turned off
@@ -696,45 +701,48 @@ def chat_with_bot(user_data, bot_id):
     # If a specific chorus_id is provided, use it; otherwise use the bot's chorus_id if available
     specific_chorus_id = chorus_id or bot.get("chorus_id", "")
     
-    # Retrieve relevant documents from ChromaDB
+    # Retrieve relevant documents from all datasets
+    all_contexts = []
+    
     try:
-        try:
-            collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
-        except Exception as coll_error:
-            print(f"Error: Collection '{dataset_id}' not found. Trying to recreate it...")
-            # Try to recreate the collection
+        for dataset_id in dataset_ids:
             try:
-                collection = chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
-                return jsonify({
-                    "response": f"I've encountered an issue with my knowledge base. The collection was missing but has been recreated. Please upload documents to the dataset and try again.",
-                    "debug": {
-                        "error": f"Collection {dataset_id} was missing and has been recreated. Please upload documents."
-                    }
-                }), 200
-            except Exception as create_error:
-                raise Exception(f"Failed to create collection: {str(create_error)}")
+                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
                 
-        # Check if collection has any documents
-        collection_count = collection.count()
-        if collection_count == 0:
+                # Check if collection has any documents
+                collection_count = collection.count()
+                if collection_count == 0:
+                    continue
+                    
+                # Determine how many results to request based on collection size
+                n_results = min(3, collection_count)  # Reduced from 5 to 3 since we have multiple datasets
+                
+                results = collection.query(
+                    query_texts=[message],
+                    n_results=n_results
+                )
+                
+                all_contexts.extend(results["documents"][0])
+                
+            except Exception as coll_error:
+                print(f"Error with collection '{dataset_id}': {str(coll_error)}")
+                # Continue with other datasets even if one fails
+                continue
+                
+        if not all_contexts:
             return jsonify({
                 "response": "I don't have any documents in my knowledge base yet. Please upload some documents to help me answer your questions.",
-                "debug": {"error": "Empty collection"} if debug_mode else None
+                "debug": {"error": "No contexts found in any collections"} if debug_mode else None
             }), 200
-                
-        # Determine how many results to request based on collection size
-        n_results = min(5, collection_count)
-        
-        results = collection.query(
-            query_texts=[message],
-            n_results=n_results
-        )
-        
-        contexts = results["documents"][0]
+            
+        # Sort contexts by relevance (they should already be sorted from query results)
+        # But we need to truncate to avoid token limits
+        max_contexts = 8  # Limit the total number of contexts used
+        contexts = all_contexts[:max_contexts]
+        context_text = "\n\n".join(contexts)
         
         # Prepare the system instruction and context
-        system_instruction = bot["system_instruction"]
-        context_text = "\n\n".join(contexts)
+        system_instruction = bot.get("system_instruction", "You are a helpful assistant that answers questions based on the provided context.")
         
         # Check if using model chorus
         if use_model_chorus:
@@ -749,257 +757,274 @@ def chat_with_bot(user_data, bot_id):
             chorus_config = None
             
             if os.path.exists(user_choruses_file) and specific_chorus_id:
-                with open(user_choruses_file, 'r') as f:
-                    choruses = json.load(f)
+                try:
+                    with open(user_choruses_file, 'r') as f:
+                        choruses = json.load(f)
+                        
+                    # Find the requested chorus
+                    chorus_config = next((c for c in choruses if c["id"] == specific_chorus_id), None)
                     
-                # Find the requested chorus
-                chorus_config = next((c for c in choruses if c["id"] == specific_chorus_id), None)
-                
-                if debug_mode and chorus_config:
-                    print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}")
+                    if debug_mode and chorus_config:
+                        print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}")
+                except Exception as e:
+                    print(f"Error loading chorus configuration: {str(e)}")
             
-            # If no chorus config found, try the legacy method (for backward compatibility)
+            # If no chorus config found, return an error
             if not chorus_config:
-                # If we have a specific chorus ID, try to use that configuration first
-                chorus_file = None
-                if specific_chorus_id:
-                    potential_file = os.path.join(chorus_dir, f"{specific_chorus_id}_chorus.json")
-                    if os.path.exists(potential_file):
-                        chorus_file = potential_file
-                        if debug_mode:
-                            print(f"Using legacy specific chorus configuration file: {specific_chorus_id}")
-                
-                # If no specific chorus file was found, fall back to this bot's own chorus file
-                if not chorus_file:
-                    chorus_file = os.path.join(chorus_dir, f"{bot_id}_chorus.json")
-                    if debug_mode and os.path.exists(chorus_file):
-                        print(f"Using legacy bot's own chorus configuration file: {bot_id}")
-                
-                # Use chorus if the legacy file exists
-                if chorus_file and os.path.exists(chorus_file):
-                    try:
-                        with open(chorus_file, 'r') as f:
-                            chorus_config = json.load(f)
-                    except Exception as e:
-                        print(f"Error reading legacy chorus file: {str(e)}")
-            
-            # If we have a valid chorus config, use it
-            if chorus_config:
-                # Get response and evaluator models
-                response_models = chorus_config.get('response_models', [])
-                evaluator_models = chorus_config.get('evaluator_models', [])
-                
-                # For debugging
-                if debug_mode:
-                    print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}")
-                    print(f"Response models: {len(response_models)}")
-                    print(f"Evaluator models: {len(evaluator_models)}")
-                
-                # Validate the configuration
-                if not response_models or not evaluator_models:
-                    return jsonify({
-                        "response": "The model chorus configuration is incomplete. Please configure both response and evaluator models.",
-                        "debug": {"error": "Incomplete chorus configuration"} if debug_mode else None
-                    }), 200
-                
-                logs = []
-                logs.append(f"Using model chorus: {chorus_config.get('name', 'Unnamed')}")
-                
-                # Generate responses from all models
-                all_responses = []
-                
-                # Process response models
-                for model in response_models:
-                    provider = model.get('provider')
-                    model_name = model.get('model')
-                    temperature = float(model.get('temperature', 0.7))
-                    weight = int(model.get('weight', 1))
-                    
-                    for i in range(weight):
-                        try:
-                            if provider == 'OpenAI':
-                                response = openai.chat.completions.create(
-                                    model=model_name,
-                                    messages=[
-                                        {"role": "system", "content": system_instruction},
-                                        {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
-                                    ],
-                                    temperature=temperature
-                                )
-                                all_responses.append({
-                                    "provider": provider,
-                                    "model": model_name,
-                                    "response": response.choices[0].message.content,
-                                    "temperature": temperature
-                                })
-                            elif provider == 'Anthropic':
-                                response = anthropic_client.messages.create(
-                                    model=model_name,
-                                    system=system_instruction,
-                                    messages=[{"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}],
-                                    temperature=temperature,
-                                    max_tokens=1024
-                                )
-                                all_responses.append({
-                                    "provider": provider,
-                                    "model": model_name,
-                                    "response": response.content[0].text,
-                                    "temperature": temperature
-                                })
-                            elif provider == 'Groq':
-                                headers = {
-                                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                                    "Content-Type": "application/json"
-                                }
-                                payload = {
-                                    "model": model_name,
-                                    "messages": [
-                                        {"role": "system", "content": system_instruction},
-                                        {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
-                                    ],
-                                    "temperature": temperature,
-                                    "max_tokens": 1024
-                                }
-                                response = requests.post(GROQ_API_URL, json=payload, headers=headers)
-                                response_json = response.json()
-                                all_responses.append({
-                                    "provider": provider,
-                                    "model": model_name,
-                                    "response": response_json["choices"][0]["message"]["content"],
-                                    "temperature": temperature
-                                })
-                            elif provider == 'Mistral':
-                                # Note: This would require a Mistral API implementation
-                                # For now we'll use OpenAI as a fallback and log it
-                                logs.append(f"Mistral API not implemented, using OpenAI fallback for {model_name}")
-                                response = openai.chat.completions.create(
-                                    model="gpt-3.5-turbo",
-                                    messages=[
-                                        {"role": "system", "content": system_instruction},
-                                        {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
-                                    ],
-                                    temperature=temperature
-                                )
-                                all_responses.append({
-                                    "provider": "OpenAI (Mistral fallback)",
-                                    "model": "gpt-3.5-turbo",
-                                    "response": response.choices[0].message.content,
-                                    "temperature": temperature
-                                })
-                        except Exception as e:
-                            logs.append(f"Error with {provider} {model_name}: {str(e)}")
-                
-                # If no responses, use fallback
-                if not all_responses:
-                    return jsonify({
-                        "response": "I encountered an issue with the model chorus. No models were able to generate a response.",
-                        "debug": {"error": "No models returned responses", "logs": logs} if debug_mode else None
-                    }), 200
-                
-                # If only one response, return it directly
-                if len(all_responses) == 1:
-                    return jsonify({
-                        "response": all_responses[0]["response"],
-                        "debug": {
-                            "all_responses": all_responses,
-                            "logs": logs,
-                            "contexts": contexts
-                        } if debug_mode else None
-                    }), 200
-                
-                # Get voting from evaluator models
-                votes = [0] * len(all_responses)
-                response_texts = [r["response"] for r in all_responses]
-                
-                for model in evaluator_models:
-                    provider = model.get('provider')
-                    model_name = model.get('model')
-                    temperature = float(model.get('temperature', 0.2))
-                    weight = int(model.get('weight', 1))
-                    
-                    voting_prompt = f"""You are an expert evaluator. You need to rank the following responses to the question: "{message}"
-
-Here are the {len(all_responses)} candidate responses:
-
-{chr(10).join([f"Response {j+1}:\n{resp}" for j, resp in enumerate(response_texts)])}
-
-Which response provides the most accurate, helpful, and relevant answer? Return ONLY the number (1-{len(all_responses)}) of the best response.
-"""
-                    # Apply weight by counting vote multiple times
-                    for i in range(weight):
-                        try:
-                            vote_text = ""
-                            if provider == 'OpenAI':
-                                voting_response = openai.chat.completions.create(
-                                    model=model_name,
-                                    messages=[{"role": "user", "content": voting_prompt}],
-                                    temperature=temperature
-                                )
-                                vote_text = voting_response.choices[0].message.content
-                            elif provider == 'Anthropic':
-                                voting_response = anthropic_client.messages.create(
-                                    model=model_name,
-                                    messages=[{"role": "user", "content": voting_prompt}],
-                                    temperature=temperature,
-                                    max_tokens=10
-                                )
-                                vote_text = voting_response.content[0].text
-                            elif provider == 'Groq':
-                                headers = {
-                                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                                    "Content-Type": "application/json"
-                                }
-                                payload = {
-                                    "model": model_name,
-                                    "messages": [{"role": "user", "content": voting_prompt}],
-                                    "temperature": temperature,
-                                    "max_tokens": 10
-                                }
-                                voting_response = requests.post(GROQ_API_URL, json=payload, headers=headers)
-                                voting_json = voting_response.json()
-                                vote_text = voting_json["choices"][0]["message"]["content"]
-                            elif provider == 'Mistral':
-                                # Fallback to OpenAI for Mistral
-                                logs.append(f"Mistral API not implemented for evaluation, using OpenAI fallback")
-                                voting_response = openai.chat.completions.create(
-                                    model="gpt-3.5-turbo",
-                                    messages=[{"role": "user", "content": voting_prompt}],
-                                    temperature=temperature
-                                )
-                                vote_text = voting_response.choices[0].message.content
-                            
-                            # Extract vote number
-                            match = re.search(r'\b([1-9][0-9]*)\b', vote_text)
-                            if match:
-                                vote_number = int(match.group(1))
-                                if 1 <= vote_number <= len(all_responses):
-                                    votes[vote_number-1] += 1
-                                    logs.append(f"Evaluator {provider} {model_name} voted for response {vote_number}")
-                                else:
-                                    logs.append(f"Invalid vote number: {vote_number}")
-                            else:
-                                logs.append(f"Could not parse vote from: {vote_text}")
-                        except Exception as e:
-                            logs.append(f"Error with evaluator {provider} {model_name}: {str(e)}")
-                
-                # Find winning response
-                max_votes = max(votes) if votes else 0
-                winning_indices = [i for i, v in enumerate(votes) if v == max_votes]
-                winning_index = winning_indices[0] if winning_indices else 0
-                
-                winning_response = all_responses[winning_index]["response"]
-                
                 return jsonify({
-                    "response": winning_response,
+                    "response": "I couldn't find the model chorus configuration. Please check that the chorus exists and is properly configured.",
+                    "debug": {"error": "Chorus configuration not found"} if debug_mode else None
+                }), 200
+            
+            # Get response and evaluator models
+            response_models = chorus_config.get('response_models', [])
+            evaluator_models = chorus_config.get('evaluator_models', [])
+            
+            # For debugging
+            if debug_mode:
+                print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}")
+                print(f"Response models: {len(response_models)}")
+                print(f"Evaluator models: {len(evaluator_models)}")
+            
+            # Validate the configuration
+            if not response_models or not evaluator_models:
+                return jsonify({
+                    "response": "The model chorus configuration is incomplete. Please configure both response and evaluator models.",
+                    "debug": {"error": "Incomplete chorus configuration"} if debug_mode else None
+                }), 200
+            
+            logs = []
+            logs.append(f"Using model chorus: {chorus_config.get('name', 'Unnamed')}")
+            
+            # Generate responses from all models
+            all_responses = []
+            anonymized_responses = []
+            response_metadata = []
+            
+            # Process response models
+            for model in response_models:
+                provider = model.get('provider')
+                model_name = model.get('model')
+                temperature = float(model.get('temperature', 0.7))
+                weight = int(model.get('weight', 1))
+                
+                for i in range(weight):
+                    try:
+                        if provider == 'OpenAI':
+                            response = openai.chat.completions.create(
+                                model=model_name,
+                                messages=[
+                                    {"role": "system", "content": system_instruction},
+                                    {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
+                                ],
+                                temperature=temperature
+                            )
+                            response_text = response.choices[0].message.content
+                            anonymized_responses.append(response_text)
+                            response_metadata.append({
+                                "provider": provider,
+                                "model": model_name,
+                                "temperature": temperature
+                            })
+                            all_responses.append({
+                                "provider": provider,
+                                "model": model_name,
+                                "response": response_text,
+                                "temperature": temperature
+                            })
+                        elif provider == 'Anthropic':
+                            response = anthropic_client.messages.create(
+                                model=model_name,
+                                system=system_instruction,
+                                messages=[{"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}],
+                                temperature=temperature,
+                                max_tokens=1024
+                            )
+                            response_text = response.content[0].text
+                            anonymized_responses.append(response_text)
+                            response_metadata.append({
+                                "provider": provider,
+                                "model": model_name,
+                                "temperature": temperature
+                            })
+                            all_responses.append({
+                                "provider": provider,
+                                "model": model_name,
+                                "response": response_text,
+                                "temperature": temperature
+                            })
+                        elif provider == 'Groq':
+                            headers = {
+                                "Authorization": f"Bearer {GROQ_API_KEY}",
+                                "Content-Type": "application/json"
+                            }
+                            payload = {
+                                "model": model_name,
+                                "messages": [
+                                    {"role": "system", "content": system_instruction},
+                                    {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
+                                ],
+                                "temperature": temperature,
+                                "max_tokens": 1024
+                            }
+                            response = requests.post(GROQ_API_URL, json=payload, headers=headers)
+                            response_json = response.json()
+                            response_text = response_json["choices"][0]["message"]["content"]
+                            anonymized_responses.append(response_text)
+                            response_metadata.append({
+                                "provider": provider,
+                                "model": model_name,
+                                "temperature": temperature
+                            })
+                            all_responses.append({
+                                "provider": provider,
+                                "model": model_name,
+                                "response": response_text,
+                                "temperature": temperature
+                            })
+                        elif provider == 'Mistral':
+                            # Note: This would require a Mistral API implementation
+                            # For now we'll use OpenAI as a fallback and log it
+                            logs.append(f"Mistral API not implemented, using OpenAI fallback for {model_name}")
+                            response = openai.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[
+                                    {"role": "system", "content": system_instruction},
+                                    {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
+                                ],
+                                temperature=temperature
+                            )
+                            response_text = response.choices[0].message.content
+                            anonymized_responses.append(response_text)
+                            response_metadata.append({
+                                "provider": "OpenAI (Mistral fallback)",
+                                "model": "gpt-3.5-turbo",
+                                "temperature": temperature
+                            })
+                            all_responses.append({
+                                "provider": "OpenAI (Mistral fallback)",
+                                "model": "gpt-3.5-turbo",
+                                "response": response_text,
+                                "temperature": temperature
+                            })
+                    except Exception as e:
+                        logs.append(f"Error with {provider} {model_name}: {str(e)}")
+            
+            # If no responses, use fallback
+            if not all_responses:
+                return jsonify({
+                    "response": "I encountered an issue with the model chorus. No models were able to generate a response.",
+                    "debug": {"error": "No models returned responses", "logs": logs} if debug_mode else None
+                }), 200
+            
+            # If only one response, return it directly
+            if len(all_responses) == 1:
+                return jsonify({
+                    "response": all_responses[0]["response"],
                     "debug": {
                         "all_responses": all_responses,
-                        "votes": votes,
+                        "anonymized_responses": anonymized_responses,
+                        "response_metadata": response_metadata,
                         "logs": logs,
                         "contexts": contexts
                     } if debug_mode else None
                 }), 200
+            
+            # Get voting from evaluator models
+            votes = [0] * len(all_responses)
+            
+            for model in evaluator_models:
+                provider = model.get('provider')
+                model_name = model.get('model')
+                temperature = float(model.get('temperature', 0.2))
+                weight = int(model.get('weight', 1))
                 
-        
+                voting_prompt = f"""You are an expert AI response evaluator. You need to rank the following responses to the question: "{message}"
+
+Here are the {len(anonymized_responses)} candidate responses:
+
+{chr(10).join([f"Response {j+1}:\n{resp}" for j, resp in enumerate(anonymized_responses)])}
+
+Which response provides the most accurate, helpful, and relevant answer? Return ONLY the number (1-{len(anonymized_responses)}) of the best response.
+Do not reveal any bias or preference based on writing style or approach - evaluate solely on answer quality, accuracy and helpfulness.
+"""
+                # Apply weight by counting vote multiple times
+                for i in range(weight):
+                    try:
+                        vote_text = ""
+                        if provider == 'OpenAI':
+                            voting_response = openai.chat.completions.create(
+                                model=model_name,
+                                messages=[{"role": "user", "content": voting_prompt}],
+                                temperature=temperature
+                            )
+                            vote_text = voting_response.choices[0].message.content
+                        elif provider == 'Anthropic':
+                            voting_response = anthropic_client.messages.create(
+                                model=model_name,
+                                messages=[{"role": "user", "content": voting_prompt}],
+                                temperature=temperature,
+                                max_tokens=10
+                            )
+                            vote_text = voting_response.content[0].text
+                        elif provider == 'Groq':
+                            headers = {
+                                "Authorization": f"Bearer {GROQ_API_KEY}",
+                                "Content-Type": "application/json"
+                            }
+                            payload = {
+                                "model": model_name,
+                                "messages": [{"role": "user", "content": voting_prompt}],
+                                "temperature": temperature,
+                                "max_tokens": 10
+                            }
+                            voting_response = requests.post(GROQ_API_URL, json=payload, headers=headers)
+                            voting_json = voting_response.json()
+                            vote_text = voting_json["choices"][0]["message"]["content"]
+                        elif provider == 'Mistral':
+                            # Fallback to OpenAI for Mistral
+                            logs.append(f"Mistral API not implemented for evaluation, using OpenAI fallback")
+                            voting_response = openai.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[{"role": "user", "content": voting_prompt}],
+                                temperature=temperature
+                            )
+                            vote_text = voting_response.choices[0].message.content
+                        
+                        # Extract vote number
+                        match = re.search(r'\b([1-9][0-9]*)\b', vote_text)
+                        if match:
+                            vote_number = int(match.group(1))
+                            if 1 <= vote_number <= len(anonymized_responses):
+                                votes[vote_number-1] += 1
+                                logs.append(f"Evaluator {provider} {model_name} voted for response {vote_number}")
+                            else:
+                                logs.append(f"Invalid vote number: {vote_number}")
+                        else:
+                            logs.append(f"Could not parse vote from: {vote_text}")
+                    except Exception as e:
+                        logs.append(f"Error with evaluator {provider} {model_name}: {str(e)}")
+            
+            # Find winning response
+            max_votes = max(votes) if votes else 0
+            winning_indices = [i for i, v in enumerate(votes) if v == max_votes]
+            winning_index = winning_indices[0] if winning_indices else 0
+            
+            winning_response = all_responses[winning_index]["response"]
+            
+            return jsonify({
+                "response": winning_response,
+                "debug": {
+                    "all_responses": all_responses,
+                    "anonymized_responses": anonymized_responses,
+                    "response_metadata": response_metadata,
+                    "votes": votes,
+                    "logs": logs,
+                    "contexts": contexts
+                } if debug_mode else None
+            }), 200
+                
+    
         # Standard mode - just get a response from OpenAI
         response = openai.chat.completions.create(
             model="gpt-4o",
@@ -1044,42 +1069,35 @@ def get_chorus_config(user_data, bot_id):
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
     
-    # If the bot has a chorus_id, first try to find it in the user's choruses
+    # Check for chorus_id in the bot
+    chorus_id = bot.get("chorus_id", "")
+    if not chorus_id:
+        return jsonify({"error": "No chorus configuration found for this bot"}), 404
+    
+    # Get the user's chorus definitions
     chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
     os.makedirs(chorus_dir, exist_ok=True)
     
-    if bot.get("chorus_id"):
-        # Check the user's chorus definitions first
-        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
-        
-        if os.path.exists(user_choruses_file):
-            with open(user_choruses_file, 'r') as f:
-                choruses = json.load(f)
-                
-            # Find the chorus by ID
-            chorus = next((c for c in choruses if c["id"] == bot["chorus_id"]), None)
-            if chorus:
-                return jsonify(chorus), 200
+    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    if not os.path.exists(user_choruses_file):
+        return jsonify({"error": "No chorus configurations found"}), 404
     
-    # If we didn't find it in the user choruses, or there's no chorus_id,
-    # fall back to the legacy method - looking for a bot-specific chorus file
-    chorus_file = os.path.join(chorus_dir, f"{bot_id}_chorus.json")
+    # Load the user's choruses and find the one with the matching ID
+    with open(user_choruses_file, 'r') as f:
+        choruses = json.load(f)
     
-    if not os.path.exists(chorus_file):
-        return jsonify({"error": "No chorus configuration found"}), 404
-        
-    try:
-        with open(chorus_file, 'r') as f:
-            chorus_config = json.load(f)
-            
-        return jsonify(chorus_config), 200
-    except Exception as e:
-        print(f"Error reading chorus configuration: {str(e)}")
-        return jsonify({"error": f"Error reading chorus configuration: {str(e)}"}), 500
+    chorus = next((c for c in choruses if c["id"] == chorus_id), None)
+    if not chorus:
+        return jsonify({"error": f"Chorus configuration with ID {chorus_id} not found"}), 404
+    
+    return jsonify(chorus), 200
 
 @app.route('/api/bots/<bot_id>/chorus', methods=['POST'])
 @require_auth
 def save_chorus_config(user_data, bot_id):
+    # This endpoint is now simplified to just associate a chorus with a bot
+    # For backward compatibility
+    
     # Check if bot exists and belongs to user
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
     user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
@@ -1101,81 +1119,61 @@ def save_chorus_config(user_data, bot_id):
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
     
-    # Save chorus configuration
+    # Get the chorus data
     data = request.json
     
-    # Basic validation
-    if not data.get('name'):
-        return jsonify({"error": "Chorus name is required"}), 400
-        
-    if not data.get('response_models') or not isinstance(data.get('response_models'), list) or len(data.get('response_models')) == 0:
-        return jsonify({"error": "At least one response model is required"}), 400
-        
-    if not data.get('evaluator_models') or not isinstance(data.get('evaluator_models'), list) or len(data.get('evaluator_models')) == 0:
-        return jsonify({"error": "At least one evaluator model is required"}), 400
-    
-    # Create chorus directory if it doesn't exist
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-    os.makedirs(chorus_dir, exist_ok=True)
-    
-    # Load or create user's chorus list
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
-    
-    if os.path.exists(user_choruses_file):
-        with open(user_choruses_file, 'r') as f:
-            choruses = json.load(f)
-    else:
-        choruses = []
-    
-    # Generate a unique ID for the chorus if needed
-    chorus_id = data.get('id') or str(uuid.uuid4())
-    
-    # If an ID was provided, check if it already exists and update it
-    existing_index = next((i for i, c in enumerate(choruses) if c.get('id') == chorus_id), None)
-    
-    # Create chorus data
-    chorus_data = {
-        "id": chorus_id,
-        "name": data.get('name'),
-        "description": data.get('description', ''),
-        "response_models": data.get('response_models', []),
-        "evaluator_models": data.get('evaluator_models', []),
-        "created_at": data.get('created_at', datetime.datetime.utcnow().isoformat()),
-        "updated_at": datetime.datetime.utcnow().isoformat(),
-        "created_by": user_data['username']
-    }
-    
-    # Update or add the chorus
-    if existing_index is not None:
-        choruses[existing_index] = chorus_data
-    else:
-        choruses.append(chorus_data)
-    
-    # Save the updated choruses
+    # First, create or update a chorus
     try:
+        # Create chorus directory if it doesn't exist
+        chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+        os.makedirs(chorus_dir, exist_ok=True)
+        
+        # Load or create user's chorus list
+        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+        
+        if os.path.exists(user_choruses_file):
+            with open(user_choruses_file, 'r') as f:
+                choruses = json.load(f)
+        else:
+            choruses = []
+        
+        # Generate a unique ID for the chorus
+        chorus_id = str(uuid.uuid4())
+        
+        # Create chorus data
+        chorus_data = {
+            "id": chorus_id,
+            "name": data.get('name', 'Unnamed Chorus'),
+            "description": data.get('description', ''),
+            "response_models": data.get('response_models', []),
+            "evaluator_models": data.get('evaluator_models', []),
+            "created_at": datetime.datetime.utcnow().isoformat(),
+            "updated_at": datetime.datetime.utcnow().isoformat(),
+            "created_by": user_data['username']
+        }
+        
+        # Add the chorus
+        choruses.append(chorus_data)
+        
+        # Save the updated choruses
         with open(user_choruses_file, 'w') as f:
             json.dump(choruses, f)
-    except Exception as e:
-        print(f"Error saving chorus data: {str(e)}")
-        return jsonify({"error": f"Error saving chorus data: {str(e)}"}), 500
-    
-    # Update the bot to use this chorus
-    bots[bot_index]["chorus_id"] = chorus_id
-    
-    # Save the updated bot
-    try:
+            
+        # Update the bot to use this chorus
+        bots[bot_index]["chorus_id"] = chorus_id
+        
+        # Save the updated bot
         with open(user_bots_file, 'w') as f:
             json.dump(bots, f)
+        
+        return jsonify({
+            "message": "Chorus created and assigned to bot successfully", 
+            "config": chorus_data,
+            "bot": bots[bot_index]
+        }), 200
     except Exception as e:
-        print(f"Error updating bot data: {str(e)}")
-        return jsonify({"error": f"Error updating bot data: {str(e)}"}), 500
-    
-    # Return the updated chorus data
-    return jsonify({
-        "message": "Chorus configuration saved successfully", 
-        "config": chorus_data,
-        "bot": bots[bot_index]
-    }), 200
+        print(f"Error creating chorus: {str(e)}")
+        return jsonify({"error": f"Error creating chorus: {str(e)}"}), 500
 
 @app.route('/api/bots/<bot_id>/debug-flowchart', methods=['POST'])
 @require_auth
@@ -1432,6 +1430,8 @@ def generate_debug_flowchart(user_data, bot_id):
         else:
             # In debug mode - generate 5 responses and let them vote
             responses = []
+            anonymized_responses = []
+            response_metadata = []
             logs = ["Debug mode enabled - generating 5 different responses"]
             
             for i in range(5):
@@ -1446,6 +1446,11 @@ def generate_debug_flowchart(user_data, bot_id):
                 )
                 response_text = response.choices[0].message.content
                 responses.append(response_text)
+                anonymized_responses.append(response_text)
+                response_metadata.append({
+                    "index": i+1,
+                    "temperature": 0.7 + (i * 0.1)
+                })
                 logs.append(f"Response {i+1}: {response_text[:100]}...")
                 
             # Have the responses vote on each other
@@ -1459,21 +1464,22 @@ def generate_debug_flowchart(user_data, bot_id):
 Here are the 5 candidate responses:
 
 Response 1:
-{responses[0]}
+{anonymized_responses[0]}
 
 Response 2:
-{responses[1]}
+{anonymized_responses[1]}
 
 Response 3:
-{responses[2]}
+{anonymized_responses[2]}
 
 Response 4:
-{responses[3]}
+{anonymized_responses[3]}
 
 Response 5:
-{responses[4]}
+{anonymized_responses[4]}
 
 Which response provides the most accurate, helpful, and relevant answer? Return ONLY the number (1-5) of the best response.
+Do not reveal any bias or preference based on writing style or approach - evaluate solely on answer quality, accuracy and helpfulness.
 """
                 voting_response = openai.chat.completions.create(
                     model="gpt-4",
@@ -1644,6 +1650,8 @@ Which response provides the most accurate, helpful, and relevant answer? Return 
                 "mermaid_code": mermaid_code,
                 "data": {
                     "responses": responses,
+                    "anonymized_responses": anonymized_responses,
+                    "response_metadata": response_metadata,
                     "votes": votes,
                     "logs": logs,
                     "contexts": contexts,
@@ -1658,10 +1666,7 @@ Which response provides the most accurate, helpful, and relevant answer? Return 
 @app.route('/api/bots/<bot_id>/set-chorus', methods=['POST'])
 @require_auth
 def set_bot_chorus(user_data, bot_id):
-    data = request.json
-    chorus_id = data.get('chorus_id', '')
-    
-    # Get bot info
+    # Check if bot exists and belongs to user
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
     user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
     
@@ -1671,25 +1676,46 @@ def set_bot_chorus(user_data, bot_id):
     with open(user_bots_file, 'r') as f:
         bots = json.load(f)
         
-    # Find and update the bot
-    bot_updated = False
-    for i, bot in enumerate(bots):
-        if bot["id"] == bot_id:
-            bots[i]["chorus_id"] = chorus_id
-            bot_updated = True
-            updated_bot = bots[i]
+    bot = None
+    bot_index = -1
+    for i, b in enumerate(bots):
+        if b["id"] == bot_id:
+            bot = b
+            bot_index = i
             break
             
-    if not bot_updated:
+    if not bot:
         return jsonify({"error": "Bot not found"}), 404
     
-    # Save the updated bots list
+    # Get the chorus ID from the request
+    data = request.json
+    chorus_id = data.get('chorus_id', '')
+    
+    # Empty string means unassign any chorus
+    if chorus_id:
+        # Verify that the chorus exists if an ID was provided
+        chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+        
+        if os.path.exists(user_choruses_file):
+            with open(user_choruses_file, 'r') as f:
+                choruses = json.load(f)
+                
+            # Find the chorus by ID
+            chorus = next((c for c in choruses if c["id"] == chorus_id), None)
+            if not chorus:
+                return jsonify({"error": f"Chorus with ID {chorus_id} not found"}), 404
+    
+    # Update the bot with the new chorus ID
+    bots[bot_index]["chorus_id"] = chorus_id
+    
+    # Save the updated bot
     with open(user_bots_file, 'w') as f:
         json.dump(bots, f)
-        
+    
     return jsonify({
-        "message": "Chorus setting updated successfully",
-        "bot": updated_bot
+        "message": chorus_id and "Chorus assigned to bot successfully" or "Chorus unassigned from bot successfully", 
+        "bot": bots[bot_index]
     }), 200
 
 @app.route('/api/choruses', methods=['GET'])
@@ -1913,37 +1939,58 @@ def create_bot(user_data):
     if not data or not data.get('name'):
         return jsonify({"error": "Bot name is required"}), 400
     
+    # Process dataset IDs - can be added later or supplied in the request
+    dataset_ids = []
+    if data.get('dataset_id'):  # Support single dataset_id in request for backward compatibility
+        dataset_ids.append(data.get('dataset_id'))
+    if data.get('dataset_ids') and isinstance(data.get('dataset_ids'), list):
+        dataset_ids.extend(data.get('dataset_ids'))
+    
+    # Get chorus_id if provided
+    chorus_id = data.get('chorus_id', '')
+    
+    # Verify that the chorus exists if one was provided
+    if chorus_id:
+        chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+        
+        if os.path.exists(user_choruses_file):
+            with open(user_choruses_file, 'r') as f:
+                choruses = json.load(f)
+                
+            # Find the chorus by ID
+            chorus = next((c for c in choruses if c["id"] == chorus_id), None)
+            if not chorus:
+                return jsonify({"error": f"Chorus with ID {chorus_id} not found"}), 400
+    
     # Create a new bot
     new_bot = {
         "id": str(uuid.uuid4()),
         "name": data.get('name'),
         "description": data.get('description', ''),
-        "datasets": data.get('datasets', []),
-        "persona": data.get('persona', ''),
-        "created_at": datetime.datetime.now().isoformat(),
-        "chorus_id": data.get('chorus_id', ''),
-        "model": data.get('model', 'gpt-4o'),
-        "temperature": data.get('temperature', 0.7)
+        "dataset_ids": dataset_ids,
+        "chorus_id": chorus_id,  # Set the chorus ID
+        "prompt_template": data.get('prompt_template', ''),
+        "system_instruction": data.get('system_instruction', 'You are a helpful AI assistant. Answer questions based on the provided context.'),
+        "created_at": datetime.datetime.utcnow().isoformat()
     }
     
-    # Get bots directory and user bots file
+    # Save the bot
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
     os.makedirs(bots_dir, exist_ok=True)
+    
+    # Check if user already has bots
     user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
     
-    # If user doesn't have any bots yet, create new file
-    if not os.path.exists(user_bots_file):
-        with open(user_bots_file, 'w') as f:
-            json.dump([new_bot], f)
-    else:
-        # Add bot to existing list
+    if os.path.exists(user_bots_file):
         with open(user_bots_file, 'r') as f:
             bots = json.load(f)
-        
         bots.append(new_bot)
-        
-        with open(user_bots_file, 'w') as f:
-            json.dump(bots, f)
+    else:
+        bots = [new_bot]
+    
+    with open(user_bots_file, 'w') as f:
+        json.dump(bots, f)
     
     return jsonify(new_bot), 201
 
@@ -1976,6 +2023,268 @@ def delete_bot(user_data, bot_id):
         json.dump(bots, f)
     
     return jsonify({"message": "Bot deleted successfully"}), 200
+
+# Add new endpoints for managing datasets in a bot
+@app.route('/api/bots/<bot_id>/datasets', methods=['GET'])
+@require_auth
+def get_bot_datasets(user_data, bot_id):
+    # Get bot info
+    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
+    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    
+    if not os.path.exists(user_bots_file):
+        return jsonify({"error": "Bot not found"}), 404
+        
+    with open(user_bots_file, 'r') as f:
+        bots = json.load(f)
+        
+    bot = None
+    for b in bots:
+        if b["id"] == bot_id:
+            bot = b
+            break
+            
+    if not bot:
+        return jsonify({"error": "Bot not found"}), 404
+    
+    # Get dataset info for each dataset ID
+    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    
+    dataset_details = []
+    
+    # Get dataset IDs from bot
+    dataset_ids = bot.get("dataset_ids", [])
+    
+    if os.path.exists(user_datasets_file):
+        try:
+            with open(user_datasets_file, 'r') as f:
+                all_datasets = json.load(f)
+                
+            for dataset_id in dataset_ids:
+                dataset_found = False
+                for d in all_datasets:
+                    if d["id"] == dataset_id:
+                        dataset_details.append(d)
+                        dataset_found = True
+                        break
+                
+                if not dataset_found:
+                    # Add placeholder for missing dataset
+                    dataset_details.append({
+                        "id": dataset_id,
+                        "name": "Unknown dataset",
+                        "missing": True
+                    })
+        except Exception as e:
+            print(f"Error loading datasets: {str(e)}")
+    
+    return jsonify({
+        "bot": bot,
+        "datasets": dataset_details
+    }), 200
+
+@app.route('/api/bots/<bot_id>/datasets', methods=['POST'])
+@require_auth
+def add_dataset_to_bot(user_data, bot_id):
+    data = request.json
+    dataset_id = data.get('dataset_id')
+    
+    if not dataset_id:
+        return jsonify({"error": "Dataset ID is required"}), 400
+    
+    # Check if dataset exists
+    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    
+    dataset_exists = False
+    dataset_name = "Unknown dataset"
+    if os.path.exists(user_datasets_file):
+        with open(user_datasets_file, 'r') as f:
+            datasets = json.load(f)
+        
+        for d in datasets:
+            if d["id"] == dataset_id:
+                dataset_exists = True
+                dataset_name = d["name"]
+                break
+    
+    if not dataset_exists:
+        return jsonify({"error": "Dataset not found"}), 404
+    
+    # Get bot info
+    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
+    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    
+    if not os.path.exists(user_bots_file):
+        return jsonify({"error": "Bot not found"}), 404
+        
+    with open(user_bots_file, 'r') as f:
+        bots = json.load(f)
+        
+    bot_index = None
+    for i, b in enumerate(bots):
+        if b["id"] == bot_id:
+            bot_index = i
+            break
+            
+    if bot_index is None:
+        return jsonify({"error": "Bot not found"}), 404
+    
+    # Update bot with the new dataset
+    bot = bots[bot_index]
+    
+    # Set up dataset_ids if it doesn't exist
+    if "dataset_ids" not in bot:
+        bot["dataset_ids"] = []
+        
+    # Add dataset if not already added
+    if dataset_id not in bot["dataset_ids"]:
+        bot["dataset_ids"].append(dataset_id)
+        
+    # Save updated bot
+    bots[bot_index] = bot
+    with open(user_bots_file, 'w') as f:
+        json.dump(bots, f)
+    
+    return jsonify({
+        "message": f"Dataset '{dataset_name}' added to bot successfully",
+        "bot": bot
+    }), 200
+
+@app.route('/api/bots/<bot_id>/datasets/<dataset_id>', methods=['DELETE'])
+@require_auth
+def remove_dataset_from_bot(user_data, bot_id, dataset_id):
+    # Get bot info
+    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
+    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    
+    if not os.path.exists(user_bots_file):
+        return jsonify({"error": "Bot not found"}), 404
+        
+    with open(user_bots_file, 'r') as f:
+        bots = json.load(f)
+        
+    bot_index = None
+    for i, b in enumerate(bots):
+        if b["id"] == bot_id:
+            bot_index = i
+            break
+            
+    if bot_index is None:
+        return jsonify({"error": "Bot not found"}), 404
+    
+    # Update bot to remove the dataset
+    bot = bots[bot_index]
+    
+    # Remove dataset from the dataset_ids array
+    dataset_removed = False
+    if "dataset_ids" in bot and dataset_id in bot["dataset_ids"]:
+        bot["dataset_ids"].remove(dataset_id)
+        dataset_removed = True
+    
+    if not dataset_removed:
+        return jsonify({"error": "Dataset not found in bot"}), 404
+    
+    # Save updated bot
+    bots[bot_index] = bot
+    with open(user_bots_file, 'w') as f:
+        json.dump(bots, f)
+    
+    return jsonify({
+        "message": "Dataset removed from bot successfully",
+        "bot": bot
+    }), 200
+
+# Image generation route
+@app.route('/api/images/generate', methods=['POST'])
+@require_auth
+def generate_image(user_data):
+    try:
+        # Get request data
+        data = request.json
+        prompt = data.get('prompt')
+        
+        if not prompt:
+            return jsonify({"error": "Prompt is required"}), 400
+            
+        # Get additional parameters with defaults for gpt-image-1
+        model = "gpt-image-1"  # Always use gpt-image-1
+        size = data.get('size', '1024x1024')  # Default square
+        quality = data.get('quality', 'auto')  # 'low', 'medium', 'high', or 'auto'
+        n = data.get('n', 1)  # Number of images to generate
+        output_format = data.get('output_format', 'png')  # 'png', 'jpeg', or 'webp'
+        
+        # Build the API request params with only supported parameters
+        generation_params = {
+            "model": model,
+            "prompt": prompt,
+            "n": n,
+            "size": size,
+            "quality": quality
+        }
+        
+        # Generate image with OpenAI
+        response = openai.images.generate(**generation_params)
+        
+        results = []
+        # Process all generated images
+        for i, image_obj in enumerate(response.data):
+            # Get the base64 content from OpenAI response
+            if hasattr(image_obj, 'b64_json') and image_obj.b64_json:
+                # Decode base64 content
+                image_content = base64.b64decode(image_obj.b64_json)
+                image_url = None
+            elif hasattr(image_obj, 'url') and image_obj.url:
+                # For backward compatibility if URL is provided
+                image_url = image_obj.url
+                
+                # Download the image
+                image_response = requests.get(image_url)
+                if image_response.status_code != 200:
+                    return jsonify({"error": f"Failed to download generated image {i+1}"}), 500
+                    
+                image_content = image_response.content
+            else:
+                return jsonify({"error": f"No image data found in response for image {i+1}"}), 500
+                
+            # Create a unique filename
+            ext = output_format if output_format else "png"  # Default to png
+            filename = f"generated_{str(uuid.uuid4())}.{ext}"
+            filepath = os.path.join(IMAGE_FOLDER, filename)
+            
+            # Save the image
+            with open(filepath, 'wb') as f:
+                f.write(image_content)
+                
+            # Create the URL for accessing the image
+            api_image_url = f"/api/images/{filename}"
+            
+            # Add to results
+            results.append({
+                "image_url": api_image_url,
+                "original_url": image_url,
+                "params": {
+                    "model": model,
+                    "size": size,
+                    "quality": quality,
+                    "format": output_format
+                }
+            })
+        
+        return jsonify({
+            "success": True,
+            "images": results
+        })
+        
+    except Exception as e:
+        print(f"Error generating image: {str(e)}")
+        return jsonify({"error": f"Image generation failed: {str(e)}"}), 500
+
+# Route to serve generated images
+@app.route('/api/images/<filename>', methods=['GET'])
+def get_image(filename):
+    return send_from_directory(IMAGE_FOLDER, filename)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
