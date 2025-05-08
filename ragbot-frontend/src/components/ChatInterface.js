@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Row, Col, Form, Button, Card, Spinner, Alert, Dropdown, Modal, Badge } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, Card, Spinner, Alert, Dropdown, Modal, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import botService from '../services/botService';
-import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck } from 'react-icons/fa';
+import '../markdown-styles.css';
+import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck, FaLightbulb } from 'react-icons/fa';
 
 // Add some custom styles for the chorus UI
 const chorusStyles = {
@@ -53,6 +55,48 @@ const chorusStyles = {
   }
 };
 
+// Add styles for markdown content
+const markdownStyles = {
+  container: {
+    fontFamily: 'inherit',
+  },
+  code: {
+    backgroundColor: '#f6f8fa',
+    padding: '0.2em 0.4em',
+    borderRadius: '3px',
+    fontFamily: 'SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
+    fontSize: '85%',
+  },
+  pre: {
+    backgroundColor: '#f6f8fa',
+    padding: '1em',
+    borderRadius: '6px',
+    overflow: 'auto',
+    fontSize: '85%',
+  },
+  blockquote: {
+    borderLeft: '4px solid #dfe2e5',
+    color: '#6a737d',
+    paddingLeft: '1em',
+    margin: '0',
+  },
+  table: {
+    borderCollapse: 'collapse',
+    width: '100%',
+    marginBottom: '1em',
+  },
+  th: {
+    border: '1px solid #dfe2e5',
+    padding: '6px 13px',
+    backgroundColor: '#f6f8fa',
+    fontWeight: '600',
+  },
+  td: {
+    border: '1px solid #dfe2e5',
+    padding: '6px 13px',
+  }
+};
+
 const ChatInterface = () => {
   const { botId } = useParams();
   const navigate = useNavigate();
@@ -82,6 +126,17 @@ const ChatInterface = () => {
   const [selectedChorusId, setSelectedChorusId] = useState('');
   const [showChorusDropdown, setShowChorusDropdown] = useState(false);
 
+  // Add state for conversations
+  const [conversations, setConversations] = useState([]);
+  const [currentConversationId, setCurrentConversationId] = useState('');
+  const [showConversations, setShowConversations] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [conversationRenameMode, setConversationRenameMode] = useState(false);
+  const [newConversationTitle, setNewConversationTitle] = useState('');
+
+  // Add state for enhance prompt functionality
+  const [enhancingPrompt, setEnhancingPrompt] = useState(false);
+
   useEffect(() => {
     // Fetch bot details
     const loadBot = async () => {
@@ -110,6 +165,9 @@ const ChatInterface = () => {
 
           // Load available chorus configurations
           loadChorusConfigurations();
+          
+          // Load conversation history
+          loadConversations();
         } else {
           setError('Bot not found');
           setTimeout(() => navigate('/bots'), 3000);
@@ -121,6 +179,114 @@ const ChatInterface = () => {
     
     loadBot();
   }, [botId, navigate]);
+
+  // Load conversations for this bot
+  const loadConversations = async () => {
+    try {
+      setLoadingConversations(true);
+      const conversationList = await botService.getConversations(botId);
+      setConversations(conversationList);
+      setLoadingConversations(false);
+    } catch (err) {
+      console.error('Error loading conversations:', err);
+      setLoadingConversations(false);
+    }
+  };
+  
+  // Load a specific conversation
+  const loadConversation = async (conversationId) => {
+    try {
+      setLoading(true);
+      const conversation = await botService.getConversation(botId, conversationId);
+      
+      // Set the current conversation ID
+      setCurrentConversationId(conversationId);
+      
+      // Clear any existing messages and load the conversation messages
+      setMessages(conversation.messages || []);
+      
+      // Hide the conversation list
+      setShowConversations(false);
+      setLoading(false);
+    } catch (err) {
+      console.error('Error loading conversation:', err);
+      setError('Failed to load conversation');
+      setLoading(false);
+    }
+  };
+  
+  // Delete a conversation
+  const deleteConversation = async (conversationId) => {
+    if (!window.confirm('Are you sure you want to delete this conversation?')) {
+      return;
+    }
+    
+    try {
+      await botService.deleteConversation(botId, conversationId);
+      
+      // If this was the current conversation, clear it
+      if (conversationId === currentConversationId) {
+        setCurrentConversationId('');
+        setMessages([]);
+      }
+      
+      // Reload conversations
+      loadConversations();
+    } catch (err) {
+      console.error('Error deleting conversation:', err);
+      setError('Failed to delete conversation');
+    }
+  };
+  
+  // Start a new conversation
+  const startNewConversation = () => {
+    setCurrentConversationId('');
+    setMessages([]);
+    setShowConversations(false);
+  };
+
+  // Rename conversation
+  const handleRenameConversation = async (e) => {
+    e.preventDefault();
+    
+    if (!newConversationTitle.trim()) {
+      return;
+    }
+    
+    try {
+      await botService.renameConversation(botId, currentConversationId, newConversationTitle);
+      
+      // Exit rename mode
+      setConversationRenameMode(false);
+      
+      // Reload conversations to show the new title
+      loadConversations();
+    } catch (err) {
+      console.error('Error renaming conversation:', err);
+      setError('Failed to rename conversation');
+    }
+  };
+
+  // Delete all conversations
+  const handleDeleteAllConversations = async () => {
+    if (!window.confirm('Are you sure you want to delete ALL conversations? This cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      await botService.deleteAllConversations(botId);
+      
+      // Clear current conversation
+      setCurrentConversationId('');
+      setMessages([]);
+      
+      // Reload (now empty) conversations
+      loadConversations();
+    } catch (err) {
+      console.error('Error deleting all conversations:', err);
+      setError('Failed to delete all conversations');
+    }
+  };
 
   const loadChorusConfigurations = async () => {
     try {
@@ -211,9 +377,9 @@ const ChatInterface = () => {
     // Add user message to chat
     const newUserMessage = {
       id: Date.now(),
-      sender: 'user',
+      role: 'user',
       content: message,
-      timestamp: new Date()
+      timestamp: new Date().toISOString()
     };
     
     setMessages(prev => [...prev, newUserMessage]);
@@ -248,42 +414,56 @@ const ChatInterface = () => {
         };
         
         // Replace the text-only message with one containing the image
-        setMessages(prev => [...prev.slice(0, prev.length - 1), userMessageWithImage]);
+        setMessages(prev => {
+          const newMessages = [...prev];
+          newMessages[newMessages.length - 1] = userMessageWithImage;
+          return newMessages;
+        });
         
-        // Clear image attachment
+        // Clear the image attachment
         removeImage();
       } else {
-        // Use selected chorus ID if available
-        const effectiveChorusId = selectedChorusId || (bot && bot.chorus_id) || '';
+        // Determine which chorus ID to use (if any)
+        const effectiveChorusId = selectedChorusId || (bot && bot.chorus_id ? bot.chorus_id : '');
         
-        // Send text-only message
-        response = await botService.chatWithBot(botId, currentMessage, debugMode, useModelChorus, effectiveChorusId);
+        // Send message to bot
+        response = await botService.chatWithBot(
+          botId, 
+          currentMessage, 
+          debugMode, 
+          useModelChorus, 
+          effectiveChorusId,
+          currentConversationId
+        );
+      }
+      
+      // Update the current conversation ID if a new one was created
+      if (response.conversation_id && !currentConversationId) {
+        setCurrentConversationId(response.conversation_id);
       }
       
       // Add bot response to chat
       const botMessage = {
         id: Date.now(),
-        sender: 'bot',
+        role: 'assistant',
         content: response.response,
-        timestamp: new Date()
+        timestamp: new Date().toISOString()
       };
       
       setMessages(prev => [...prev, botMessage]);
       
-      // Store debug info if in debug mode
+      // If debug mode is enabled and we have debug info, set it
       if (debugMode && response.debug) {
         setDebugInfo(response.debug);
       }
       
-      // Update lastMessageContent
-      setLastMessageContent(currentMessage);
-      
+      // Reload conversations to reflect the new or updated conversation
+      loadConversations();
     } catch (err) {
       console.error('Error in chat:', err);
       setError(`Error: ${err.message || 'Failed to send message'}`);
     } finally {
       setLoading(false);
-      scrollToBottom();
     }
   };
 
@@ -382,12 +562,229 @@ const ChatInterface = () => {
     }
   };
 
+  // Add function to handle enhance prompt
+  const handleEnhancePrompt = async () => {
+    if (!message.trim() || enhancingPrompt) return;
+    
+    try {
+      setEnhancingPrompt(true);
+      
+      // Call API to enhance the prompt
+      try {
+        const result = await botService.enhancePrompt(message);
+        
+        if (result && result.enhanced_prompt) {
+          // Just set the message to the enhanced prompt without showing any notifications
+          setMessage(result.enhanced_prompt);
+          // No success message - just silently update
+        } else {
+          // If we get a response but no enhanced_prompt property
+          console.warn('Enhance prompt response missing enhanced_prompt property:', result);
+          throw new Error('Invalid response format');
+        }
+      } catch (apiError) {
+        console.warn('API prompt enhancement failed, using frontend fallback:', apiError);
+        
+        // Simple frontend fallback implementation for prompt enhancement
+        const currentPrompt = message.trim();
+        let enhancedPrompt = currentPrompt;
+        
+        // Add specificity without explanatory text
+        if (currentPrompt.toLowerCase().includes('how to') || currentPrompt.toLowerCase().includes('how do i')) {
+          enhancedPrompt = enhancedPrompt.replace(/\?$/, '');
+          enhancedPrompt = enhancedPrompt + " step by step?";
+        } else if (currentPrompt.split(' ').length < 5) {
+          // For short queries, make them more specific
+          const subject = enhancedPrompt.trim();
+          enhancedPrompt = subject + ", including its key features, benefits, and common use cases";
+        }
+        
+        // Just set the message without notifications
+        setMessage(enhancedPrompt);
+      }
+    } catch (err) {
+      console.error('Error enhancing prompt:', err);
+      // Don't show errors to the user
+    } finally {
+      setEnhancingPrompt(false);
+    }
+  };
+
   const formatTime = (date) => {
     return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
-    <Container fluid className="p-0">
+    <Container fluid className="h-100 d-flex flex-column p-0">
+      <div className="chat-header py-2 px-3 border-bottom d-flex justify-content-between align-items-center">
+        <div className="d-flex align-items-center">
+          <Button 
+            variant="link" 
+            className="p-0 me-2 text-dark" 
+            onClick={() => navigate('/bots')}
+          >
+            <FaChevronLeft />
+          </Button>
+          <h5 className="mb-0">
+            {bot ? bot.name : 'Chat'}
+            {currentConversationId && conversations.find(c => c.id === currentConversationId) && (
+              <span className="ms-2 text-muted" style={{ fontSize: '0.9rem' }}>
+                {conversationRenameMode ? (
+                  <form onSubmit={handleRenameConversation} className="d-inline-flex ms-2">
+                    <input
+                      type="text"
+                      className="form-control form-control-sm"
+                      value={newConversationTitle}
+                      onChange={(e) => setNewConversationTitle(e.target.value)}
+                      autoFocus
+                      placeholder="Conversation title"
+                      style={{ width: '200px' }}
+                    />
+                    <Button 
+                      variant="outline-secondary" 
+                      size="sm" 
+                      type="submit" 
+                      className="ms-1"
+                    >
+                      <FaCheck />
+                    </Button>
+                    <Button 
+                      variant="outline-secondary" 
+                      size="sm" 
+                      onClick={() => setConversationRenameMode(false)} 
+                      className="ms-1"
+                    >
+                      <FaTimes />
+                    </Button>
+                  </form>
+                ) : (
+                  <>
+                    {conversations.find(c => c.id === currentConversationId)?.title || 'Conversation'}
+                    <Button 
+                      variant="link" 
+                      className="p-0 ms-1" 
+                      onClick={() => {
+                        const currentConversation = conversations.find(c => c.id === currentConversationId);
+                        if (currentConversation) {
+                          setNewConversationTitle(currentConversation.title);
+                          setConversationRenameMode(true);
+                        }
+                      }}
+                    >
+                      <FaEdit size={12} />
+                    </Button>
+                  </>
+                )}
+              </span>
+            )}
+          </h5>
+        </div>
+        
+        <div>
+          {/* Toggle conversations dropdown button */}
+          <Button 
+            variant="outline-secondary" 
+            size="sm" 
+            className="me-2"
+            onClick={() => setShowConversations(!showConversations)}
+          >
+            <FaListAlt className="me-1" />
+            Conversations
+          </Button>
+          
+          {/* Other buttons... */}
+        </div>
+      </div>
+
+      {/* Conversations Sidebar */}
+      {showConversations && (
+        <div className="conversation-sidebar border-end" style={{ 
+          position: 'absolute', 
+          top: '50px', 
+          right: '0', 
+          bottom: '60px', 
+          width: '300px', 
+          zIndex: 1000, 
+          backgroundColor: 'white',
+          overflowY: 'auto',
+          padding: '1rem',
+          boxShadow: '-2px 0 10px rgba(0,0,0,0.1)'
+        }}>
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h6 className="mb-0">Conversations</h6>
+            <div>
+              <Button 
+                variant="primary" 
+                size="sm" 
+                className="me-2"
+                onClick={startNewConversation}
+              >
+                New
+              </Button>
+              {conversations.length > 0 && (
+                <Button 
+                  variant="outline-danger" 
+                  size="sm"
+                  onClick={handleDeleteAllConversations}
+                >
+                  Delete All
+                </Button>
+              )}
+            </div>
+          </div>
+          
+          {loadingConversations ? (
+            <div className="text-center py-4">
+              <Spinner animation="border" size="sm" className="me-2" />
+              Loading conversations...
+            </div>
+          ) : conversations.length === 0 ? (
+            <div className="text-center py-4 text-muted">
+              No conversations yet
+            </div>
+          ) : (
+            <div>
+              {conversations.map(convo => (
+                <div 
+                  key={convo.id} 
+                  className={`conversation-item p-2 mb-2 rounded ${currentConversationId === convo.id ? 'bg-light border' : 'border'}`}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <div 
+                    className="d-flex justify-content-between"
+                    onClick={() => loadConversation(convo.id)}
+                  >
+                    <div>
+                      <div className="fw-bold text-truncate" style={{ maxWidth: '200px' }}>
+                        {convo.title || 'Untitled Conversation'}
+                      </div>
+                      <div className="text-muted small">
+                        {new Date(convo.updated_at).toLocaleString()} · {convo.message_count} messages
+                      </div>
+                      <div className="text-truncate small" style={{ maxWidth: '240px' }}>
+                        {convo.preview}
+                      </div>
+                    </div>
+                    <div>
+                      <Button 
+                        variant="link" 
+                        className="p-0 text-danger" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteConversation(convo.id);
+                        }}
+                      >
+                        <FaTimes />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {error && (
         <Alert variant="danger" className="m-3">
           {error}
@@ -535,10 +932,65 @@ const ChatInterface = () => {
                   messages.map(msg => (
                     <div 
                       key={msg.id} 
-                      className={`message ${msg.sender === 'user' ? 'user-message' : 'bot-message'}`}
+                      className={`message ${msg.role === 'user' ? 'user-message' : 'bot-message'}`}
                     >
                       <div className="message-content">
-                        {typeof msg.content === 'object' ? msg.content : msg.content}
+                        {msg.role === 'user' ? (
+                          // Display user messages normally
+                          typeof msg.content === 'object' ? msg.content : msg.content
+                        ) : (
+                          // Display bot messages with markdown rendering
+                          typeof msg.content === 'object' ? (
+                            msg.content
+                          ) : (
+                            <div className="markdown-content">
+                              <ReactMarkdown 
+                                components={{
+                                  // Apply custom styles to markdown elements
+                                  code: ({node, inline, className, children, ...props}) => {
+                                    const style = inline ? markdownStyles.code : markdownStyles.pre;
+                                    return (
+                                      <code
+                                        className={className}
+                                        style={style}
+                                        {...props}
+                                      >
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+                                  pre: ({node, children, ...props}) => (
+                                    <pre style={markdownStyles.pre} {...props}>
+                                      {children}
+                                    </pre>
+                                  ),
+                                  blockquote: ({node, children, ...props}) => (
+                                    <blockquote style={markdownStyles.blockquote} {...props}>
+                                      {children}
+                                    </blockquote>
+                                  ),
+                                  table: ({node, children, ...props}) => (
+                                    <table style={markdownStyles.table} {...props}>
+                                      {children}
+                                    </table>
+                                  ),
+                                  th: ({node, children, ...props}) => (
+                                    <th style={markdownStyles.th} {...props}>
+                                      {children}
+                                    </th>
+                                  ),
+                                  td: ({node, children, ...props}) => (
+                                    <td style={markdownStyles.td} {...props}>
+                                      {children}
+                                    </td>
+                                  )
+                                }}
+                              >
+                                {msg.content}
+                              </ReactMarkdown>
+                            </div>
+                          )
+                        )}
                       </div>
                       <div className="message-time">
                         {formatTime(msg.timestamp)}
@@ -700,8 +1152,42 @@ const ChatInterface = () => {
                           value={message}
                           onChange={(e) => setMessage(e.target.value)}
                           placeholder="Type your message..."
-                          disabled={loading}
+                          disabled={loading || enhancingPrompt}
                         />
+                        
+                        <OverlayTrigger
+                          placement="top"
+                          overlay={<Tooltip>Enhance your prompt with AI</Tooltip>}
+                        >
+                          <Button 
+                            variant="outline-primary"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              try {
+                                handleEnhancePrompt();
+                              } catch (err) {
+                                console.error('Error in enhance prompt button click:', err);
+                                setError('Failed to start prompt enhancement');
+                                setEnhancingPrompt(false);
+                              }
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              if (debugMode) {
+                                // Display API details in console for debugging
+                                console.log('Debug info for enhance prompt:');
+                                console.log('Primary API URL:', `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/bots/enhance-prompt`);
+                                console.log('Fallback API URL:', `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/bots/[botId]/chat`);
+                                console.log('Current message:', message);
+                                alert('Check console for API debugging info');
+                              }
+                            }}
+                            disabled={!message.trim() || loading || enhancingPrompt}
+                            title="Enhance Prompt"
+                          >
+                            {enhancingPrompt ? <Spinner animation="border" size="sm" /> : <FaLightbulb />}
+                          </Button>
+                        </OverlayTrigger>
                         
                         <Button 
                           variant="outline-secondary"

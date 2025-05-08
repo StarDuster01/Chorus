@@ -60,6 +60,10 @@ openai_ef = embedding_functions.OpenAIEmbeddingFunction(
     model_name="text-embedding-ada-002"
 )
 
+# Create directories for storing conversations
+CONVERSATIONS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversations")
+os.makedirs(CONVERSATIONS_FOLDER, exist_ok=True)
+
 # Sync datasets with ChromaDB collections
 def sync_datasets_with_collections():
     print("Syncing datasets with ChromaDB collections...")
@@ -662,9 +666,50 @@ def chat_with_bot(user_data, bot_id):
     debug_mode = data.get('debug_mode', False)
     use_model_chorus = data.get('use_model_chorus', False)  # User's explicit choice to use model chorus
     chorus_id = data.get('chorus_id', '')  # A specific chorus ID to use
+    conversation_id = data.get('conversation_id', '')  # The conversation this message belongs to
     
     if not message:
         return jsonify({"error": "Message is required"}), 400
+    
+    # Create a new conversation if no conversation_id provided
+    if not conversation_id:
+        conversation_id = str(uuid.uuid4())
+    
+    # Create a new message object
+    user_message = {
+        "id": str(uuid.uuid4()),
+        "role": "user",
+        "content": message,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    }
+    
+    # Add message to conversation history
+    conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
+    conversation_exists = os.path.exists(conversation_file)
+    
+    if conversation_exists:
+        # Load existing conversation
+        with open(conversation_file, 'r') as f:
+            conversation = json.load(f)
+    else:
+        # Create new conversation
+        conversation = {
+            "id": conversation_id,
+            "bot_id": bot_id,
+            "user_id": user_data['id'],
+            "title": message[:40] + "..." if len(message) > 40 else message,  # Use first message as title
+            "created_at": datetime.datetime.utcnow().isoformat(),
+            "updated_at": datetime.datetime.utcnow().isoformat(),
+            "messages": []
+        }
+    
+    # Add user message to conversation
+    conversation["messages"].append(user_message)
+    conversation["updated_at"] = datetime.datetime.utcnow().isoformat()
+    
+    # Save updated conversation
+    with open(conversation_file, 'w') as f:
+        json.dump(conversation, f)
         
     # Get bot info
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
@@ -690,7 +735,8 @@ def chat_with_bot(user_data, bot_id):
     
     if not dataset_ids:
         return jsonify({
-            "response": "I don't have any datasets to work with. Please add a dataset to help me answer your questions."
+            "response": "I don't have any datasets to work with. Please add a dataset to help me answer your questions.",
+            "conversation_id": conversation_id
         }), 200
     
     # Check if the bot has a chorus configuration associated with it
@@ -730,9 +776,21 @@ def chat_with_bot(user_data, bot_id):
                 continue
                 
         if not all_contexts:
+            # Save the response in the conversation
+            bot_response = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": "I don't have any documents in my knowledge base yet. Please upload some documents to help me answer your questions.",
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+            conversation["messages"].append(bot_response)
+            with open(conversation_file, 'w') as f:
+                json.dump(conversation, f)
+                
             return jsonify({
                 "response": "I don't have any documents in my knowledge base yet. Please upload some documents to help me answer your questions.",
-                "debug": {"error": "No contexts found in any collections"} if debug_mode else None
+                "debug": {"error": "No contexts found in any collections"} if debug_mode else None,
+                "conversation_id": conversation_id
             }), 200
             
         # Sort contexts by relevance (they should already be sorted from query results)
@@ -741,8 +799,24 @@ def chat_with_bot(user_data, bot_id):
         contexts = all_contexts[:max_contexts]
         context_text = "\n\n".join(contexts)
         
+        # Get previous conversation messages to add as context
+        conversation_history = ""
+        if len(conversation["messages"]) > 1:  # If there's more than just the current message
+            # Get last 10 messages maximum
+            recent_messages = conversation["messages"][-10:] if len(conversation["messages"]) > 10 else conversation["messages"]
+            # Format them for context
+            conversation_history = "\n".join([
+                f"{msg['role'].capitalize()}: {msg['content']}" 
+                for msg in recent_messages[:-1]  # Exclude current message
+            ])
+        
         # Prepare the system instruction and context
         system_instruction = bot.get("system_instruction", "You are a helpful assistant that answers questions based on the provided context.")
+        
+        # Add conversation history to system instruction if available
+        system_instruction_with_history = system_instruction
+        if conversation_history:
+            system_instruction_with_history += "\n\nThis is the conversation history so far:\n" + conversation_history
         
         # Check if using model chorus
         if use_model_chorus:
@@ -771,9 +845,21 @@ def chat_with_bot(user_data, bot_id):
             
             # If no chorus config found, return an error
             if not chorus_config:
+                # Save the response in the conversation
+                bot_response = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": "I couldn't find the model chorus configuration. Please check that the chorus exists and is properly configured.",
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                conversation["messages"].append(bot_response)
+                with open(conversation_file, 'w') as f:
+                    json.dump(conversation, f)
+                    
                 return jsonify({
                     "response": "I couldn't find the model chorus configuration. Please check that the chorus exists and is properly configured.",
-                    "debug": {"error": "Chorus configuration not found"} if debug_mode else None
+                    "debug": {"error": "Chorus configuration not found"} if debug_mode else None,
+                    "conversation_id": conversation_id
                 }), 200
             
             # Get response and evaluator models
@@ -788,9 +874,21 @@ def chat_with_bot(user_data, bot_id):
             
             # Validate the configuration
             if not response_models or not evaluator_models:
+                # Save the response in the conversation
+                bot_response = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": "The model chorus configuration is incomplete. Please configure both response and evaluator models.",
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                conversation["messages"].append(bot_response)
+                with open(conversation_file, 'w') as f:
+                    json.dump(conversation, f)
+                    
                 return jsonify({
                     "response": "The model chorus configuration is incomplete. Please configure both response and evaluator models.",
-                    "debug": {"error": "Incomplete chorus configuration"} if debug_mode else None
+                    "debug": {"error": "Incomplete chorus configuration"} if debug_mode else None,
+                    "conversation_id": conversation_id
                 }), 200
             
             logs = []
@@ -814,7 +912,7 @@ def chat_with_bot(user_data, bot_id):
                             response = openai.chat.completions.create(
                                 model=model_name,
                                 messages=[
-                                    {"role": "system", "content": system_instruction},
+                                    {"role": "system", "content": system_instruction_with_history},
                                     {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
                                 ],
                                 temperature=temperature
@@ -835,7 +933,7 @@ def chat_with_bot(user_data, bot_id):
                         elif provider == 'Anthropic':
                             response = anthropic_client.messages.create(
                                 model=model_name,
-                                system=system_instruction,
+                                system=system_instruction_with_history,
                                 messages=[{"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}],
                                 temperature=temperature,
                                 max_tokens=1024
@@ -861,7 +959,7 @@ def chat_with_bot(user_data, bot_id):
                             payload = {
                                 "model": model_name,
                                 "messages": [
-                                    {"role": "system", "content": system_instruction},
+                                    {"role": "system", "content": system_instruction_with_history},
                                     {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
                                 ],
                                 "temperature": temperature,
@@ -889,7 +987,7 @@ def chat_with_bot(user_data, bot_id):
                             response = openai.chat.completions.create(
                                 model="gpt-3.5-turbo",
                                 messages=[
-                                    {"role": "system", "content": system_instruction},
+                                    {"role": "system", "content": system_instruction_with_history},
                                     {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
                                 ],
                                 temperature=temperature
@@ -912,22 +1010,48 @@ def chat_with_bot(user_data, bot_id):
             
             # If no responses, use fallback
             if not all_responses:
+                # Save the response in the conversation
+                bot_response = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": "I encountered an issue with the model chorus. No models were able to generate a response.",
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                conversation["messages"].append(bot_response)
+                with open(conversation_file, 'w') as f:
+                    json.dump(conversation, f)
+                    
                 return jsonify({
                     "response": "I encountered an issue with the model chorus. No models were able to generate a response.",
-                    "debug": {"error": "No models returned responses", "logs": logs} if debug_mode else None
+                    "debug": {"error": "No models returned responses", "logs": logs} if debug_mode else None,
+                    "conversation_id": conversation_id
                 }), 200
             
             # If only one response, return it directly
             if len(all_responses) == 1:
+                response_text = all_responses[0]["response"]
+                
+                # Save the response in the conversation
+                bot_response = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": response_text,
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                conversation["messages"].append(bot_response)
+                with open(conversation_file, 'w') as f:
+                    json.dump(conversation, f)
+                    
                 return jsonify({
-                    "response": all_responses[0]["response"],
+                    "response": response_text,
                     "debug": {
                         "all_responses": all_responses,
                         "anonymized_responses": anonymized_responses,
                         "response_metadata": response_metadata,
                         "logs": logs,
                         "contexts": contexts
-                    } if debug_mode else None
+                    } if debug_mode else None,
+                    "conversation_id": conversation_id
                 }), 200
             
             # Get voting from evaluator models
@@ -1012,6 +1136,17 @@ Do not reveal any bias or preference based on writing style or approach - evalua
             
             winning_response = all_responses[winning_index]["response"]
             
+            # Save the response in the conversation
+            bot_response = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": winning_response,
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+            conversation["messages"].append(bot_response)
+            with open(conversation_file, 'w') as f:
+                json.dump(conversation, f)
+                
             return jsonify({
                 "response": winning_response,
                 "debug": {
@@ -1021,7 +1156,8 @@ Do not reveal any bias or preference based on writing style or approach - evalua
                     "votes": votes,
                     "logs": logs,
                     "contexts": contexts
-                } if debug_mode else None
+                } if debug_mode else None,
+                "conversation_id": conversation_id
             }), 200
                 
     
@@ -1029,22 +1165,186 @@ Do not reveal any bias or preference based on writing style or approach - evalua
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": system_instruction},
+                {"role": "system", "content": system_instruction_with_history},
                 {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
             ]
         )
         
+        response_text = response.choices[0].message.content
+        
+        # Save the response in the conversation
+        bot_response = {
+            "id": str(uuid.uuid4()),
+            "role": "assistant",
+            "content": response_text,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        }
+        conversation["messages"].append(bot_response)
+        with open(conversation_file, 'w') as f:
+            json.dump(conversation, f)
+            
         return jsonify({
-            "response": response.choices[0].message.content,
-            "debug": {"contexts": contexts} if debug_mode else None
+            "response": response_text,
+            "debug": {"contexts": contexts} if debug_mode else None,
+            "conversation_id": conversation_id
         }), 200
         
     except Exception as e:
         print(f"Error in chat_with_bot: {str(e)}")
+        # Save the error response in the conversation
+        bot_response = {
+            "id": str(uuid.uuid4()),
+            "role": "assistant",
+            "content": "I apologize, but I encountered an error while processing your request. Please try again or contact support if the issue persists.",
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        }
+        conversation["messages"].append(bot_response)
+        with open(conversation_file, 'w') as f:
+            json.dump(conversation, f)
+            
         return jsonify({
             "response": "I apologize, but I encountered an error while processing your request. Please try again or contact support if the issue persists.",
-            "debug": {"error": str(e)} if debug_mode else None
+            "debug": {"error": str(e)} if debug_mode else None,
+            "conversation_id": conversation_id
         }), 200
+
+# New endpoints for conversation management
+@app.route('/api/bots/<bot_id>/conversations', methods=['GET'])
+@require_auth
+def get_conversations(user_data, bot_id):
+    """Get all conversations for a specific bot"""
+    try:
+        # Read all conversation files for this user and bot
+        conversation_files = [f for f in os.listdir(CONVERSATIONS_FOLDER) 
+                             if f.startswith(f"{user_data['id']}_{bot_id}_") and f.endswith('.json')]
+        
+        conversations = []
+        for file_name in conversation_files:
+            file_path = os.path.join(CONVERSATIONS_FOLDER, file_name)
+            try:
+                with open(file_path, 'r') as f:
+                    conversation = json.load(f)
+                
+                # Add a preview of the conversation
+                if conversation.get("messages"):
+                    # Get the first user message as title if not already set
+                    if not conversation.get("title"):
+                        first_user_message = next((msg for msg in conversation["messages"] if msg["role"] == "user"), None)
+                        if first_user_message:
+                            title = first_user_message["content"]
+                            conversation["title"] = title[:40] + "..." if len(title) > 40 else title
+                    
+                    # Count messages
+                    message_count = len(conversation["messages"])
+                    conversation["message_count"] = message_count
+                
+                # Add a summary of the conversation
+                conversations.append({
+                    "id": conversation["id"],
+                    "title": conversation.get("title", "Untitled Conversation"),
+                    "created_at": conversation.get("created_at"),
+                    "updated_at": conversation.get("updated_at"),
+                    "message_count": conversation.get("message_count", 0),
+                    "preview": conversation["messages"][-1]["content"][:100] + "..." if conversation.get("messages") else ""
+                })
+            except Exception as e:
+                print(f"Error loading conversation {file_name}: {str(e)}")
+        
+        # Sort conversations by updated_at (newest first)
+        conversations.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+        
+        return jsonify(conversations), 200
+    except Exception as e:
+        print(f"Error getting conversations: {str(e)}")
+        return jsonify({"error": f"Failed to retrieve conversations: {str(e)}"}), 500
+
+@app.route('/api/bots/<bot_id>/conversations/<conversation_id>', methods=['GET'])
+@require_auth
+def get_conversation(user_data, bot_id, conversation_id):
+    """Get a specific conversation with all messages"""
+    try:
+        # Check if conversation exists
+        conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
+        if not os.path.exists(conversation_file):
+            return jsonify({"error": "Conversation not found"}), 404
+        
+        # Read conversation
+        with open(conversation_file, 'r') as f:
+            conversation = json.load(f)
+        
+        return jsonify(conversation), 200
+    except Exception as e:
+        print(f"Error getting conversation: {str(e)}")
+        return jsonify({"error": f"Failed to retrieve conversation: {str(e)}"}), 500
+
+@app.route('/api/bots/<bot_id>/conversations/<conversation_id>', methods=['DELETE'])
+@require_auth
+def delete_conversation(user_data, bot_id, conversation_id):
+    """Delete a specific conversation"""
+    try:
+        # Check if conversation exists
+        conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
+        if not os.path.exists(conversation_file):
+            return jsonify({"error": "Conversation not found"}), 404
+        
+        # Delete the file
+        os.remove(conversation_file)
+        
+        return jsonify({"message": "Conversation deleted successfully"}), 200
+    except Exception as e:
+        print(f"Error deleting conversation: {str(e)}")
+        return jsonify({"error": f"Failed to delete conversation: {str(e)}"}), 500
+
+@app.route('/api/bots/<bot_id>/conversations', methods=['DELETE'])
+@require_auth
+def delete_all_conversations(user_data, bot_id):
+    """Delete all conversations for a specific bot"""
+    try:
+        # Find all conversation files for this user and bot
+        conversation_files = [f for f in os.listdir(CONVERSATIONS_FOLDER) 
+                             if f.startswith(f"{user_data['id']}_{bot_id}_") and f.endswith('.json')]
+        
+        # Delete each file
+        for file_name in conversation_files:
+            file_path = os.path.join(CONVERSATIONS_FOLDER, file_name)
+            os.remove(file_path)
+        
+        return jsonify({"message": f"Deleted {len(conversation_files)} conversations successfully"}), 200
+    except Exception as e:
+        print(f"Error deleting all conversations: {str(e)}")
+        return jsonify({"error": f"Failed to delete conversations: {str(e)}"}), 500
+
+@app.route('/api/bots/<bot_id>/conversations/<conversation_id>/rename', methods=['POST'])
+@require_auth
+def rename_conversation(user_data, bot_id, conversation_id):
+    """Rename a conversation"""
+    try:
+        data = request.json
+        new_title = data.get('title')
+        
+        if not new_title:
+            return jsonify({"error": "Title is required"}), 400
+        
+        # Check if conversation exists
+        conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
+        if not os.path.exists(conversation_file):
+            return jsonify({"error": "Conversation not found"}), 404
+        
+        # Read conversation
+        with open(conversation_file, 'r') as f:
+            conversation = json.load(f)
+        
+        # Update title
+        conversation["title"] = new_title
+        
+        # Save updated conversation
+        with open(conversation_file, 'w') as f:
+            json.dump(conversation, f)
+        
+        return jsonify({"message": "Conversation renamed successfully", "title": new_title}), 200
+    except Exception as e:
+        print(f"Error renaming conversation: {str(e)}")
+        return jsonify({"error": f"Failed to rename conversation: {str(e)}"}), 500
 
 # Add model chorus API endpoints
 @app.route('/api/bots/<bot_id>/chorus', methods=['GET'])
