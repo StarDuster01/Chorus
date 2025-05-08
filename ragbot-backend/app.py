@@ -375,28 +375,56 @@ def upload_document(user_data, dataset_id):
             chunks.append(chunk)
             
     # Add chunks to ChromaDB
-    collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
-    document_id = str(uuid.uuid4())
-    
-    metadata_entries = [{"source": filename, "document_id": document_id, "chunk_index": i} for i in range(len(chunks))]
-    chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
-    
-    collection.add(
-        documents=chunks,
-        metadatas=metadata_entries,
-        ids=chunk_ids
-    )
-    
-    # Update document count in dataset
-    for idx, dataset in enumerate(datasets):
-        if dataset["id"] == dataset_id:
-            dataset["document_count"] += 1
-            break
-            
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
+    # First, ensure the collection exists
+    try:
+        try:
+            # Try to get the collection first
+            collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+        except Exception as collection_error:
+            # If collection doesn't exist, create it first
+            print(f"Collection {dataset_id} not found. Creating it now: {str(collection_error)}")
+            collection = chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
         
-    return jsonify({"message": "Document uploaded and processed successfully"}), 200
+        # Now that we have a valid collection, proceed with adding data
+        document_id = str(uuid.uuid4())
+        
+        metadata_entries = [{"source": filename, "document_id": document_id, "chunk_index": i} for i in range(len(chunks))]
+        chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
+        
+        # Add chunks to the collection in batches if there are many
+        if len(chunks) > 100:
+            batch_size = 100
+            for i in range(0, len(chunks), batch_size):
+                end_idx = min(i + batch_size, len(chunks))
+                collection.add(
+                    documents=chunks[i:end_idx],
+                    metadatas=metadata_entries[i:end_idx],
+                    ids=chunk_ids[i:end_idx]
+                )
+        else:
+            collection.add(
+                documents=chunks,
+                metadatas=metadata_entries,
+                ids=chunk_ids
+            )
+        
+        # Update document count in dataset
+        for idx, dataset in enumerate(datasets):
+            if dataset["id"] == dataset_id:
+                dataset["document_count"] += 1
+                break
+                
+        with open(user_datasets_file, 'w') as f:
+            json.dump(datasets, f)
+            
+        return jsonify({"message": "Document uploaded and processed successfully"}), 200
+        
+    except Exception as e:
+        # If we encounter an error, ensure the file is removed
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        print(f"Error processing document: {str(e)}")
+        return jsonify({"error": f"Failed to process document: {str(e)}"}), 500
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>', methods=['DELETE'])
 @require_auth
@@ -662,18 +690,58 @@ def delete_dataset(user_data, dataset_id):
 @require_auth
 def chat_with_bot(user_data, bot_id):
     data = request.json
-    message = data.get('message')
+    message = data.get('message', '')
     debug_mode = data.get('debug_mode', False)
     use_model_chorus = data.get('use_model_chorus', False)  # User's explicit choice to use model chorus
     chorus_id = data.get('chorus_id', '')  # A specific chorus ID to use
     conversation_id = data.get('conversation_id', '')  # The conversation this message belongs to
     
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
+    # Check for image data in base64 format
+    image_data = data.get('image_data', '')
+    image_path = None
+    has_image = False
+    
+    if not message and not image_data:
+        return jsonify({"error": "Message or image is required"}), 400
     
     # Create a new conversation if no conversation_id provided
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
+    
+    # If image is provided, save it to a temporary file
+    if image_data:
+        has_image = True
+        try:
+            # Extract the base64 content and file extension
+            if ';base64,' in image_data:
+                header, encoded = image_data.split(';base64,')
+                file_ext = header.split('/')[-1]
+            else:
+                encoded = image_data
+                file_ext = 'png'  # Default to PNG if not specified
+            
+            # Decode the base64 data
+            decoded_image = base64.b64decode(encoded)
+            
+            # Save to a temporary file
+            filename = f"chat_image_{str(uuid.uuid4())}.{file_ext}"
+            image_path = os.path.join(IMAGE_FOLDER, filename)
+            
+            with open(image_path, 'wb') as f:
+                f.write(decoded_image)
+                
+            # Resize image if needed
+            image_path = resize_image(image_path)
+            
+            # Update message to include reference to the image
+            if not message:
+                message = "[Image uploaded]"
+            else:
+                message = f"{message} [Image uploaded]"
+                
+        except Exception as img_error:
+            print(f"Error processing image: {str(img_error)}")
+            return jsonify({"error": f"Failed to process image: {str(img_error)}"}), 400
     
     # Create a new message object
     user_message = {
@@ -682,6 +750,11 @@ def chat_with_bot(user_data, bot_id):
         "content": message,
         "timestamp": datetime.datetime.utcnow().isoformat()
     }
+    
+    # If there's an image, add it to the message metadata
+    if has_image:
+        user_message["has_image"] = True
+        user_message["image_path"] = image_path
     
     # Add message to conversation history
     conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
@@ -732,6 +805,64 @@ def chat_with_bot(user_data, bot_id):
         
     # Get dataset IDs from the bot
     dataset_ids = bot.get("dataset_ids", [])
+    
+    # Process image with OpenAI Vision API if an image is present
+    if has_image:
+        try:
+            # Read the image file and encode it as base64
+            with open(image_path, 'rb') as img_file:
+                encoded_image = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Prepare the message with the image for OpenAI Vision API
+            messages = [
+                {
+                    "role": "system", 
+                    "content": bot.get("system_instruction", "You are a helpful assistant that can analyze images.")
+                },
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": message if message != "[Image uploaded]" else "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/{file_ext};base64,{encoded_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Call OpenAI API with vision capabilities
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=1024
+            )
+            
+            response_text = response.choices[0].message.content
+            
+            # Save the response in the conversation
+            bot_response = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": response_text,
+                "timestamp": datetime.datetime.utcnow().isoformat(),
+                "from_image_analysis": True
+            }
+            conversation["messages"].append(bot_response)
+            with open(conversation_file, 'w') as f:
+                json.dump(conversation, f)
+                
+            return jsonify({
+                "response": response_text,
+                "conversation_id": conversation_id,
+                "image_processed": True
+            }), 200
+            
+        except Exception as vision_error:
+            print(f"Error processing image with Vision API: {str(vision_error)}")
+            # If the vision API fails, continue with the regular RAG process
     
     if not dataset_ids:
         return jsonify({
@@ -2628,6 +2759,230 @@ Respond with ONLY the enhanced prompt text, nothing else. No explanations or add
 @app.route('/api/images/<filename>', methods=['GET'])
 def get_image(filename):
     return send_from_directory(IMAGE_FOLDER, filename)
+
+# Add this new endpoint after the existing chat_with_bot function
+@app.route('/api/bots/<bot_id>/chat-with-image', methods=['POST'])
+@require_auth
+def chat_with_image(user_data, bot_id):
+    # Check if the request is multipart/form-data or JSON
+    if request.content_type and request.content_type.startswith('multipart/form-data'):
+        # Handle multipart/form-data request
+        message = request.form.get('message', '')
+        debug_mode = request.form.get('debug_mode', 'false').lower() == 'true'
+        conversation_id = request.form.get('conversation_id', '')
+        
+        # Get the image file
+        if 'image' not in request.files:
+            return jsonify({"error": "Image file is required"}), 400
+            
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify({"error": "No image selected"}), 400
+        
+        # Create a new conversation if no conversation_id provided
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        
+        # Process the image file
+        try:
+            # Save the image to a temporary file
+            filename = f"chat_image_{str(uuid.uuid4())}{os.path.splitext(image_file.filename)[1]}"
+            image_path = os.path.join(IMAGE_FOLDER, filename)
+            image_file.save(image_path)
+            
+            # Get the file extension
+            file_ext = os.path.splitext(image_file.filename)[1][1:]  # Remove the dot
+            if not file_ext:
+                file_ext = 'png'  # Default to PNG if no extension
+        
+            # Continue with image processing
+        except Exception as img_error:
+            print(f"Error processing image: {str(img_error)}")
+            return jsonify({"error": f"Failed to process image: {str(img_error)}"}), 400
+    else:
+        # Handle JSON request
+        data = request.json
+        if not data:
+            return jsonify({"error": "Invalid request format"}), 400
+            
+        message = data.get('message', '')
+        image_data = data.get('image_data', '')
+        debug_mode = data.get('debug_mode', False)
+        conversation_id = data.get('conversation_id', '')
+        
+        if not image_data:
+            return jsonify({"error": "Image data is required"}), 400
+        
+        # Create a new conversation if no conversation_id provided
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+        
+        # Process the base64 image
+        try:
+            # Extract the base64 content and file extension
+            if ';base64,' in image_data:
+                header, encoded = image_data.split(';base64,')
+                file_ext = header.split('/')[-1]
+            else:
+                encoded = image_data
+                file_ext = 'png'  # Default to PNG if not specified
+            
+            # Decode the base64 data
+            decoded_image = base64.b64decode(encoded)
+            
+            # Save to a temporary file
+            filename = f"chat_image_{str(uuid.uuid4())}.{file_ext}"
+            image_path = os.path.join(IMAGE_FOLDER, filename)
+            
+            with open(image_path, 'wb') as f:
+                f.write(decoded_image)
+        except Exception as img_error:
+            print(f"Error processing image: {str(img_error)}")
+            return jsonify({"error": f"Failed to process image: {str(img_error)}"}), 400
+    
+    # Resize image if needed
+    image_path = resize_image(image_path)
+    
+    # Add message text if not provided
+    if not message:
+        message = "[Image uploaded]"
+    
+    # Get bot info
+    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
+    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    
+    if not os.path.exists(user_bots_file):
+        return jsonify({"error": "Bot not found"}), 404
+        
+    with open(user_bots_file, 'r') as f:
+        bots = json.load(f)
+        
+    bot = None
+    for b in bots:
+        if b["id"] == bot_id:
+            bot = b
+            break
+            
+    if not bot:
+        return jsonify({"error": "Bot not found"}), 404
+    
+    # Create message object
+    user_message = {
+        "id": str(uuid.uuid4()),
+        "role": "user",
+        "content": message,
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "has_image": True,
+        "image_path": image_path
+    }
+    
+    # Add message to conversation history
+    conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
+    
+    if os.path.exists(conversation_file):
+        # Load existing conversation
+        with open(conversation_file, 'r') as f:
+            conversation = json.load(f)
+    else:
+        # Create new conversation
+        conversation = {
+            "id": conversation_id,
+            "bot_id": bot_id,
+            "user_id": user_data['id'],
+            "title": message[:40] + "..." if len(message) > 40 else message,  # Use first message as title
+            "created_at": datetime.datetime.utcnow().isoformat(),
+            "updated_at": datetime.datetime.utcnow().isoformat(),
+            "messages": []
+        }
+    
+    # Add user message to conversation
+    conversation["messages"].append(user_message)
+    conversation["updated_at"] = datetime.datetime.utcnow().isoformat()
+    
+    # Save updated conversation
+    with open(conversation_file, 'w') as f:
+        json.dump(conversation, f)
+    
+    # Process with Vision API
+    try:
+        # Read and encode the image file
+        with open(image_path, 'rb') as img_file:
+            encoded_image = base64.b64encode(img_file.read()).decode('utf-8')
+        
+        # Get previous conversation messages to add as context
+        conversation_history = ""
+        if len(conversation["messages"]) > 1:  # If there's more than just the current message
+            # Get last 10 messages maximum
+            recent_messages = conversation["messages"][-10:] if len(conversation["messages"]) > 10 else conversation["messages"]
+            # Format them for context, excluding the most recent (current) message
+            conversation_history = "\n".join([
+                f"{msg['role'].capitalize()}: {msg['content']}" 
+                for msg in recent_messages[:-1]  # Exclude current message
+            ])
+        
+        # Prepare system instruction with history
+        system_instruction = bot.get("system_instruction", "You are a helpful assistant that can analyze images.")
+        if conversation_history:
+            system_instruction += "\n\nThis is the conversation history so far:\n" + conversation_history
+            
+        # Prepare the message with the image for OpenAI Vision API
+        messages = [
+            {
+                "role": "system", 
+                "content": system_instruction
+            },
+            {
+                "role": "user", 
+                "content": [
+                    {"type": "text", "text": message if message != "[Image uploaded]" else "What's in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/{file_ext};base64,{encoded_image}"
+                        }
+                    }
+                ]
+            }
+        ]
+        
+        # Call OpenAI API with vision capabilities
+        response = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=1024
+        )
+        
+        response_text = response.choices[0].message.content
+        
+        # Save the response in the conversation
+        bot_response = {
+            "id": str(uuid.uuid4()),
+            "role": "assistant",
+            "content": response_text,
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "from_image_analysis": True
+        }
+        conversation["messages"].append(bot_response)
+        with open(conversation_file, 'w') as f:
+            json.dump(conversation, f)
+            
+        return jsonify({
+            "response": response_text,
+            "conversation_id": conversation_id,
+            "image_processed": True,
+            "debug": {
+                "image_path": image_path,
+                "message": message,
+                "conversation_history_length": len(conversation_history)
+            } if debug_mode else None
+        }), 200
+        
+    except Exception as e:
+        print(f"Error in chat_with_image: {str(e)}")
+        return jsonify({
+            "error": "I apologize, but I encountered an error while processing your image. Please try again or contact support if the issue persists.",
+            "details": str(e) if debug_mode else None
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
