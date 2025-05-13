@@ -2983,6 +2983,20 @@ def chat_with_image(user_data, bot_id):
             "error": "I apologize, but I encountered an error while processing your image. Please try again or contact support if the issue persists.",
             "details": str(e) if debug_mode else None
         }), 500
+    
+   
+# This will serve the React frontend from the bundled location
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path):
+    # Check if app is running in bundled mode
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        frontend_path = os.path.join(sys._MEIPASS, 'frontend_build')
+        if path and os.path.exists(os.path.join(frontend_path, path)):
+            return send_from_directory(frontend_path, path)
+        return send_from_directory(frontend_path, 'index.html')
+    # In development mode, let React dev server handle frontend
+    return jsonify({"message": "API endpoint working. Use React dev server for frontend."})
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
