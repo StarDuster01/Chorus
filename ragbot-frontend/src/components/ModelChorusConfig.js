@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Container, Card, Button, Form, Row, Col, 
-  ListGroup, Alert, Spinner, Badge, Modal
+  ListGroup, Alert, Spinner, Badge, Modal,
+  OverlayTrigger, Popover
 } from 'react-bootstrap';
 import { 
   FaChevronLeft, FaSave, FaPlus, FaTrash, 
-  FaRobot, FaVoteYea, FaGavel, FaUsers
+  FaRobot, FaVoteYea, FaGavel, FaUsers,
+  FaInfoCircle
 } from 'react-icons/fa';
 import botService from '../services/botService';
 
@@ -32,6 +34,7 @@ const ModelChorusConfig = () => {
   const [chorusName, setChorusName] = useState('');
   const [chorusDescription, setChorusDescription] = useState('');
   const [isActive, setIsActive] = useState(false);
+  const [useDiverseRag, setUseDiverseRag] = useState(false);
   const [chorusId, setChorusId] = useState('');
   
   // Models configuration
@@ -62,6 +65,7 @@ const ModelChorusConfig = () => {
           setChorusName(chorusData.name || '');
           setChorusDescription(chorusData.description || '');
           setIsActive(chorusData.is_active || false);
+          setUseDiverseRag(chorusData.use_diverse_rag || false);
           setResponseModels(chorusData.response_models || []);
           setEvaluatorModels(chorusData.evaluator_models || []);
         } else {
@@ -69,6 +73,7 @@ const ModelChorusConfig = () => {
           setChorusName('New Model Chorus');
           setChorusDescription('Model chorus configuration');
           setIsActive(false);
+          setUseDiverseRag(false);
           setResponseModels([
             { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4o', temperature: 0.7, weight: 1 }
           ]);
@@ -139,6 +144,7 @@ const ModelChorusConfig = () => {
         name: chorusName,
         description: chorusDescription,
         is_active: isActive,
+        use_diverse_rag: useDiverseRag,
         response_models: responseModels,
         evaluator_models: evaluatorModels
       };
@@ -238,6 +244,38 @@ const ModelChorusConfig = () => {
                   label="Activate this chorus (will be used for all chat interactions)"
                   checked={isActive}
                   onChange={(e) => setIsActive(e.target.checked)}
+                  className="mb-3"
+                />
+                <Form.Check 
+                  type="switch"
+                  id="diverse-rag-switch"
+                  label={
+                    <>
+                      Use Diverse RAG (each model will get different retrieval results, covering more information)
+                      <OverlayTrigger
+                        placement="right"
+                        overlay={
+                          <Popover id="diverse-rag-popover">
+                            <Popover.Header as="h3">Diverse RAG</Popover.Header>
+                            <Popover.Body>
+                              <p>When enabled, each response model will receive a unique set of retrieved contexts.</p>
+                              <p>Benefits:</p>
+                              <ul>
+                                <li>Broader coverage of relevant information</li>
+                                <li>Higher chance of finding critical information</li>
+                                <li>Models can focus on different aspects of the question</li>
+                              </ul>
+                              <p>Recommended for complex queries that might benefit from exploring multiple angles or when working with large document collections.</p>
+                            </Popover.Body>
+                          </Popover>
+                        }
+                      >
+                        <FaInfoCircle className="ms-2 text-primary" style={{ cursor: 'pointer' }} />
+                      </OverlayTrigger>
+                    </>
+                  }
+                  checked={useDiverseRag}
+                  onChange={(e) => setUseDiverseRag(e.target.checked)}
                   className="mb-3"
                 />
               </Col>
