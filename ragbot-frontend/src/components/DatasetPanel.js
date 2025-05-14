@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal } from 'react-bootstrap';
 import botService from '../services/botService';
-import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle } from 'react-icons/fa';
+import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle, FaImage, FaChartBar } from 'react-icons/fa';
 
 const DatasetPanel = () => {
   const [datasets, setDatasets] = useState([]);
@@ -14,7 +14,8 @@ const DatasetPanel = () => {
   const [file, setFile] = useState(null);
   const [newDataset, setNewDataset] = useState({
     name: '',
-    description: ''
+    description: '',
+    type: 'mixed'
   });
   const [documents, setDocuments] = useState([]);
   const [viewDocumentsMode, setViewDocumentsMode] = useState(false);
@@ -23,10 +24,51 @@ const DatasetPanel = () => {
   const [documentToDelete, setDocumentToDelete] = useState(null);
   const [showConfirmDatasetDelete, setShowConfirmDatasetDelete] = useState(false);
   const [datasetToDelete, setDatasetToDelete] = useState(null);
+  const [images, setImages] = useState([]);
+  const [imageListLoading, setImageListLoading] = useState(false);
+  const [viewImagesMode, setViewImagesMode] = useState(false);
+  const [imageToDelete, setImageToDelete] = useState(null);
+  const [showConfirmImageDelete, setShowConfirmImageDelete] = useState(false);
+  const [acceptedFileTypes, setAcceptedFileTypes] = useState('.pdf,.txt,.docx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp');
+  const [fileTypeDescription, setFileTypeDescription] = useState('Supported formats: PDF, TXT, DOCX, PPTX, JPG, JPEG, PNG, GIF, WEBP, BMP');
 
   useEffect(() => {
     loadDatasets();
   }, []);
+
+  useEffect(() => {
+    if (selectedDataset) {
+      const getAcceptedTypes = () => {
+        const datasetType = selectedDataset.type || 'text';
+        switch(datasetType) {
+          case 'text':
+            return '.pdf,.txt,.docx,.pptx';
+          case 'image':
+            return '.jpg,.jpeg,.png,.gif,.webp,.bmp';
+          case 'mixed':
+          default:
+            return '.pdf,.txt,.docx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp';
+        }
+      };
+      
+      setAcceptedFileTypes(getAcceptedTypes());
+      
+      const getFileTypeDescription = () => {
+        const datasetType = selectedDataset.type || 'text';
+        switch(datasetType) {
+          case 'text':
+            return 'Supported formats: PDF, TXT, DOCX, PPTX';
+          case 'image':
+            return 'Supported formats: JPG, JPEG, PNG, GIF, WEBP, BMP';
+          case 'mixed':
+          default:
+            return 'Supported formats: PDF, TXT, DOCX, PPTX, JPG, JPEG, PNG, GIF, WEBP, BMP';
+        }
+      };
+      
+      setFileTypeDescription(getFileTypeDescription());
+    }
+  }, [selectedDataset]);
 
   const loadDatasets = async () => {
     setLoading(true);
@@ -49,7 +91,8 @@ const DatasetPanel = () => {
       setCreateMode(false);
       setNewDataset({
         name: '',
-        description: ''
+        description: '',
+        type: 'mixed'
       });
       setSuccess('Dataset created successfully');
       setTimeout(() => setSuccess(null), 3000);
@@ -73,18 +116,25 @@ const DatasetPanel = () => {
 
     setLoading(true);
     try {
-      await botService.uploadDocument(selectedDataset.id, file);
-      // Refresh the datasets to update document count
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+      const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(fileExtension);
+      
+      if (isImage) {
+        await botService.uploadImage(selectedDataset.id, file);
+      } else {
+        await botService.uploadDocument(selectedDataset.id, file);
+      }
+      
       const data = await botService.getDatasets();
       setDatasets(data);
       setUploadMode(false);
       setSelectedDataset(null);
       setFile(null);
-      setSuccess('Document uploaded successfully');
+      setSuccess(isImage ? 'Image uploaded successfully' : 'Document uploaded successfully');
       setTimeout(() => setSuccess(null), 3000);
       setLoading(false);
     } catch (err) {
-      setError('Failed to upload document');
+      setError(`Failed to upload ${file.name}`);
       setLoading(false);
     }
   };
@@ -106,6 +156,7 @@ const DatasetPanel = () => {
   const startViewDocuments = async (dataset) => {
     setSelectedDataset(dataset);
     setViewDocumentsMode(true);
+    setViewImagesMode(false);
     setCreateMode(false);
     setUploadMode(false);
     setDocumentListLoading(true);
@@ -117,6 +168,24 @@ const DatasetPanel = () => {
     } catch (err) {
       setError('Failed to load documents');
       setDocumentListLoading(false);
+    }
+  };
+
+  const startViewImages = async (dataset) => {
+    setSelectedDataset(dataset);
+    setViewImagesMode(true);
+    setViewDocumentsMode(false);
+    setCreateMode(false);
+    setUploadMode(false);
+    setImageListLoading(true);
+    
+    try {
+      const data = await botService.getDatasetImages(dataset.id);
+      setImages(data.images || []);
+      setImageListLoading(false);
+    } catch (err) {
+      setError('Failed to load images');
+      setImageListLoading(false);
     }
   };
 
@@ -132,10 +201,8 @@ const DatasetPanel = () => {
     try {
       await botService.removeDocument(selectedDataset.id, documentToDelete.id);
       
-      // Remove document from the list
       setDocuments(documents.filter(doc => doc.id !== documentToDelete.id));
       
-      // Refresh the datasets to update document count
       const data = await botService.getDatasets();
       setDatasets(data);
       
@@ -147,6 +214,35 @@ const DatasetPanel = () => {
     } catch (err) {
       setError('Failed to remove document');
       setShowConfirmDelete(false);
+      setLoading(false);
+    }
+  };
+
+  const confirmRemoveImage = (image) => {
+    setImageToDelete(image);
+    setShowConfirmImageDelete(true);
+  };
+
+  const handleRemoveImage = async () => {
+    if (!imageToDelete || !selectedDataset) return;
+    
+    setLoading(true);
+    try {
+      await botService.removeImage(selectedDataset.id, imageToDelete.id);
+      
+      setImages(images.filter(img => img.id !== imageToDelete.id));
+      
+      const data = await botService.getDatasets();
+      setDatasets(data);
+      
+      setSuccess('Image removed successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setShowConfirmImageDelete(false);
+      setImageToDelete(null);
+      setLoading(false);
+    } catch (err) {
+      setError('Failed to remove image');
+      setShowConfirmImageDelete(false);
       setLoading(false);
     }
   };
@@ -165,6 +261,13 @@ const DatasetPanel = () => {
         return <FaFileAlt style={{color: '#e67e22'}} />;
       case 'txt':
         return <FaFileAlt style={{color: '#7f8c8d'}} />;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+      case 'webp':
+      case 'bmp':
+        return <FaImage style={{color: '#9b59b6'}} />;
       default:
         return <FaFile />;
     }
@@ -182,7 +285,6 @@ const DatasetPanel = () => {
     try {
       await botService.deleteDataset(datasetToDelete.id);
       
-      // Remove dataset from the list
       setDatasets(datasets.filter(ds => ds.id !== datasetToDelete.id));
       
       setSuccess('Dataset removed successfully');
@@ -253,6 +355,29 @@ const DatasetPanel = () => {
                 </Col>
               </Row>
 
+              <Row>
+                <Col md={6}>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Dataset Type</Form.Label>
+                    <Form.Select
+                      name="type"
+                      value={newDataset.type}
+                      onChange={handleInputChange}
+                      className="rounded-pill"
+                    >
+                      <option value="mixed">Mixed (Documents & Images)</option>
+                      <option value="text">Text Only (Documents)</option>
+                      <option value="image">Images Only</option>
+                    </Form.Select>
+                    <Form.Text className="text-muted">
+                      {newDataset.type === 'text' ? 'Only document files will be accepted (PDF, DOCX, etc.)' :
+                       newDataset.type === 'image' ? 'Only image files will be accepted (JPG, PNG, etc.)' :
+                       'Both document and image files will be accepted'}
+                    </Form.Text>
+                  </Form.Group>
+                </Col>
+              </Row>
+
               <div className="d-flex justify-content-end">
                 <Button variant="success" type="submit" disabled={loading} className="px-4 rounded-pill">
                   {loading ? <><Spinner as="span" animation="border" size="sm" /> Creating...</> : 'Create Dataset'}
@@ -268,17 +393,24 @@ const DatasetPanel = () => {
           <Card.Body>
             <Card.Title className="mb-3">
               <FaFileUpload className="me-2" />
-              Upload Document to {selectedDataset.name}
+              Upload to {selectedDataset.name}
+              {selectedDataset.type && (
+                <Badge bg="light" text="dark" className="ms-2">
+                  {selectedDataset.type === 'text' ? 'Text Only' : 
+                   selectedDataset.type === 'image' ? 'Images Only' : 
+                   'Mixed Content'}
+                </Badge>
+              )}
             </Card.Title>
             <Form onSubmit={handleUploadDocument}>
               <Form.Group className="mb-4">
-                <Form.Label>Select Document</Form.Label>
+                <Form.Label>Select File</Form.Label>
                 <div className="custom-file-upload">
                   <Form.Control
                     type="file"
                     onChange={handleFileChange}
                     required
-                    accept=".pdf,.txt,.docx,.pptx"
+                    accept={acceptedFileTypes}
                     className="rounded-pill"
                   />
                   {file && (
@@ -296,13 +428,13 @@ const DatasetPanel = () => {
                   )}
                 </div>
                 <Form.Text className="text-muted">
-                  Supported formats: PDF, TXT, DOCX, PPTX
+                  {fileTypeDescription}
                 </Form.Text>
               </Form.Group>
 
               <div className="d-flex">
                 <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                  {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Upload Document'}
+                  {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Upload'}
                 </Button>
                 <Button 
                   variant="outline-secondary" 
@@ -345,9 +477,16 @@ const DatasetPanel = () => {
                         {getFileIcon(doc.filename)}
                         <div className="ms-3">
                           <h5 className="mb-1">{doc.filename}</h5>
-                          <Badge bg="light" text="dark" className="border">
-                            {doc.chunk_count} chunks
-                          </Badge>
+                          <div className="d-flex gap-2">
+                            <Badge bg="light" text="dark" className="border">
+                              {doc.chunk_count} {doc.chunk_count === 1 ? 'chunk' : 'chunks'}
+                            </Badge>
+                            {doc.file_type && (
+                              <Badge bg="secondary" className="text-white">
+                                {doc.file_type}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div>
@@ -382,14 +521,95 @@ const DatasetPanel = () => {
         </Card>
       )}
 
-      {loading && !createMode && !uploadMode && !viewDocumentsMode ? (
+      {viewImagesMode && selectedDataset && (
+        <Card className="mb-4 border-0 shadow-sm">
+          <Card.Body>
+            <Card.Title className="mb-3">
+              <FaImage className="me-2" />
+              Images in {selectedDataset.name}
+            </Card.Title>
+            
+            {imageListLoading ? (
+              <div className="text-center py-4">
+                <Spinner animation="border" variant="primary" />
+                <p className="mt-2 text-muted">Loading images...</p>
+              </div>
+            ) : images.length === 0 ? (
+              <Alert variant="info">No images in this dataset yet.</Alert>
+            ) : (
+              <div>
+                <Row className="mt-3">
+                  {images.map(img => (
+                    <Col key={img.id} xs={12} sm={6} md={4} lg={3} className="mb-4">
+                      <Card className="h-100 border-0 shadow-sm image-card">
+                        <div className="image-container" style={{ height: '160px', overflow: 'hidden' }}>
+                          <img 
+                            src={img.url} 
+                            alt={img.caption || 'Dataset image'} 
+                            className="card-img-top" 
+                            style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+                          />
+                        </div>
+                        <Card.Body>
+                          <Card.Title className="text-truncate fs-6">
+                            {img.caption || 'Untitled Image'}
+                          </Card.Title>
+                          <div className="mt-2 d-flex justify-content-between">
+                            <Button 
+                              variant="outline-secondary" 
+                              size="sm"
+                              onClick={() => window.open(img.url, '_blank')}
+                              className="rounded-pill"
+                            >
+                              <FaImage className="me-1" /> View
+                            </Button>
+                            <Button 
+                              variant="outline-danger" 
+                              size="sm"
+                              onClick={() => confirmRemoveImage(img)}
+                              className="rounded-pill"
+                            >
+                              <FaTrash className="me-1" /> Remove
+                            </Button>
+                          </div>
+                        </Card.Body>
+                      </Card>
+                    </Col>
+                  ))}
+                </Row>
+                <div className="mt-3 d-flex justify-content-between">
+                  <Button 
+                    variant="outline-secondary" 
+                    onClick={() => {
+                      setViewImagesMode(false);
+                      setSelectedDataset(null);
+                    }} 
+                    className="rounded-pill"
+                  >
+                    Back to Datasets
+                  </Button>
+                  <Button 
+                    variant="outline-primary" 
+                    onClick={() => startUpload(selectedDataset)}
+                    className="rounded-pill"
+                  >
+                    <FaFileUpload className="me-1" /> Upload More
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card.Body>
+        </Card>
+      )}
+
+      {loading && !createMode && !uploadMode && !viewDocumentsMode && !viewImagesMode ? (
         <div className="text-center my-5">
           <Spinner animation="border" variant="primary" />
           <p className="mt-2 text-muted">Loading your datasets...</p>
         </div>
       ) : (
         <Row className="mt-4">
-          {!createMode && !uploadMode && !viewDocumentsMode && datasets.length === 0 ? (
+          {!createMode && !uploadMode && !viewDocumentsMode && !viewImagesMode && datasets.length === 0 ? (
             <Col>
               <Card className="border-0 shadow-sm text-center p-5">
                 <div className="py-5">
@@ -406,7 +626,7 @@ const DatasetPanel = () => {
                 </div>
               </Card>
             </Col>
-          ) : !createMode && !uploadMode && !viewDocumentsMode && (
+          ) : !createMode && !uploadMode && !viewDocumentsMode && !viewImagesMode && (
             <Col>
               <Card className="border-0 shadow-sm">
                 <ListGroup variant="flush">
@@ -424,9 +644,35 @@ const DatasetPanel = () => {
                             <div>
                               <h5 className="mb-1">{dataset.name}</h5>
                               <p className="mb-1 text-muted">{dataset.description}</p>
-                              <Badge bg="light" text="dark" className="border">
-                                <FaFileAlt className="me-1" /> {dataset.document_count} {dataset.document_count === 1 ? 'Document' : 'Documents'}
-                              </Badge>
+                              <div className="d-flex flex-wrap gap-2 mb-2">
+                                <Badge bg="light" text="dark" className="border">
+                                  <FaFileAlt className="me-1" /> {dataset.document_count || 0} {dataset.document_count === 1 ? 'Document' : 'Documents'}
+                                </Badge>
+                                <Badge bg="light" text="dark" className="border">
+                                  <FaChartBar className="me-1" /> {dataset.chunk_count || 0} {dataset.chunk_count === 1 ? 'Chunk' : 'Chunks'}
+                                </Badge>
+                                {dataset.type !== 'text' && (
+                                  <Badge bg="light" text="dark" className="border">
+                                    <FaImage className="me-1" /> {dataset.image_count || 0} {dataset.image_count === 1 ? 'Image' : 'Images'}
+                                  </Badge>
+                                )}
+                              </div>
+                              
+                              {dataset.image_previews && dataset.image_previews.length > 0 && (
+                                <div className="d-flex mt-2 flex-wrap">
+                                  {dataset.image_previews.map((img, index) => (
+                                    <div key={img.id || index} className="me-2 mb-2" style={{ maxWidth: '80px' }}>
+                                      <img 
+                                        src={img.url} 
+                                        alt={img.caption || 'Dataset image'} 
+                                        className="img-thumbnail" 
+                                        style={{ width: '100%', height: '60px', objectFit: 'cover' }}
+                                        title={img.caption || 'Dataset image'}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -446,7 +692,17 @@ const DatasetPanel = () => {
                               onClick={() => startViewDocuments(dataset)}
                               className="rounded-pill me-2"
                             >
-                              <FaList className="me-1" /> Documents
+                              <FaFileAlt className="me-1" /> Documents
+                            </Button>
+                          )}
+                          {dataset.image_count > 0 && dataset.type !== 'text' && (
+                            <Button 
+                              variant="outline-secondary" 
+                              size="sm"
+                              onClick={() => startViewImages(dataset)}
+                              className="rounded-pill me-2"
+                            >
+                              <FaImage className="me-1" /> Images
                             </Button>
                           )}
                           <Button 
@@ -496,6 +752,43 @@ const DatasetPanel = () => {
           </Button>
           <Button variant="danger" onClick={handleRemoveDocument} disabled={loading}>
             {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Document'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal 
+        show={showConfirmImageDelete} 
+        onHide={() => setShowConfirmImageDelete(false)}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>Confirm Image Removal</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>Are you sure you want to remove this image?</p>
+          {imageToDelete && (
+            <div className="my-3 p-3 bg-light rounded">
+              <div className="d-flex align-items-center">
+                <img 
+                  src={imageToDelete.url} 
+                  alt={imageToDelete.caption || 'Dataset image'} 
+                  className="img-thumbnail" 
+                  style={{ width: '80px', height: '60px', objectFit: 'cover' }}
+                />
+                <div className="ms-2">
+                  <strong>{imageToDelete.caption || 'Untitled Image'}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+          <p className="mb-0 text-danger">This action cannot be undone.</p>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowConfirmImageDelete(false)}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={handleRemoveImage} disabled={loading}>
+            {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Image'}
           </Button>
         </Modal.Footer>
       </Modal>

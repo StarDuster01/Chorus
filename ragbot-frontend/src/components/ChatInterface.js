@@ -456,6 +456,44 @@ const ChatInterface = () => {
               ))}
             </div>
           )}
+          
+          {/* Add support for displaying referenced images */}
+          {response.image_details && response.image_details.length > 0 && (
+            <div className="source-images mt-3 p-2 border-top">
+              <div className="text-muted mb-2">Referenced Images:</div>
+              <div className="d-flex flex-wrap gap-3">
+                {response.image_details.map((img, index) => (
+                  <div key={index} className="source-image">
+                    <div className="mb-1 text-center small fw-bold">
+                      {img.index}
+                    </div>
+                    <a 
+                      href={img.download_url || img.url} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      title={img.caption || "View full image"}
+                    >
+                      <img 
+                        src={img.url} 
+                        alt={img.caption || "Referenced image"} 
+                        style={{ 
+                          maxWidth: '100%', 
+                          maxHeight: '200px', 
+                          borderRadius: '8px', 
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
+                        }}
+                      />
+                    </a>
+                    {img.caption && (
+                      <div className="mt-1 small text-muted">
+                        {img.caption}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : response.response;
 
@@ -464,7 +502,8 @@ const ChatInterface = () => {
         role: 'assistant',
         content: botResponseContent,
         timestamp: new Date().toISOString(),
-        source_documents: response.source_documents
+        source_documents: response.source_documents,
+        image_details: response.image_details // Store image details in the message
       };
 
       setMessages(prev => [...prev, botMessage]);
@@ -1004,6 +1043,43 @@ const ChatInterface = () => {
                               >
                                 {msg.content}
                               </ReactMarkdown>
+                              
+                              {/* Display images from bot response if any */}
+                              {msg.role === 'assistant' && msg.image_details && msg.image_details.length > 0 && (
+                                <div className="source-images mt-3 p-2 border-top">
+                                  <div className="d-flex flex-wrap gap-3">
+                                    {msg.image_details.map((img, index) => (
+                                      <div key={index} className="source-image">
+                                        <div className="mb-1 text-center small fw-bold">
+                                          {img.index}
+                                        </div>
+                                        <a 
+                                          href={img.download_url || img.url} 
+                                          target="_blank" 
+                                          rel="noreferrer"
+                                          title={img.caption || "View full image"}
+                                        >
+                                          <img 
+                                            src={img.url} 
+                                            alt={img.caption || "Referenced image"} 
+                                            style={{ 
+                                              maxWidth: '100%', 
+                                              maxHeight: '200px', 
+                                              borderRadius: '8px', 
+                                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
+                                            }}
+                                          />
+                                        </a>
+                                        {img.caption && (
+                                          <div className="mt-1 small text-muted">
+                                            {img.caption}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )
                         )}

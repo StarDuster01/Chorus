@@ -3,6 +3,7 @@ import json
 import base64
 import uuid
 import datetime
+import sys  # Add sys import
 from datetime import UTC  # Import UTC for timezone-aware datetime objects
 import tempfile
 import bcrypt
@@ -31,6 +32,9 @@ import numpy as np
 
 # Load environment variables
 load_dotenv()
+
+# Set OpenMP environment variable to avoid library conflicts
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Define supported file extensions
 text_extensions = ['.pdf', '.docx', '.txt', '.pptx']
@@ -831,7 +835,72 @@ def get_datasets(user_data):
         
     with open(user_datasets_file, 'r') as f:
         datasets = json.load(f)
+    
+    # Update dataset counts with accurate information
+    for dataset in datasets:
+        dataset_id = dataset.get("id")
+        dataset_type = dataset.get("type", "text")
         
+        # Initialize counts if they don't exist
+        if "document_count" not in dataset:
+            dataset["document_count"] = 0
+        if "chunk_count" not in dataset:
+            dataset["chunk_count"] = 0
+        if "image_count" not in dataset:
+            dataset["image_count"] = 0
+        
+        # Update text document count and chunk count if it's a text or mixed dataset
+        if dataset_type in ["text", "mixed"]:
+            try:
+                collection = chroma_client.get_or_create_collection(
+                    name=dataset_id,
+                    embedding_function=openai_ef
+                )
+                # Get actual chunk count from ChromaDB
+                chunk_count = collection.count()
+                dataset["chunk_count"] = chunk_count
+                
+                # Calculate unique document count
+                try:
+                    # Get all document IDs
+                    results = collection.get()
+                    if results and results["metadatas"]:
+                        # Extract unique document IDs
+                        document_ids = set()
+                        for metadata in results["metadatas"]:
+                            if metadata and "document_id" in metadata:
+                                document_ids.add(metadata["document_id"])
+                        dataset["document_count"] = len(document_ids)
+                except Exception as e:
+                    print(f"Error calculating document count for dataset {dataset_id}: {str(e)}")
+                    
+            except Exception as e:
+                print(f"Error getting document count for dataset {dataset_id}: {str(e)}")
+        
+        # Update image count if it's an image or mixed dataset
+        if dataset_type in ["image", "mixed"]:
+            try:
+                # Check image processor for image counts
+                image_count = 0
+                if dataset_id in image_processor.image_metadata:
+                    image_count = len(image_processor.image_metadata[dataset_id])
+                dataset["image_count"] = image_count
+                
+                # Include image previews (first 3 images)
+                if dataset_id in image_processor.image_metadata and image_count > 0:
+                    # Get up to 3 images to display as previews
+                    image_previews = []
+                    for i, img_meta in enumerate(image_processor.image_metadata[dataset_id][:3]):
+                        if 'path' in img_meta:
+                            image_previews.append({
+                                "id": img_meta.get("id", ""),
+                                "url": f"/api/images/{os.path.basename(img_meta['path'])}",
+                                "caption": img_meta.get("caption", "")
+                            })
+                    dataset["image_previews"] = image_previews
+            except Exception as e:
+                print(f"Error getting image count for dataset {dataset_id}: {str(e)}")
+    
     return jsonify(datasets), 200
 
 @app.route('/api/datasets', methods=['POST'])
@@ -863,9 +932,9 @@ def create_dataset(user_data):
         "description": description,
         "type": dataset_type,
         "user_id": user_data['id'],  # Store the user_id in the dataset
-        "created_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(UTC).isoformat(),
         "document_count": 0,
-        "image_count": 0
+        "image_count": 0  # Initialize image count to zero
     }
     datasets.append(dataset)
     
@@ -966,6 +1035,25 @@ def upload_document(user_data, dataset_id):
                 }
             )
             
+            # Update image count in dataset
+            datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+            user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+            
+            if os.path.exists(user_datasets_file):
+                with open(user_datasets_file, 'r') as f:
+                    datasets = json.load(f)
+                
+                for idx, ds in enumerate(datasets):
+                    if ds["id"] == dataset_id:
+                        if "image_count" in ds:
+                            datasets[idx]["image_count"] += 1
+                        else:
+                            datasets[idx]["image_count"] = 1
+                        break
+                
+                with open(user_datasets_file, 'w') as f:
+                    json.dump(datasets, f)
+            
             # Return success
             return jsonify({
                 "id": image_meta.get("id", ""),
@@ -974,6 +1062,7 @@ def upload_document(user_data, dataset_id):
                 "caption": image_meta.get("caption", ""),
                 "url": f"/uploads/{filename}"
             }), 201
+            
         except Exception as e:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -1071,7 +1160,7 @@ def upload_document(user_data, dataset_id):
                 metadatas=metadatas
             )
             
-            # Update document count in dataset
+            # Update document count and chunk count in dataset
             datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
             user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
             
@@ -1081,10 +1170,17 @@ def upload_document(user_data, dataset_id):
                 
                 for idx, ds in enumerate(datasets):
                     if ds["id"] == dataset_id:
+                        # Update document count
                         if "document_count" in ds:
                             datasets[idx]["document_count"] += 1
                         else:
                             datasets[idx]["document_count"] = 1
+                            
+                        # Update chunk count
+                        if "chunk_count" in ds:
+                            datasets[idx]["chunk_count"] += len(chunks)
+                        else:
+                            datasets[idx]["chunk_count"] = len(chunks)
                         break
                 
                 with open(user_datasets_file, 'w') as f:
@@ -1145,19 +1241,31 @@ def remove_document(user_data, dataset_id, document_id):
         if not results or len(results['ids']) == 0:
             return jsonify({"error": "Document not found in dataset"}), 404
         
+        # Get number of chunks to remove for updating chunk count
+        num_chunks_to_remove = len(results['ids'])
+        
         # Delete the chunks from ChromaDB
         collection.delete(
             ids=results['ids']
         )
         
-        # Update document count in dataset
+        # Update document count and chunk count in dataset
         if datasets[dataset_index]["document_count"] > 0:
             datasets[dataset_index]["document_count"] -= 1
+            
+        # Update chunk count if it exists
+        if "chunk_count" in datasets[dataset_index]:
+            datasets[dataset_index]["chunk_count"] -= num_chunks_to_remove
+            if datasets[dataset_index]["chunk_count"] < 0:
+                datasets[dataset_index]["chunk_count"] = 0
             
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
             
-        return jsonify({"message": "Document removed successfully"}), 200
+        return jsonify({
+            "message": "Document removed successfully",
+            "chunks_removed": num_chunks_to_remove
+        }), 200
     
     except Exception as e:
         print(f"Error removing document: {str(e)}")
@@ -1232,26 +1340,82 @@ def dataset_status(user_data, dataset_id):
     if not dataset:
         return jsonify({"error": "Dataset not found"}), 404
     
-    # Check ChromaDB collection status
-    existing_collections = chroma_client.list_collections()
-    collection_exists = dataset_id in existing_collections
+    # Get dataset type
+    dataset_type = dataset.get("type", "text")
     
+    # Check ChromaDB collection status for text documents
+    collection_exists = False
     doc_count = 0
-    if collection_exists:
-        try:
-            collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
-            doc_count = collection.count()
-        except Exception as e:
-            return jsonify({
-                "dataset": dataset,
-                "collection_exists": False,
-                "error": str(e)
-            }), 200
+    chunk_count = 0
+    
+    if dataset_type in ["text", "mixed"]:
+        existing_collections = chroma_client.list_collections()
+        collection_exists = dataset_id in existing_collections
+        
+        if collection_exists:
+            try:
+                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                chunk_count = collection.count()
+                
+                # Get document count by counting unique document_ids
+                try:
+                    results = collection.get()
+                    if results and results["metadatas"]:
+                        # Extract unique document IDs
+                        document_ids = set()
+                        for metadata in results["metadatas"]:
+                            if metadata and "document_id" in metadata:
+                                document_ids.add(metadata["document_id"])
+                        doc_count = len(document_ids)
+                except Exception as e:
+                    print(f"Error calculating document count: {str(e)}")
+                    # Fallback to existing document count in dataset
+                    doc_count = dataset.get("document_count", 0)
+                    
+            except Exception as e:
+                return jsonify({
+                    "dataset": dataset,
+                    "collection_exists": False,
+                    "error": str(e)
+                }), 200
+    
+    # Check image index status for images
+    image_index_exists = False
+    image_count = 0
+    image_previews = []
+    
+    if dataset_type in ["image", "mixed"]:
+        # Check if there's an image index for this dataset
+        index_path = os.path.join(image_processor.indices_dir, f"{dataset_id}_index.faiss")
+        image_index_exists = os.path.exists(index_path)
+        
+        # Get image count from image processor
+        if dataset_id in image_processor.image_metadata:
+            image_count = len(image_processor.image_metadata[dataset_id])
+            
+            # Include image previews (first 3 images)
+            if image_count > 0:
+                for i, img_meta in enumerate(image_processor.image_metadata[dataset_id][:3]):
+                    if 'path' in img_meta:
+                        image_previews.append({
+                            "id": img_meta.get("id", ""),
+                            "url": f"/api/images/{os.path.basename(img_meta['path'])}",
+                            "caption": img_meta.get("caption", "")
+                        })
+    
+    # Update dataset with accurate counts
+    dataset["document_count"] = doc_count
+    dataset["chunk_count"] = chunk_count
+    dataset["image_count"] = image_count
     
     return jsonify({
         "dataset": dataset,
         "collection_exists": collection_exists,
-        "document_count": doc_count
+        "document_count": doc_count,
+        "chunk_count": chunk_count,
+        "image_index_exists": image_index_exists,
+        "image_count": image_count,
+        "image_previews": image_previews
     }), 200
 
 @app.route('/api/datasets/<dataset_id>/documents', methods=['GET'])
@@ -1286,7 +1450,7 @@ def get_dataset_documents(user_data, dataset_id):
         if not results or len(results['ids']) == 0:
             return jsonify({"documents": []}), 200
         
-        # Process results to get unique documents
+        # Process results to get unique documents with chunk counts
         documents = {}
         for i, metadata in enumerate(results['metadatas']):
             if metadata and 'document_id' in metadata and 'source' in metadata:
@@ -1295,12 +1459,22 @@ def get_dataset_documents(user_data, dataset_id):
                     documents[doc_id] = {
                         'id': doc_id,
                         'filename': metadata['source'],
-                        'chunk_count': 1
+                        'chunk_count': 1,
+                        'file_type': metadata.get('file_type', ''),
+                        'created_at': metadata.get('created_at', '')
                     }
                 else:
                     documents[doc_id]['chunk_count'] += 1
         
-        return jsonify({"documents": list(documents.values())}), 200
+        # Convert to list and sort by creation date (newest first)
+        document_list = list(documents.values())
+        document_list.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        return jsonify({
+            "documents": document_list,
+            "total_documents": len(document_list),
+            "total_chunks": len(results['ids'])
+        }), 200
     
     except Exception as e:
         print(f"Error getting documents: {str(e)}")
@@ -1349,22 +1523,27 @@ def delete_dataset(user_data, dataset_id):
             print(f"Error deleting ChromaDB collection: {str(e)}")
             # Continue with deletion even if ChromaDB deletion fails
     
-    # Delete image index if it exists and it's an image or mixed dataset
+    # Delete image index and files if it exists and it's an image or mixed dataset
     if dataset_type in ["image", "mixed"]:
         try:
+            # Get list of image files before deleting the dataset
+            image_files_to_delete = []
+            if dataset_id in image_processor.image_metadata:
+                for img_meta in image_processor.image_metadata[dataset_id]:
+                    if 'path' in img_meta and os.path.exists(img_meta['path']):
+                        image_files_to_delete.append(img_meta['path'])
+            
             # Use the image processor to delete the dataset
             image_processor.delete_dataset(dataset_id)
             print(f"Deleted image index for dataset: {dataset_id}")
             
             # Delete any actual image files associated with this dataset
-            if dataset_id in image_processor.image_metadata:
-                for img_meta in image_processor.image_metadata[dataset_id]:
-                    if 'path' in img_meta and os.path.exists(img_meta['path']):
-                        try:
-                            os.remove(img_meta['path'])
-                            print(f"Deleted image file: {img_meta['path']}")
-                        except Exception as e:
-                            print(f"Error deleting image file: {str(e)}")
+            for img_path in image_files_to_delete:
+                try:
+                    os.remove(img_path)
+                    print(f"Deleted image file: {img_path}")
+                except Exception as e:
+                    print(f"Error deleting image file {img_path}: {str(e)}")
         except Exception as e:
             print(f"Error deleting image index: {str(e)}")
             # Continue with deletion even if image index deletion fails
@@ -1470,7 +1649,7 @@ def chat_with_bot(user_data, bot_id):
         "id": str(uuid.uuid4()),
         "role": "user",
         "content": message,
-        "timestamp": datetime.datetime.utcnow().isoformat()
+        "timestamp": datetime.datetime.now(UTC).isoformat()
     }
     
     # If there's an image, add it to the message metadata
@@ -1493,14 +1672,14 @@ def chat_with_bot(user_data, bot_id):
             "bot_id": bot_id,
             "user_id": user_data['id'],
             "title": message[:40] + "..." if len(message) > 40 else message,  # Use first message as title
-            "created_at": datetime.datetime.utcnow().isoformat(),
-            "updated_at": datetime.datetime.utcnow().isoformat(),
+            "created_at": datetime.datetime.now(UTC).isoformat(),
+            "updated_at": datetime.datetime.now(UTC).isoformat(),
             "messages": []
         }
     
     # Add user message to conversation
     conversation["messages"].append(user_message)
-    conversation["updated_at"] = datetime.datetime.utcnow().isoformat()
+    conversation["updated_at"] = datetime.datetime.now(UTC).isoformat()
     
     # Save updated conversation
     with open(conversation_file, 'w') as f:
@@ -1569,7 +1748,7 @@ def chat_with_bot(user_data, bot_id):
                 "id": str(uuid.uuid4()),
                 "role": "assistant",
                 "content": response_text,
-                "timestamp": datetime.datetime.utcnow().isoformat(),
+                "timestamp": datetime.datetime.now(UTC).isoformat(),
                 "from_image_analysis": True
             }
             conversation["messages"].append(bot_response)
@@ -1641,18 +1820,60 @@ def chat_with_bot(user_data, bot_id):
                 
                 # Image-based retrieval if available
                 try:
-                    img_results = image_processor.search_images(dataset_id, message, top_k=2)
-                    if img_results:
-                        for img in img_results:
-                            # Add image information to results
-                            image_info = {
-                                "id": img["id"],
-                                "caption": img["caption"],
-                                "url": f"/api/images/{os.path.basename(img['path'])}",
-                                "score": img["score"],
-                                "dataset_id": dataset_id
-                            }
-                            image_results.append(image_info)
+                    # First, check if dataset contains images
+                    has_images = False
+                    dataset_type = "text"  # Default
+                    
+                    # Check dataset type and image count from metadata
+                    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+                    for user_id in [user_data['id'], "shared"]:  # Check both user and shared datasets
+                        user_datasets_file = os.path.join(datasets_dir, f"{user_id}_datasets.json")
+                        if os.path.exists(user_datasets_file):
+                            with open(user_datasets_file, 'r') as f:
+                                datasets = json.load(f)
+                                
+                                for ds in datasets:
+                                    if ds["id"] == dataset_id:
+                                        dataset_type = ds.get("type", "text")
+                                        if dataset_type in ["image", "mixed"] and ds.get("image_count", 0) > 0:
+                                            has_images = True
+                                        break
+                    
+                    # If dataset has images, retrieve them regardless of query type
+                    if has_images:
+                        # Search for images with the user's query
+                        img_results = image_processor.search_images(dataset_id, message, top_k=3)
+                        
+                        # If no results or weak results, also try a more generic search
+                        if not img_results or (img_results and img_results[0].get("score", 0) < 0.2):
+                            # Try searching with a more generic query 
+                            generic_queries = [
+                                "relevant image for this topic",
+                                "visual representation",
+                                "image related to this subject"
+                            ]
+                            
+                            for generic_query in generic_queries:
+                                generic_results = image_processor.search_images(dataset_id, generic_query, top_k=2)
+                                if generic_results:
+                                    for gen_img in generic_results:
+                                        # Add to results if not already included
+                                        if not any(img.get("id") == gen_img.get("id") for img in img_results):
+                                            img_results.append(gen_img)
+                                    break  # Stop after finding some results
+                        
+                        # Add relevant images to results
+                        if img_results:
+                            for img in img_results:
+                                # Add image information to results
+                                image_info = {
+                                    "id": img["id"],
+                                    "caption": img["caption"],
+                                    "url": f"/api/images/{os.path.basename(img['path'])}",
+                                    "score": img["score"],
+                                    "dataset_id": dataset_id
+                                }
+                                image_results.append(image_info)
                 except Exception as img_error:
                     print(f"Error with image retrieval for dataset '{dataset_id}': {str(img_error)}")
                     # Continue even if image retrieval fails
@@ -1668,7 +1889,7 @@ def chat_with_bot(user_data, bot_id):
                 "id": str(uuid.uuid4()),
                 "role": "assistant",
                 "content": "I don't have any documents or images in my knowledge base yet. Please upload some content to help me answer your questions.",
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp": datetime.datetime.now(UTC).isoformat()
             }
             conversation["messages"].append(bot_response)
             with open(conversation_file, 'w') as f:
@@ -1708,6 +1929,7 @@ def chat_with_bot(user_data, bot_id):
             image_context = "\n\nRelevant Images:\n"
             for i, img in enumerate(top_images):
                 image_context += f"[Image {i+1}] Caption: {img['caption']}\n"
+                image_context += f"            This image is available for viewing and download.\n"
             
             # Add the URLs to image metadata for later
             top_image_urls = [img["url"] for img in top_images]
@@ -1807,7 +2029,7 @@ def chat_with_bot(user_data, bot_id):
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "content": "I couldn't find the model chorus configuration. Please check that the chorus exists and is properly configured.",
-                    "timestamp": datetime.datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.now(UTC).isoformat()
                 }
                 conversation["messages"].append(bot_response)
                 with open(conversation_file, 'w') as f:
@@ -1836,7 +2058,7 @@ def chat_with_bot(user_data, bot_id):
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "content": "The model chorus configuration is incomplete. Please configure both response and evaluator models.",
-                    "timestamp": datetime.datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.now(UTC).isoformat()
                 }
                 conversation["messages"].append(bot_response)
                 with open(conversation_file, 'w') as f:
@@ -1972,7 +2194,7 @@ def chat_with_bot(user_data, bot_id):
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "content": "I encountered an issue with the model chorus. No models were able to generate a response.",
-                    "timestamp": datetime.datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.now(UTC).isoformat()
                 }
                 conversation["messages"].append(bot_response)
                 with open(conversation_file, 'w') as f:
@@ -1993,7 +2215,7 @@ def chat_with_bot(user_data, bot_id):
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "content": response_text,
-                    "timestamp": datetime.datetime.utcnow().isoformat()
+                    "timestamp": datetime.datetime.now(UTC).isoformat()
                 }
                 conversation["messages"].append(bot_response)
                 with open(conversation_file, 'w') as f:
@@ -2098,7 +2320,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
                 "id": str(uuid.uuid4()),
                 "role": "assistant",
                 "content": winning_response,
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp": datetime.datetime.now(UTC).isoformat()
             }
             conversation["messages"].append(bot_response)
             with open(conversation_file, 'w') as f:
@@ -2123,7 +2345,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc."},
+                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc. When referencing images, mention that users can click or download the image for a better view."},
                 {"role": "user", "content": f"Context:\n{full_context}\n\nUser question: {message}\n\nPlease include citations [1], [2], etc. when you reference information from the context."}
             ]
         )
@@ -2169,14 +2391,32 @@ Do not reveal any bias or preference based on writing style or approach - evalua
                         "dataset_id": source_doc.get('dataset_id', '')
                     })
 
+        # Add image details to context details for referenced images
+        image_details = []
+        if used_source_images:
+            for img in used_source_images:
+                # Create specific download URL by adding download=true parameter
+                base_url = img['url']
+                download_url = f"{base_url}?download=true"
+                
+                image_details.append({
+                    "index": img['context_index'],
+                    "caption": img['caption'],
+                    "url": img['url'],
+                    "download_url": download_url,
+                    "id": img['id'],
+                    "dataset_id": img['dataset_id']
+                })
+
         # Save the response in the conversation
         bot_response = {
             "id": str(uuid.uuid4()),
             "role": "assistant",
             "content": response_text,
-            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "timestamp": datetime.datetime.now(UTC).isoformat(),
             "referenced_images": [img["url"] for img in used_source_images] if used_source_images else [],
-            "context_details": context_details  # Add context details to the saved response
+            "context_details": context_details,  # Add context details to the saved response
+            "image_details": image_details  # Add image details to the saved response
         }
         conversation["messages"].append(bot_response)
         with open(conversation_file, 'w') as f:
@@ -2187,6 +2427,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
             "source_documents": used_source_documents,
             "source_images": used_source_images,
             "context_details": context_details,  # Include context details in response
+            "image_details": image_details,  # Include image details in response
             "debug": {
                 "contexts": contexts,
                 "image_results": image_results if image_results else []
@@ -2201,7 +2442,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
             "id": str(uuid.uuid4()),
             "role": "assistant",
             "content": "I apologize, but I encountered an error while processing your request. Please try again or contact support if the issue persists.",
-            "timestamp": datetime.datetime.utcnow().isoformat()
+            "timestamp": datetime.datetime.now(UTC).isoformat()
         }
         conversation["messages"].append(bot_response)
         with open(conversation_file, 'w') as f:
@@ -2452,8 +2693,8 @@ def save_chorus_config(user_data, bot_id):
             "description": data.get('description', ''),
             "response_models": data.get('response_models', []),
             "evaluator_models": data.get('evaluator_models', []),
-            "created_at": datetime.datetime.utcnow().isoformat(),
-            "updated_at": datetime.datetime.utcnow().isoformat(),
+            "created_at": datetime.datetime.now(UTC).isoformat(),
+            "updated_at": datetime.datetime.now(UTC).isoformat(),
             "created_by": user_data['username']
         }
         
@@ -3080,8 +3321,8 @@ def create_chorus(user_data):
         "id": chorus_id,
         "name": data.get('name'),
         "description": data.get('description', ''),
-        "created_at": datetime.datetime.utcnow().isoformat(),
-        "updated_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.datetime.now(UTC).isoformat(),
+        "updated_at": datetime.datetime.now(UTC).isoformat(),
         "response_models": data.get('response_models', []),
         "evaluator_models": data.get('evaluator_models', []),
         "created_by": user_data['username']
@@ -3155,7 +3396,7 @@ def update_chorus(user_data, chorus_id):
         "name": data.get('name'),
         "description": data.get('description', ''),
         "created_at": chorus["created_at"],
-        "updated_at": datetime.datetime.utcnow().isoformat(),
+        "updated_at": datetime.datetime.now(UTC).isoformat(),
         "response_models": data.get('response_models', []),
         "evaluator_models": data.get('evaluator_models', []),
         "created_by": chorus.get("created_by", user_data['username'])
@@ -3277,7 +3518,7 @@ def create_bot(user_data):
         "chorus_id": chorus_id,  # Set the chorus ID
         "prompt_template": data.get('prompt_template', ''),
         "system_instruction": data.get('system_instruction', 'You are a helpful AI assistant. Answer questions based on the provided context.'),
-        "created_at": datetime.datetime.utcnow().isoformat()
+        "created_at": datetime.datetime.now(UTC).isoformat()
     }
     
     # Save the bot
@@ -3640,10 +3881,22 @@ Respond with ONLY the enhanced prompt text, nothing else. No explanations or add
         
 # Route to serve generated images
 @app.route('/api/images/<filename>', methods=['GET'])
-@require_auth
-def get_image(user_data, filename):
+def get_image(filename):
     """Serve an uploaded image file"""
-    return send_from_directory(IMAGE_FOLDER, filename)
+    # Check if download parameter is provided
+    download = request.args.get('download', 'false').lower() == 'true'
+    
+    if download:
+        # If download is requested, set Content-Disposition header
+        return send_from_directory(
+            IMAGE_FOLDER, 
+            filename, 
+            as_attachment=True,
+            download_name=filename
+        )
+    else:
+        # Regular image view
+        return send_from_directory(IMAGE_FOLDER, filename)
 
 # Add this new endpoint after the existing chat_with_bot function
 @app.route('/api/bots/<bot_id>/chat-with-image', methods=['POST'])
@@ -3756,7 +4009,7 @@ def chat_with_image(user_data, bot_id):
         "id": str(uuid.uuid4()),
         "role": "user",
         "content": message,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "timestamp": datetime.datetime.now(UTC).isoformat(),
         "has_image": True,
         "image_path": image_path
     }
@@ -3775,14 +4028,14 @@ def chat_with_image(user_data, bot_id):
             "bot_id": bot_id,
             "user_id": user_data['id'],
             "title": message[:40] + "..." if len(message) > 40 else message,  # Use first message as title
-            "created_at": datetime.datetime.utcnow().isoformat(),
-            "updated_at": datetime.datetime.utcnow().isoformat(),
+            "created_at": datetime.datetime.now(UTC).isoformat(),
+            "updated_at": datetime.datetime.now(UTC).isoformat(),
             "messages": []
         }
     
     # Add user message to conversation
     conversation["messages"].append(user_message)
-    conversation["updated_at"] = datetime.datetime.utcnow().isoformat()
+    conversation["updated_at"] = datetime.datetime.now(UTC).isoformat()
     
     # Save updated conversation
     with open(conversation_file, 'w') as f:
@@ -3844,7 +4097,7 @@ def chat_with_image(user_data, bot_id):
             "id": str(uuid.uuid4()),
             "role": "assistant",
             "content": response_text,
-            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "timestamp": datetime.datetime.now(UTC).isoformat(),
             "from_image_analysis": True
         }
         conversation["messages"].append(bot_response)
@@ -3955,11 +4208,23 @@ def get_dataset_images(user_data, dataset_id):
             img_meta_copy = img_meta.copy()
             if 'path' in img_meta_copy:
                 img_meta_copy['url'] = f"/api/images/{os.path.basename(img_meta_copy['path'])}"
+                # Don't expose the full path in API
+                if 'path' in img_meta_copy:
+                    del img_meta_copy['path']
             images.append(img_meta_copy)
         
-        return jsonify({"images": images}), 200
+        # Sort images by creation date if available (newest first)
+        images.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        return jsonify({
+            "images": images,
+            "total_images": len(images)
+        }), 200
     else:
-        return jsonify({"images": []}), 200
+        return jsonify({
+            "images": [],
+            "total_images": 0
+        }), 200
 
 @app.route('/api/datasets/<dataset_id>/images', methods=['POST'])
 @require_auth
@@ -4131,10 +4396,17 @@ def remove_image(user_data, dataset_id, image_id):
                 print(f"Warning: Failed to delete image file: {str(e)}")
         
         # Update image count in dataset
-        if datasets[dataset_index].get("image_count", 0) > 0:
-            datasets[dataset_index]["image_count"] = datasets[dataset_index]["image_count"] - 1
-            with open(user_datasets_file, 'w') as f:
-                json.dump(datasets, f)
+        if "image_count" in datasets[dataset_index] and datasets[dataset_index]["image_count"] > 0:
+            datasets[dataset_index]["image_count"] -= 1
+        else:
+            # Set image count to actual count if it wasn't tracked before
+            image_count = 0
+            if dataset_id in image_processor.image_metadata:
+                image_count = len(image_processor.image_metadata[dataset_id])
+            datasets[dataset_index]["image_count"] = image_count
+            
+        with open(user_datasets_file, 'w') as f:
+            json.dump(datasets, f)
                 
         return jsonify({"message": "Image removed successfully"}), 200
         

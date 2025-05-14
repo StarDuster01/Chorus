@@ -519,6 +519,59 @@ const renameConversation = async (botId, conversationId, title) => {
   }
 };
 
+// Add these new functions to handle images
+const getDatasetImages = async (datasetId) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/datasets/${datasetId}/images`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching dataset images:', error);
+    throw error;
+  }
+};
+
+const uploadImage = async (datasetId, file) => {
+  try {
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    const response = await axios.post(
+      `${API_URL}/datasets/${datasetId}/images`,
+      formData,
+      {
+        headers: {
+          ...getAuthHeader(),
+          'Content-Type': 'multipart/form-data'
+        }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error uploading image:', error);
+    throw error;
+  }
+};
+
+const removeImage = async (datasetId, imageId) => {
+  try {
+    const response = await axios.delete(
+      `${API_URL}/datasets/${datasetId}/images/${imageId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error removing image:', error);
+    throw error;
+  }
+};
+
 const botService = {
   getDatasets,
   createDataset,
@@ -549,7 +602,10 @@ const botService = {
   getConversation,
   deleteConversation,
   deleteAllConversations,
-  renameConversation
+  renameConversation,
+  getDatasetImages,
+  uploadImage,
+  removeImage
 };
 
 export default botService; 
