@@ -57,3 +57,8 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Data and generated content
+ragbot-backend/datasets/
+ragbot-backend/uploads/images/
+

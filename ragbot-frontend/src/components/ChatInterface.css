@@ -1,0 +1,18 @@
+.source-documents {
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.source-document {
+  margin: 4px 0;
+}
+
+.source-document button {
+  color: #0d6efd;
+}
+
+.source-document button:hover {
+  color: #0a58ca;
+  text-decoration: underline !important;
+} 

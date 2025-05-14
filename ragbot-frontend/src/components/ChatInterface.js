@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import botService from '../services/botService';
 import '../markdown-styles.css';
-import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck, FaLightbulb } from 'react-icons/fa';
+import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck, FaLightbulb, FaFileAlt } from 'react-icons/fa';
+import { v4 as uuid } from 'uuid';
 
 // Add some custom styles for the chorus UI
 const chorusStyles = {
@@ -354,37 +355,34 @@ const ChatInterface = () => {
     }
   };
 
+  const handleDownloadDocument = async (doc) => {
+    try {
+      await botService.downloadDocument(doc.dataset_id, doc.id, doc.filename);
+    } catch (err) {
+      setError('Failed to download document');
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    
-    if (loading) return;
-    
-    // Handle image generation mode
-    if (imageGenMode) {
-      if (!imageGenPrompt.trim()) return;
-      await handleGenerateImage();
-      return;
-    }
-    
     if (!message.trim() && !imageAttachment) return;
-    
-    // Store the message for later use if needed
-    const currentMessage = message.trim();
+
+    const currentMessage = message;
+    setMessage('');
     setLastMessageContent(currentMessage);
-    
-    setLoading(true);
-    
-    // Add user message to chat
+
+    // Create and add user message
     const newUserMessage = {
-      id: Date.now(),
+      id: uuid(),
       role: 'user',
-      content: message,
+      content: currentMessage,
       timestamp: new Date().toISOString()
     };
-    
+
     setMessages(prev => [...prev, newUserMessage]);
-    setMessage('');
-    
+    setLoading(true);
+    setError(null);
+
     try {
       let response;
       
@@ -437,20 +435,44 @@ const ChatInterface = () => {
         );
       }
       
+      // Create bot response message with source documents if available
+      const botResponseContent = response.source_documents ? (
+        <div>
+          <div className="mb-3">{response.response}</div>
+          {response.source_documents.length > 0 && (
+            <div className="source-documents mt-2 p-2 border-top">
+              <div className="text-muted mb-2">Source Documents:</div>
+              {response.source_documents.map((doc, index) => (
+                <div key={index} className="source-document">
+                  <Button
+                    variant="link"
+                    className="p-0 text-decoration-none"
+                    onClick={() => handleDownloadDocument(doc)}
+                  >
+                    <FaFileAlt className="me-1" />
+                    {doc.filename}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : response.response;
+
+      const botMessage = {
+        id: uuid(),
+        role: 'assistant',
+        content: botResponseContent,
+        timestamp: new Date().toISOString(),
+        source_documents: response.source_documents
+      };
+
+      setMessages(prev => [...prev, botMessage]);
+      
       // Update the current conversation ID if a new one was created
       if (response.conversation_id && !currentConversationId) {
         setCurrentConversationId(response.conversation_id);
       }
-      
-      // Add bot response to chat
-      const botMessage = {
-        id: Date.now(),
-        role: 'assistant',
-        content: response.response,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages(prev => [...prev, botMessage]);
       
       // If debug mode is enabled and we have debug info, set it
       if (debugMode && response.debug) {
@@ -564,47 +586,41 @@ const ChatInterface = () => {
 
   // Add function to handle enhance prompt
   const handleEnhancePrompt = async () => {
-    if (!message.trim() || enhancingPrompt) return;
+    // Check if we're in image generation mode or regular chat mode
+    const promptText = imageGenMode ? imageGenPrompt : message;
+    
+    if (!promptText.trim() || enhancingPrompt) return;
     
     try {
       setEnhancingPrompt(true);
+      console.log('Starting prompt enhancement for:', promptText);
       
       // Call API to enhance the prompt
-      try {
-        const result = await botService.enhancePrompt(message);
+      const result = await botService.enhancePrompt(promptText);
+      console.log('Enhancement result:', result);
+      
+      if (result && result.success && result.enhanced_prompt) {
+        console.log('Setting enhanced prompt:', result.enhanced_prompt);
         
-        if (result && result.enhanced_prompt) {
-          // Just set the message to the enhanced prompt without showing any notifications
-          setMessage(result.enhanced_prompt);
-          // No success message - just silently update
+        // Update the appropriate state variable based on the current mode
+        if (imageGenMode) {
+          console.log('Setting image gen prompt via enhance:', result.enhanced_prompt);
+          setImageGenPrompt(result.enhanced_prompt);
         } else {
-          // If we get a response but no enhanced_prompt property
-          console.warn('Enhance prompt response missing enhanced_prompt property:', result);
-          throw new Error('Invalid response format');
-        }
-      } catch (apiError) {
-        console.warn('API prompt enhancement failed, using frontend fallback:', apiError);
-        
-        // Simple frontend fallback implementation for prompt enhancement
-        const currentPrompt = message.trim();
-        let enhancedPrompt = currentPrompt;
-        
-        // Add specificity without explanatory text
-        if (currentPrompt.toLowerCase().includes('how to') || currentPrompt.toLowerCase().includes('how do i')) {
-          enhancedPrompt = enhancedPrompt.replace(/\?$/, '');
-          enhancedPrompt = enhancedPrompt + " step by step?";
-        } else if (currentPrompt.split(' ').length < 5) {
-          // For short queries, make them more specific
-          const subject = enhancedPrompt.trim();
-          enhancedPrompt = subject + ", including its key features, benefits, and common use cases";
+          setMessage(result.enhanced_prompt);
         }
         
-        // Just set the message without notifications
-        setMessage(enhancedPrompt);
+        // Add a temporary success message
+        setError('Prompt enhanced successfully!');
+        setTimeout(() => setError(''), 2000);
+      } else {
+        console.warn('Enhance prompt response missing enhanced_prompt property:', result);
+        throw new Error('Invalid response format');
       }
     } catch (err) {
       console.error('Error enhancing prompt:', err);
-      // Don't show errors to the user
+      setError('Failed to enhance prompt');
+      setTimeout(() => setError(''), 2000);
     } finally {
       setEnhancingPrompt(false);
     }
@@ -991,6 +1007,21 @@ const ChatInterface = () => {
                             </div>
                           )
                         )}
+                        {msg.role === 'assistant' && msg.source_documents && msg.source_documents.length > 0 && (
+                          <div className="source-documents mt-2">
+                            <small className="text-muted">Sources used:</small>
+                            {msg.source_documents.map((doc, index) => (
+                              <div key={doc.id} className="source-document">
+                                <button
+                                  className="btn btn-link btn-sm p-0"
+                                  onClick={() => handleDownloadDocument(doc)}
+                                >
+                                  {doc.filename}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div className="message-time">
                         {formatTime(msg.timestamp)}
@@ -1115,10 +1146,31 @@ const ChatInterface = () => {
                         as="textarea"
                         rows={3}
                         value={imageGenPrompt}
-                        onChange={(e) => setImageGenPrompt(e.target.value)}
+                        onChange={(e) => {
+                          console.log('Setting image gen prompt via input:', e.target.value);
+                          setImageGenPrompt(e.target.value);
+                        }}
                         placeholder="Describe the image you want to create..."
                         disabled={generatingImage}
                       />
+                      <div className="d-flex justify-content-end mt-1">
+                        <Button 
+                          variant="outline-primary"
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleEnhancePrompt();
+                          }}
+                          disabled={enhancingPrompt || !imageGenPrompt.trim()}
+                        >
+                          {enhancingPrompt ? (
+                            <>
+                              <Spinner as="span" size="sm" animation="border" className="me-1" />
+                              Enhancing...
+                            </>
+                          ) : 'Enhance Prompt'}
+                        </Button>
+                      </div>
                     </Form.Group>
                   ) : (
                     <>

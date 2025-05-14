@@ -116,6 +116,37 @@ const rebuildDataset = async (datasetId) => {
   }
 };
 
+const downloadDocument = async (datasetId, documentId, filename) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/datasets/${datasetId}/documents/${documentId}/download/${encodeURIComponent(filename)}`,
+      {
+        headers: getAuthHeader(),
+        responseType: 'blob'
+      }
+    );
+    
+    // Create a URL for the blob
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    
+    // Create a temporary link element
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    
+    // Append to body, click, and remove
+    document.body.appendChild(link);
+    link.click();
+    link.parentNode.removeChild(link);
+    
+    // Clean up the URL
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Error downloading document:', error);
+    throw error;
+  }
+};
+
 // Bots
 const getBots = async () => {
   try {
@@ -205,75 +236,22 @@ const generateImage = async (prompt, options = {}) => {
 
 const enhancePrompt = async (prompt) => {
   try {
-    // Try using the enhance prompt endpoint first
-    try {
-      const response = await axios.post(
-        `${API_URL}/bots/enhance-prompt`,
-        { 
-          message: prompt,
-          enhance_only: true,
-          raw_output: true  // Signal that we want only the enhanced prompt
-        },
-        {
-          headers: getAuthHeader()
-        }
-      );
-      
-      // Return just the raw enhanced prompt
-      return {
-        enhanced_prompt: response.data.enhanced_prompt || response.data.response || response.data
-      };
-    } catch (primaryError) {
-      console.warn('Primary enhance endpoint failed, using chat endpoint as fallback:', primaryError);
-      
-      // If the dedicated endpoint fails, try using a standard bot for enhancement
-      const bots = await getBots();
-      const enhanceBot = bots.find(b => b.name.toLowerCase().includes('enhance')) || bots[0];
-      
-      if (!enhanceBot) {
-        throw new Error('No bot available for enhancing prompts');
+    console.log('Sending enhance prompt request:', prompt);
+    const response = await axios.post(
+      `${API_URL}/images/enhance-prompt`,
+      { prompt },
+      {
+        headers: getAuthHeader()
       }
-      
-      const response = await axios.post(
-        `${API_URL}/bots/${enhanceBot.id}/chat`,
-        { 
-          message: `Please enhance this prompt to be more specific and effective. Do not include any text other than the enhanced prompt. Do not use quotation marks. Original prompt: "${prompt}"`,
-          enhance_mode: true,
-          raw_output: true
-        },
-        {
-          headers: getAuthHeader()
-        }
-      );
-      
-      // Process the response to extract only the enhanced prompt
-      let enhancedPrompt = response.data.response || response.data;
-      
-      // If it's a string, process it
-      if (typeof enhancedPrompt === 'string') {
-        // Remove any quotation marks
-        enhancedPrompt = enhancedPrompt.replace(/^["']|["']$/g, '');
-        
-        // Remove any explanatory text or prefixes
-        const commonPrefixes = [
-          'Enhanced prompt:', 
-          'Here is the enhanced prompt:', 
-          'Improved prompt:',
-          'Here is an enhanced version:',
-          'Here is a more effective prompt:'
-        ];
-        
-        for (const prefix of commonPrefixes) {
-          if (enhancedPrompt.startsWith(prefix)) {
-            enhancedPrompt = enhancedPrompt.substring(prefix.length).trim();
-          }
-        }
-      }
-      
-      // Return only the enhanced prompt
-      return {
-        enhanced_prompt: enhancedPrompt || prompt
-      };
+    );
+    
+    console.log('Enhance prompt response:', response.data);
+    
+    // The backend sends success, original_prompt, and enhanced_prompt
+    if (response.data && response.data.enhanced_prompt) {
+      return response.data;
+    } else {
+      throw new Error('Invalid response format from server');
     }
   } catch (error) {
     console.error('Error enhancing prompt:', error);
@@ -549,6 +527,7 @@ const botService = {
   getDatasetDocuments,
   removeDocument,
   rebuildDataset,
+  downloadDocument,
   getBots,
   createBot,
   chatWithBot,

@@ -928,8 +928,23 @@ def chat_with_bot(user_data, bot_id):
         # But we need to truncate to avoid token limits
         max_contexts = 8  # Limit the total number of contexts used
         contexts = all_contexts[:max_contexts]
-        context_text = "\n\n".join(contexts)
+        context_text = "\n\n".join([f"[{i+1}] {ctx}" for i, ctx in enumerate(contexts)])
         
+        # Get source documents information with indices
+        source_documents = []
+        seen_documents = set()
+        for i, (result, metadata) in enumerate(zip(results["documents"][0][:max_contexts], results["metadatas"][0][:max_contexts])):
+            if metadata and 'document_id' in metadata and 'source' in metadata:
+                doc_key = f"{metadata['document_id']}_{metadata['source']}"
+                if doc_key not in seen_documents:
+                    source_documents.append({
+                        'id': metadata['document_id'],
+                        'filename': metadata['source'],
+                        'dataset_id': dataset_id,
+                        'context_index': i + 1  # Store the index used in context_text
+                    })
+                    seen_documents.add(doc_key)
+
         # Get previous conversation messages to add as context
         conversation_history = ""
         if len(conversation["messages"]) > 1:  # If there's more than just the current message
@@ -1280,6 +1295,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
                 
             return jsonify({
                 "response": winning_response,
+                "source_documents": source_documents,
                 "debug": {
                     "all_responses": all_responses,
                     "anonymized_responses": anonymized_responses,
@@ -1296,13 +1312,22 @@ Do not reveal any bias or preference based on writing style or approach - evalua
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": system_instruction_with_history},
-                {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}"}
+                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc."},
+                {"role": "user", "content": f"Context:\n{context_text}\n\nUser question: {message}\n\nPlease include citations [1], [2], etc. when you reference information from the context."}
             ]
         )
         
         response_text = response.choices[0].message.content
         
+        # Extract which context indices were actually used in the response
+        used_indices = set()
+        for i in range(1, max_contexts + 1):
+            if f"[{i}]" in response_text:
+                used_indices.add(i)
+        
+        # Filter source_documents to only include those that were actually cited
+        used_source_documents = [doc for doc in source_documents if doc['context_index'] in used_indices]
+
         # Save the response in the conversation
         bot_response = {
             "id": str(uuid.uuid4()),
@@ -1316,6 +1341,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
             
         return jsonify({
             "response": response_text,
+            "source_documents": used_source_documents,
             "debug": {"contexts": contexts} if debug_mode else None,
             "conversation_id": conversation_id
         }), 200
@@ -2719,11 +2745,14 @@ def generate_image(user_data):
 @require_auth
 def enhance_prompt(user_data):
     try:
+        print("\n=== Starting Prompt Enhancement ===")
         # Get request data
         data = request.json
         original_prompt = data.get('prompt')
+        print(f"Received prompt: {original_prompt}")
         
         if not original_prompt:
+            print("Error: No prompt provided")
             return jsonify({"error": "Prompt is required"}), 400
         
         # Craft system message for GPT-4o to enhance the prompt
@@ -2731,7 +2760,8 @@ def enhance_prompt(user_data):
 Your task is to enhance the user's prompt by adding more descriptive elements, artistic style, lighting, mood, and details.
 Keep the original intent and subject matter, but make it much more detailed and visually compelling.
 Respond with ONLY the enhanced prompt text, nothing else. No explanations or additional text."""
-        
+
+        print("Calling GPT-4o for enhancement...")
         # Call GPT-4o to enhance the prompt
         response = openai.chat.completions.create(
             model="gpt-4o",
@@ -2744,15 +2774,20 @@ Respond with ONLY the enhanced prompt text, nothing else. No explanations or add
         )
         
         enhanced_prompt = response.choices[0].message.content.strip()
+        print(f"Enhanced prompt: {enhanced_prompt}")
         
-        return jsonify({
+        result = {
             "success": True,
             "original_prompt": original_prompt,
             "enhanced_prompt": enhanced_prompt
-        }), 200
+        }
+        print("=== Prompt Enhancement Complete ===\n")
+        return jsonify(result), 200
         
     except Exception as e:
         print(f"Error enhancing prompt: {str(e)}")
+        print(f"Full error details: {e}")
+        print("=== Prompt Enhancement Failed ===\n")
         return jsonify({"error": f"Prompt enhancement failed: {str(e)}"}), 500
         
 # Route to serve generated images
@@ -2997,6 +3032,40 @@ def serve_frontend(path):
         return send_from_directory(frontend_path, 'index.html')
     # In development mode, let React dev server handle frontend
     return jsonify({"message": "API endpoint working. Use React dev server for frontend."})
+
+@app.route('/api/datasets/<dataset_id>/documents/<document_id>/download/<filename>', methods=['GET'])
+@require_auth
+def download_document(user_data, dataset_id, document_id, filename):
+    # Check if dataset exists and belongs to user
+    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    
+    if not os.path.exists(user_datasets_file):
+        return jsonify({"error": "Dataset not found"}), 404
+        
+    with open(user_datasets_file, 'r') as f:
+        datasets = json.load(f)
+        
+    dataset_exists = False
+    for dataset in datasets:
+        if dataset["id"] == dataset_id:
+            dataset_exists = True
+            break
+            
+    if not dataset_exists:
+        return jsonify({"error": "Dataset not found"}), 404
+
+    # Look for the document in the uploads folder
+    document_path = None
+    for file in os.listdir(DOCUMENT_FOLDER):
+        if file.endswith(f"_{filename}") and document_id in file:
+            document_path = os.path.join(DOCUMENT_FOLDER, file)
+            break
+
+    if not document_path or not os.path.exists(document_path):
+        return jsonify({"error": "Document not found"}), 404
+
+    return send_file(document_path, as_attachment=True, download_name=filename)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
