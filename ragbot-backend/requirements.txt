@@ -13,3 +13,14 @@ PyJWT
 werkzeug
 requests
 Pillow
+torch
+transformers
+open_clip_torch
+ftfy
+regex
+tqdm
+scipy
+faiss-cpu
+pytesseract
+pdf2image
+pymupdf
