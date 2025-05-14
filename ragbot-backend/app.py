@@ -3057,10 +3057,17 @@ def download_document(user_data, dataset_id, document_id, filename):
 
     # Look for the document in the uploads folder
     document_path = None
-    for file in os.listdir(DOCUMENT_FOLDER):
-        if file.endswith(f"_{filename}") and document_id in file:
-            document_path = os.path.join(DOCUMENT_FOLDER, file)
-            break
+    
+    # First, try direct match with document_id
+    direct_match = os.path.join(DOCUMENT_FOLDER, f"{document_id}_{filename}")
+    if os.path.exists(direct_match):
+        document_path = direct_match
+    else:
+        # If direct match fails, search for any file ending with the filename
+        for file in os.listdir(DOCUMENT_FOLDER):
+            if file.endswith(f"_{filename}"):
+                document_path = os.path.join(DOCUMENT_FOLDER, file)
+                break
 
     if not document_path or not os.path.exists(document_path):
         return jsonify({"error": "Document not found"}), 404
