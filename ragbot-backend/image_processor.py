@@ -59,19 +59,63 @@ class ImageProcessor:
     def _load_existing_indices(self):
         """Load existing FAISS indices and metadata for datasets"""
         if not os.path.exists(self.indices_dir):
+            print(f"Creating indices directory at {self.indices_dir}")
+            os.makedirs(self.indices_dir, exist_ok=True)
             return
             
+        print(f"Loading image indices from {self.indices_dir}")
+        # First check all metadata files to ensure we load all datasets
+        for filename in os.listdir(self.indices_dir):
+            if filename.endswith("_metadata.json"):
+                dataset_id = filename.split("_metadata.json")[0]
+                metadata_file = os.path.join(self.indices_dir, filename)
+                index_path = os.path.join(self.indices_dir, f"{dataset_id}_index.faiss")
+                
+                try:
+                    # Load metadata first
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    # Ensure each image has the correct dataset_id
+                    valid_metadata = []
+                    for img_meta in metadata:
+                        if not img_meta.get('dataset_id'):
+                            img_meta['dataset_id'] = dataset_id
+                        # Only include images that belong to this dataset
+                        if img_meta.get('dataset_id') == dataset_id:
+                            valid_metadata.append(img_meta)
+                    
+                    # Store metadata even if index loading fails
+                    self.image_metadata[dataset_id] = valid_metadata
+                    
+                    # Try to load index if it exists
+                    if os.path.exists(index_path):
+                        index = faiss.read_index(index_path)
+                        self.image_indices[dataset_id] = index
+                        print(f"Loaded image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                    else:
+                        print(f"Warning: Metadata found for dataset {dataset_id} but no index file")
+                        
+                except Exception as e:
+                    print(f"Error loading data for {dataset_id}: {str(e)}")
+        
+        # Check for any orphaned index files without metadata
         for filename in os.listdir(self.indices_dir):
             if filename.endswith("_index.faiss"):
                 dataset_id = filename.split("_index.faiss")[0]
                 
+                # If we already loaded this dataset, skip
+                if dataset_id in self.image_metadata:
+                    continue
+                    
                 # Check if metadata file exists
                 metadata_file = os.path.join(self.indices_dir, f"{dataset_id}_metadata.json")
                 if not os.path.exists(metadata_file):
+                    print(f"Warning: Found index for dataset {dataset_id} but no metadata file")
                     continue
                     
                 try:
-                    # Load FAISS index
+                    # Load index
                     index_path = os.path.join(self.indices_dir, filename)
                     index = faiss.read_index(index_path)
                     
@@ -79,11 +123,27 @@ class ImageProcessor:
                     with open(metadata_file, 'r') as f:
                         metadata = json.load(f)
                     
+                    # Filter metadata to only include images for this dataset
+                    valid_metadata = []
+                    for img_meta in metadata:
+                        if not img_meta.get('dataset_id'):
+                            img_meta['dataset_id'] = dataset_id
+                        if img_meta.get('dataset_id') == dataset_id:
+                            valid_metadata.append(img_meta)
+                    
                     self.image_indices[dataset_id] = index
-                    self.image_metadata[dataset_id] = metadata
-                    print(f"Loaded image index for dataset {dataset_id} with {len(metadata)} images")
+                    self.image_metadata[dataset_id] = valid_metadata
+                    print(f"Loaded image index for dataset {dataset_id} with {len(valid_metadata)} images")
                 except Exception as e:
                     print(f"Error loading index for {dataset_id}: {str(e)}")
+        
+        # Print summary of loaded datasets
+        if self.image_metadata:
+            print(f"Loaded image metadata for {len(self.image_metadata)} datasets:")
+            for dataset_id, metadata in self.image_metadata.items():
+                print(f"  - Dataset {dataset_id}: {len(metadata)} images")
+        else:
+            print("No image datasets found")
     
     def generate_caption(self, image_path: str) -> str:
         """Generate a caption for an image using BLIP
@@ -173,38 +233,63 @@ class ImageProcessor:
         Returns:
             Dict: Image metadata including ID and embedding
         """
+        print(f"Adding image to dataset {dataset_id}: {image_path}")
         self._load_models()
         
         # Initialize the dataset's index and metadata if needed
         if dataset_id not in self.image_indices:
+            print(f"Creating new index for dataset {dataset_id}")
             self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
             self.image_metadata[dataset_id] = []
         
+        # Ensure image path exists
+        if not os.path.exists(image_path):
+            print(f"Error: Image file not found: {image_path}")
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+            
+        # Create combined metadata
+        combined_metadata = metadata.copy() if metadata else {}
+        
+        # Ensure the dataset_id is set in metadata
+        combined_metadata['dataset_id'] = dataset_id
+            
+        # Use provided image ID if available, otherwise generate one
+        image_id = combined_metadata.get("id", str(uuid.uuid4()))
+        combined_metadata["id"] = image_id
+        
         # Generate image embedding
-        embedding = self.compute_image_embedding(image_path)
+        try:
+            embedding = self.compute_image_embedding(image_path)
+        except Exception as e:
+            print(f"Error computing embedding for {image_path}: {str(e)}")
+            raise
         
-        # Generate caption
-        caption = self.generate_caption(image_path)
+        # Generate caption if not already provided
+        if "caption" not in combined_metadata:
+            try:
+                caption = self.generate_caption(image_path)
+                combined_metadata["caption"] = caption
+            except Exception as e:
+                print(f"Error generating caption for {image_path}: {str(e)}")
+                combined_metadata["caption"] = "No caption available"
         
-        # Create image ID and metadata
-        image_id = str(uuid.uuid4())
-        image_metadata = {
-            "id": image_id,
-            "path": image_path,
-            "caption": caption,
-            "original_filename": os.path.basename(image_path),
-            "created_at": datetime.datetime.utcnow().isoformat(),
-            **(metadata or {})
-        }
+        # Ensure basic metadata fields
+        if "path" not in combined_metadata:
+            combined_metadata["path"] = image_path
+        if "original_filename" not in combined_metadata:
+            combined_metadata["original_filename"] = os.path.basename(image_path)
+        if "created_at" not in combined_metadata:
+            combined_metadata["created_at"] = datetime.datetime.utcnow().isoformat()
         
         # Add to index and metadata
         self.image_indices[dataset_id].add(np.array([embedding], dtype=np.float32))
-        self.image_metadata[dataset_id].append(image_metadata)
+        self.image_metadata[dataset_id].append(combined_metadata)
         
         # Save updated index and metadata
         self._save_dataset_index(dataset_id)
         
-        return image_metadata
+        print(f"Successfully added image {image_id} to dataset {dataset_id}")
+        return combined_metadata
     
     def search_images(self, dataset_id: str, query: str, top_k: int = 5) -> List[Dict]:
         """Search for images matching a text query
@@ -256,37 +341,88 @@ class ImageProcessor:
             bool: True if successful, False otherwise
         """
         # Check if dataset exists
-        if dataset_id not in self.image_indices or dataset_id not in self.image_metadata:
+        if dataset_id not in self.image_metadata:
+            print(f"Dataset {dataset_id} not found in image metadata")
             return False
             
         # Find the image in metadata
         metadata = self.image_metadata[dataset_id]
+        image_index = -1
+        found_img = None
+        
         for i, item in enumerate(metadata):
-            if item["id"] == image_id:
-                # We need to rebuild the index without this image
-                # FAISS doesn't support direct removal, so we rebuild
+            if item.get("id") == image_id:
+                image_index = i
+                found_img = item
+                break
                 
-                # Remove from metadata
-                metadata.pop(i)
+        if image_index == -1:
+            print(f"Image {image_id} not found in dataset {dataset_id}")
+            # Debug info about available images
+            if metadata:
+                print(f"Available image IDs: {[img.get('id') for img in metadata[:5]]}...")
+            return False
+            
+        # We need to rebuild the index without this image
+        # FAISS doesn't support direct removal, so we rebuild
                 
-                # If there are no more images, create an empty index
-                if len(metadata) == 0:
-                    self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
-                else:
-                    # Otherwise, rebuild the index
-                    new_index = faiss.IndexFlatIP(VECTOR_DIMENSION)
-                    for img_meta in metadata:
-                        img_path = img_meta["path"]
+        # Remove from metadata
+        metadata.pop(image_index)
+        
+        # Get the image path for possible file deletion
+        image_path = found_img.get("path", "")
+        
+        # If there are no more images, create an empty index
+        if len(metadata) == 0:
+            self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
+            print(f"Removed last image from dataset {dataset_id}, creating empty index")
+        else:
+            # Otherwise, rebuild the index
+            try:
+                print(f"Rebuilding index for dataset {dataset_id} with {len(metadata)} images")
+                new_index = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                
+                # Keep track of any images with missing files
+                missing_images = []
+                
+                for i, img_meta in enumerate(metadata):
+                    img_path = img_meta.get("path", "")
+                    if not img_path or not os.path.exists(img_path):
+                        print(f"Warning: Image file not found: {img_path}")
+                        missing_images.append(i)
+                        continue
+                        
+                    try:
                         embedding = self.compute_image_embedding(img_path)
                         new_index.add(np.array([embedding], dtype=np.float32))
-                    
-                    self.image_indices[dataset_id] = new_index
+                    except Exception as e:
+                        print(f"Error computing embedding for {img_path}: {str(e)}")
+                        missing_images.append(i)
                 
-                # Save updated index and metadata
-                self._save_dataset_index(dataset_id)
-                return True
+                # Remove any images with missing files from metadata
+                # We need to remove in reverse order to not mess up indices
+                for i in sorted(missing_images, reverse=True):
+                    print(f"Removing image with missing file: {metadata[i].get('id')}")
+                    metadata.pop(i)
                 
-        return False  # Image not found
+                self.image_indices[dataset_id] = new_index
+            except Exception as e:
+                print(f"Error rebuilding index: {str(e)}")
+                # If index rebuilding fails, still save the updated metadata
+        
+        # Save updated index and metadata
+        self._save_dataset_index(dataset_id)
+        
+        # Try to delete the image file
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+                print(f"Deleted image file: {image_path}")
+            except Exception as e:
+                print(f"Warning: Could not delete image file {image_path}: {str(e)}")
+        
+        print(f"Successfully removed image {image_id} from dataset {dataset_id}")
+        return True
     
     def _save_dataset_index(self, dataset_id: str):
         """Save a dataset's index and metadata to disk

@@ -48,6 +48,37 @@ from conversation_handlers import (
     delete_all_conversations_handler,
     rename_conversation_handler
 )
+# Import dataset handlers
+from dataset_handlers import (
+    find_dataset_by_id,
+    sync_datasets_with_collections,
+    get_mime_types_for_dataset,
+    get_datasets_handler,
+    create_dataset_handler,
+    delete_dataset_handler,
+    get_dataset_type_handler,
+    remove_document_handler,
+    rebuild_dataset_handler,
+    upload_image_handler
+)
+# Import auth handlers
+from auth_handlers import (
+    get_token_from_header,
+    verify_token,
+    require_auth,
+    register_handler,
+    login_handler
+)
+# Import bot handlers
+from bot_handlers import (
+    get_bots_handler,
+    create_bot_handler,
+    delete_bot_handler,
+    get_bot_datasets_handler,
+    add_dataset_to_bot_handler,
+    remove_dataset_from_bot_handler,
+    set_bot_datasets_handler
+)
 
 # Load environment variables
 load_dotenv()
@@ -108,318 +139,92 @@ image_processor = ImageProcessor(app_base_dir)
 CONVERSATIONS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversations")
 os.makedirs(CONVERSATIONS_FOLDER, exist_ok=True)
 
-# Sync datasets with ChromaDB collections
-def sync_datasets_with_collections():
-    print("Syncing datasets with ChromaDB collections...")
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    os.makedirs(datasets_dir, exist_ok=True)
-    
-    # Get all dataset files
-    dataset_files = [f for f in os.listdir(datasets_dir) if f.endswith('_datasets.json')]
-    
-    # In ChromaDB v0.6.0, list_collections() only returns collection names
-    existing_collections = chroma_client.list_collections()
-    
-    for dataset_file in dataset_files:
-        try:
-            with open(os.path.join(datasets_dir, dataset_file), 'r') as f:
-                datasets = json.load(f)
-                
-            for dataset in datasets:
-                dataset_id = dataset["id"]
-                
-                # Check if collection exists in ChromaDB
-                if dataset_id not in existing_collections:
-                    print(f"Creating missing collection for dataset: {dataset_id}")
-                    try:
-                        chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
-                    except Exception as e:
-                        print(f"Error creating collection for dataset {dataset_id}: {str(e)}")
-        except Exception as e:
-            print(f"Error processing dataset file {dataset_file}: {str(e)}")
-    
-    print("Dataset sync completed")
+# Using the imported sync_datasets_with_collections function
 
 # Run the sync on app startup
-sync_datasets_with_collections()
+sync_datasets_with_collections(chroma_client, openai_ef)
 
-# Helper functions
-def get_token_from_header():
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or 'Bearer ' not in auth_header:
-        return None
-    return auth_header.split('Bearer ')[1]
+# Update the authentication decorator to use the imported module
+def require_auth_wrapper(f):
+    return require_auth(app.config['JWT_SECRET_KEY'])(f)
 
-def verify_token():
-    token = get_token_from_header()
-    if not token:
-        return None
-    try:
-        decoded = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=["HS256"])
-        return decoded
-    except jwt.ExpiredSignatureError:
-        return None
-    except jwt.InvalidTokenError:
-        return None
 
-def require_auth(f):
-    def decorated(*args, **kwargs):
-        user_data = verify_token()
-        if not user_data:
-            return jsonify({"error": "Unauthorized"}), 401
-        return f(user_data, *args, **kwargs)
-    decorated.__name__ = f.__name__
-    return decorated
-
-# Add the missing find_dataset_by_id function
-def find_dataset_by_id(dataset_id):
-    """Find a dataset by its ID across all users
-    
-    Args:
-        dataset_id: The ID of the dataset to find
-        
-    Returns:
-        dict: The dataset if found, None otherwise
-    """
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    if not os.path.exists(datasets_dir):
-        return None
-    
-    # Check all user dataset files
-    for filename in os.listdir(datasets_dir):
-        if filename.endswith("_datasets.json"):
-            try:
-                with open(os.path.join(datasets_dir, filename), 'r') as f:
-                    datasets = json.load(f)
-                
-                for dataset in datasets:
-                    if dataset.get("id") == dataset_id:
-                        return dataset
-            except Exception as e:
-                print(f"Error reading dataset file {filename}: {str(e)}")
-    
-    return None
 
 # Authentication routes
 @app.route('/api/auth/register', methods=['POST'])
 def register():
-    data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    
-    if not username or not password:
-        return jsonify({"error": "Username and password are required"}), 400
-        
-    # Check if user already exists - for demo purposes using a simple file
-    users_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
-    users = {}
-    if os.path.exists(users_file):
-        with open(users_file, 'r') as f:
-            users = json.load(f)
-    
-    if username in users:
-        return jsonify({"error": "Username already exists"}), 400
-        
-    # Hash password and store user
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    user_id = str(uuid.uuid4())
-    users[username] = {
-        "id": user_id,
-        "username": username,
-        "password": hashed_password
-    }
-    
-    with open(users_file, 'w') as f:
-        json.dump(users, f)
-        
-    # Generate token
-    token = jwt.encode(
-        {"id": user_id, "username": username, "exp": datetime.datetime.now(UTC) + app.config['JWT_ACCESS_TOKEN_EXPIRES']},
-        app.config['JWT_SECRET_KEY']
-    )
-    
-    return jsonify({"token": token, "user": {"id": user_id, "username": username}}), 201
+    return register_handler(app.config['JWT_SECRET_KEY'], app.config['JWT_ACCESS_TOKEN_EXPIRES'])
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    
-    if not username or not password:
-        return jsonify({"error": "Username and password are required"}), 400
-        
-    # Load users - for demo purposes using a simple file
-    users_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
-    if not os.path.exists(users_file):
-        return jsonify({"error": "Invalid credentials"}), 401
-        
-    with open(users_file, 'r') as f:
-        users = json.load(f)
-        
-    if username not in users:
-        return jsonify({"error": "Invalid credentials"}), 401
-        
-    user = users[username]
-    if not bcrypt.checkpw(password.encode('utf-8'), user["password"].encode('utf-8')):
-        return jsonify({"error": "Invalid credentials"}), 401
-        
-    # Generate token
-    token = jwt.encode(
-        {"id": user["id"], "username": user["username"], "exp": datetime.datetime.now(UTC) + app.config['JWT_ACCESS_TOKEN_EXPIRES']},
-        app.config['JWT_SECRET_KEY']
-    )
-    
-    return jsonify({"token": token, "user": {"id": user["id"], "username": user["username"]}}), 200
+    return login_handler(app.config['JWT_SECRET_KEY'], app.config['JWT_ACCESS_TOKEN_EXPIRES'])
 
 # Dataset routes
 @app.route('/api/datasets', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_datasets(user_data):
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    os.makedirs(datasets_dir, exist_ok=True)
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify([]), 200
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-    
-    # Update dataset counts with accurate information
-    for dataset in datasets:
-        dataset_id = dataset.get("id")
-        dataset_type = dataset.get("type", "text")
-        
-        # Initialize counts if they don't exist
-        if "document_count" not in dataset:
-            dataset["document_count"] = 0
-        if "chunk_count" not in dataset:
-            dataset["chunk_count"] = 0
-        if "image_count" not in dataset:
-            dataset["image_count"] = 0
-        
-        # Update text document count and chunk count if it's a text or mixed dataset
-        if dataset_type in ["text", "mixed"]:
-            try:
-                collection = chroma_client.get_or_create_collection(
-                    name=dataset_id,
-                    embedding_function=openai_ef
-                )
-                # Get actual chunk count from ChromaDB
-                chunk_count = collection.count()
-                dataset["chunk_count"] = chunk_count
-                
-                # Calculate unique document count
-                try:
-                    # Get all document IDs
-                    results = collection.get()
-                    if results and results["metadatas"]:
-                        # Extract unique document IDs
-                        document_ids = set()
-                        for metadata in results["metadatas"]:
-                            if metadata and "document_id" in metadata:
-                                document_ids.add(metadata["document_id"])
-                        dataset["document_count"] = len(document_ids)
-                except Exception as e:
-                    print(f"Error calculating document count for dataset {dataset_id}: {str(e)}")
-                    
-            except Exception as e:
-                print(f"Error getting document count for dataset {dataset_id}: {str(e)}")
-        
-        # Update image count if it's an image or mixed dataset
-        if dataset_type in ["image", "mixed"]:
-            try:
-                # Check image processor for image counts
-                image_count = 0
-                if dataset_id in image_processor.image_metadata:
-                    image_count = len(image_processor.image_metadata[dataset_id])
-                dataset["image_count"] = image_count
-                
-                # Include image previews (first 3 images)
-                if dataset_id in image_processor.image_metadata and image_count > 0:
-                    # Get up to 3 images to display as previews
-                    image_previews = []
-                    for i, img_meta in enumerate(image_processor.image_metadata[dataset_id][:3]):
-                        if 'path' in img_meta:
-                            image_previews.append({
-                                "id": img_meta.get("id", ""),
-                                "url": f"/api/images/{os.path.basename(img_meta['path'])}",
-                                "caption": img_meta.get("caption", "")
-                            })
-                    dataset["image_previews"] = image_previews
-            except Exception as e:
-                print(f"Error getting image count for dataset {dataset_id}: {str(e)}")
-    
-    return jsonify(datasets), 200
+    return get_datasets_handler(user_data)
 
 @app.route('/api/datasets', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def create_dataset(user_data):
     data = request.json
-    name = data.get('name')
-    description = data.get('description', '')
-    dataset_type = data.get('type', 'mixed')  # Default to 'mixed' instead of 'text' to support both
     
-    if not name:
+    if not data or not data.get('name'):
         return jsonify({"error": "Dataset name is required"}), 400
         
+    # Get dataset type, default to "text"
+    dataset_type = data.get('type', 'text')
+    if dataset_type not in ['text', 'image', 'mixed']:
+        return jsonify({"error": "Invalid dataset type. Must be 'text', 'image', or 'mixed'"}), 400
+        
+    # Create a new dataset
     dataset_id = str(uuid.uuid4())
+    new_dataset = {
+        "id": dataset_id,
+        "name": data.get('name'),
+        "description": data.get('description', ''),
+        "type": dataset_type,
+        "user_id": user_data['id'],
+        "document_count": 0,
+        "image_count": 0,
+        "chunk_count": 0,
+        "created_at": datetime.datetime.now(UTC).isoformat()
+    }
     
-    # Save dataset metadata
+    # Save the dataset
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
+    
+    # Check if user already has datasets
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
-    datasets = []
     if os.path.exists(user_datasets_file):
         with open(user_datasets_file, 'r') as f:
             datasets = json.load(f)
-            
-    dataset = {
-        "id": dataset_id,
-        "name": name,
-        "description": description,
-        "type": dataset_type,
-        "user_id": user_data['id'],  # Store the user_id in the dataset
-        "created_at": datetime.datetime.now(UTC).isoformat(),
-        "document_count": 0,
-        "image_count": 0  # Initialize image count to zero
-    }
-    datasets.append(dataset)
+        datasets.append(new_dataset)
+    else:
+        datasets = [new_dataset]
     
     with open(user_datasets_file, 'w') as f:
         json.dump(datasets, f)
-        
-    # Create collection in ChromaDB for text documents
-    if dataset_type in ['text', 'mixed']:
+    
+    # Create a ChromaDB collection for this dataset
+    try:
+        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
+        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model_name="text-embedding-ada-002"
+        )
         chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
+    except Exception as e:
+        print(f"Error creating ChromaDB collection: {str(e)}")
     
-    # Initialize FAISS index for image datasets if needed
-    if dataset_type in ['image', 'mixed']:
-        # The image_processor will create the index when first image is added
-        # But we can preemptively initialize it
-        try:
-            empty_index = faiss.IndexFlatIP(512)  # 512-dim for CLIP embeddings
-            index_path = os.path.join(image_processor.indices_dir, f"{dataset_id}_index.faiss")
-            faiss.write_index(empty_index, index_path)
-            
-            # Initialize empty metadata
-            metadata_path = os.path.join(image_processor.indices_dir, f"{dataset_id}_metadata.json")
-            with open(metadata_path, 'w') as f:
-                json.dump([], f)
-                
-            # Initialize in-memory data structures
-            image_processor.image_indices[dataset_id] = empty_index
-            image_processor.image_metadata[dataset_id] = []
-        except Exception as e:
-            print(f"Warning: Error initializing image index for dataset {dataset_id}: {str(e)}")
-            # Continue anyway since the index will be created on first image upload
-    
-    return jsonify(dataset), 201
+    return jsonify(new_dataset), 201
 
 @app.route('/api/datasets/<dataset_id>/documents', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def upload_document(user_data, dataset_id):
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
@@ -656,120 +461,20 @@ def upload_document(user_data, dataset_id):
         return jsonify({"error": "Unsupported file type"}), 400
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def remove_document(user_data, dataset_id, document_id):
-    # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-        
-    dataset_exists = False
-    dataset_index = -1
-    for idx, dataset in enumerate(datasets):
-        if dataset["id"] == dataset_id:
-            dataset_exists = True
-            dataset_index = idx
-            break
-            
-    if not dataset_exists:
-        return jsonify({"error": "Dataset not found"}), 404
-    
-    # Try to get the collection from ChromaDB
-    try:
-        collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
-        
-        # Get all chunks with the matching document_id in their metadata
-        results = collection.get(
-            where={"document_id": document_id}
-        )
-        
-        if not results or len(results['ids']) == 0:
-            return jsonify({"error": "Document not found in dataset"}), 404
-        
-        # Get number of chunks to remove for updating chunk count
-        num_chunks_to_remove = len(results['ids'])
-        
-        # Delete the chunks from ChromaDB
-        collection.delete(
-            ids=results['ids']
-        )
-        
-        # Update document count and chunk count in dataset
-        if datasets[dataset_index]["document_count"] > 0:
-            datasets[dataset_index]["document_count"] -= 1
-            
-        # Update chunk count if it exists
-        if "chunk_count" in datasets[dataset_index]:
-            datasets[dataset_index]["chunk_count"] -= num_chunks_to_remove
-            if datasets[dataset_index]["chunk_count"] < 0:
-                datasets[dataset_index]["chunk_count"] = 0
-            
-        with open(user_datasets_file, 'w') as f:
-            json.dump(datasets, f)
-            
-        return jsonify({
-            "message": "Document removed successfully",
-            "chunks_removed": num_chunks_to_remove
-        }), 200
-    
-    except Exception as e:
-        print(f"Error removing document: {str(e)}")
-        return jsonify({"error": f"Failed to remove document: {str(e)}"}), 500
+    """Delete a document from a dataset"""
+    return remove_document_handler(user_data, dataset_id, document_id)
 
 # Admin routes
 @app.route('/api/admin/rebuild_dataset/<dataset_id>', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def rebuild_dataset(user_data, dataset_id):
-    # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-        
-    dataset_exists = False
-    dataset_index = -1
-    for idx, dataset in enumerate(datasets):
-        if dataset["id"] == dataset_id:
-            dataset_exists = True
-            dataset_index = idx
-            break
-            
-    if not dataset_exists:
-        return jsonify({"error": "Dataset not found"}), 404
-    
-    # Reset document count
-    datasets[dataset_index]["document_count"] = 0
-    
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
-    
-    # Try to delete the existing collection if it exists
-    try:
-        existing_collections = chroma_client.list_collections()
-        if dataset_id in existing_collections:
-            chroma_client.delete_collection(name=dataset_id)
-            print(f"Deleted existing collection for dataset: {dataset_id}")
-    except Exception as e:
-        print(f"Error deleting collection: {str(e)}")
-    
-    # Create a new collection
-    try:
-        chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
-        return jsonify({"message": "Dataset collection has been rebuilt. Please re-upload your documents."}), 200
-    except Exception as e:
-        return jsonify({"error": f"Failed to rebuild dataset: {str(e)}"}), 500
+    """Rebuild a dataset's ChromaDB collection"""
+    return rebuild_dataset_handler(user_data, dataset_id)
 
 @app.route('/api/datasets/<dataset_id>/status', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def dataset_status(user_data, dataset_id):
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
@@ -782,9 +487,11 @@ def dataset_status(user_data, dataset_id):
         datasets = json.load(f)
         
     dataset = None
-    for d in datasets:
+    dataset_index = -1
+    for i, d in enumerate(datasets):
         if d["id"] == dataset_id:
             dataset = d
+            dataset_index = i
             break
             
     if not dataset:
@@ -836,7 +543,8 @@ def dataset_status(user_data, dataset_id):
     
     if dataset_type in ["image", "mixed"]:
         # Check if there's an image index for this dataset
-        index_path = os.path.join(image_processor.indices_dir, f"{dataset_id}_index.faiss")
+        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+        index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
         image_index_exists = os.path.exists(index_path)
         
         # Get image count from image processor
@@ -858,6 +566,11 @@ def dataset_status(user_data, dataset_id):
     dataset["chunk_count"] = chunk_count
     dataset["image_count"] = image_count
     
+    # Save updated dataset counts back to file
+    datasets[dataset_index] = dataset
+    with open(user_datasets_file, 'w') as f:
+        json.dump(datasets, f)
+    
     return jsonify({
         "dataset": dataset,
         "collection_exists": collection_exists,
@@ -869,7 +582,7 @@ def dataset_status(user_data, dataset_id):
     }), 200
 
 @app.route('/api/datasets/<dataset_id>/documents', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_dataset_documents(user_data, dataset_id):
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
@@ -931,114 +644,13 @@ def get_dataset_documents(user_data, dataset_id):
         return jsonify({"error": f"Failed to get documents: {str(e)}"}), 500
 
 @app.route('/api/datasets/<dataset_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def delete_dataset(user_data, dataset_id):
-    # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-    
-    # Find and remove the dataset
-    dataset_index = -1
-    dataset_type = "text"  # Default
-    for idx, dataset in enumerate(datasets):
-        if dataset["id"] == dataset_id:
-            dataset_index = idx
-            dataset_type = dataset.get("type", "text")  # Get dataset type for cleanup
-            break
-    
-    if dataset_index == -1:
-        return jsonify({"error": "Dataset not found"}), 404
-    
-    # Remove dataset from the list
-    deleted_dataset = datasets.pop(dataset_index)
-    
-    # Save updated datasets list
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
-    
-    # Delete ChromaDB collection if it exists and it's a text or mixed dataset
-    if dataset_type in ["text", "mixed"]:
-        try:
-            existing_collections = chroma_client.list_collections()
-            if dataset_id in existing_collections:
-                chroma_client.delete_collection(name=dataset_id)
-                print(f"Deleted ChromaDB collection for dataset: {dataset_id}")
-        except Exception as e:
-            print(f"Error deleting ChromaDB collection: {str(e)}")
-            # Continue with deletion even if ChromaDB deletion fails
-    
-    # Delete image index and files if it exists and it's an image or mixed dataset
-    if dataset_type in ["image", "mixed"]:
-        try:
-            # Get list of image files before deleting the dataset
-            image_files_to_delete = []
-            if dataset_id in image_processor.image_metadata:
-                for img_meta in image_processor.image_metadata[dataset_id]:
-                    if 'path' in img_meta and os.path.exists(img_meta['path']):
-                        image_files_to_delete.append(img_meta['path'])
-            
-            # Use the image processor to delete the dataset
-            image_processor.delete_dataset(dataset_id)
-            print(f"Deleted image index for dataset: {dataset_id}")
-            
-            # Delete any actual image files associated with this dataset
-            for img_path in image_files_to_delete:
-                try:
-                    os.remove(img_path)
-                    print(f"Deleted image file: {img_path}")
-                except Exception as e:
-                    print(f"Error deleting image file {img_path}: {str(e)}")
-        except Exception as e:
-            print(f"Error deleting image index: {str(e)}")
-            # Continue with deletion even if image index deletion fails
-    
-    # Check if any bots are using this dataset and notify in the response
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    affected_bots = []
-    
-    if os.path.exists(user_bots_file):
-        try:
-            with open(user_bots_file, 'r') as f:
-                bots = json.load(f)
-            
-            # Check both old dataset_id field and new dataset_ids array
-            for bot in bots:
-                # Check old single dataset reference
-                if bot.get("dataset_id") == dataset_id:
-                    affected_bots.append(bot["name"])
-                
-                # Check new dataset_ids array 
-                if dataset_id in bot.get("dataset_ids", []):
-                    if bot["name"] not in affected_bots:  # Avoid duplicates
-                        affected_bots.append(bot["name"])
-                        
-                        # Remove this dataset from the bot's dataset_ids
-                        if "dataset_ids" in bot:
-                            bot["dataset_ids"] = [d for d in bot["dataset_ids"] if d != dataset_id]
-            
-            # Update bots file if any were affected
-            if affected_bots:
-                with open(user_bots_file, 'w') as f:
-                    json.dump(bots, f)
-        except Exception as e:
-            print(f"Error checking for affected bots: {str(e)}")
-    
-    return jsonify({
-        "message": "Dataset deleted successfully", 
-        "deleted_dataset": deleted_dataset["name"],
-        "affected_bots": affected_bots
-    }), 200
+    return delete_dataset_handler(user_data, dataset_id)
 
 # Chat routes
 @app.route('/api/bots/<bot_id>/chat', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def chat_with_bot(user_data, bot_id):
     data = request.json
     message = data.get('message', '')
@@ -1289,17 +901,38 @@ def chat_with_bot(user_data, bot_id):
                                             has_images = True
                                         break
                     
-                    # If dataset has images, retrieve them regardless of query type
-                    if has_images:
-                        # Determine if query is likely about images
-                        image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
+                    # Direct check in image_processor metadata to confirm images exist
+                    dataset_has_metadata = dataset_id in image_processor.image_metadata
+                    metadata_count = len(image_processor.image_metadata.get(dataset_id, [])) if dataset_has_metadata else 0
+                    
+                    # If dataset has images according to either source, retrieve them
+                    if has_images or metadata_count > 0:
+                        print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}")
+                        
+                        # Enhanced image query detection
+                        image_query_terms = [
+                            "image", "picture", "photo", "visual", "diagram", "graph", 
+                            "chart", "illustration", "screenshot", "scan", "drawing", 
+                            "artwork", "logo", "icon", "figure", "graphic", "view", 
+                            "show me", "look like", "appearance", "visual", "display"
+                        ]
                         is_image_query = any(term in message.lower() for term in image_query_terms)
                         
-                        # For image or mixed datasets, prioritize image search and use top_k=5 for image queries
-                        top_k = 5 if is_image_query else 3
+                        # If using chorus mode, always search for images to provide visual context
+                        if use_model_chorus:
+                            # Always search for at least a few images with chorus
+                            top_k = 5 if is_image_query else 3
+                        else:
+                            # For standard mode, prioritize image search for image queries
+                            top_k = 5 if is_image_query else 3
                         
                         # Search for images with the user's query
-                        img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
+                        img_results = []
+                        try:
+                            img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
+                            print(f"Found {len(img_results)} images for query '{message}' in dataset {dataset_id}")
+                        except Exception as img_search_error:
+                            print(f"Error searching images: {str(img_search_error)}")
                         
                         # If no results or weak results, also try a more generic search
                         if not img_results or (img_results and img_results[0].get("score", 0) < 0.2):
@@ -1317,16 +950,29 @@ def chat_with_bot(user_data, bot_id):
                                     "find relevant visuals",
                                     "diagrams or images for this topic"
                                 ])
+                                
+                            # For chorus mode, be more aggressive in finding images
+                            if use_model_chorus:
+                                generic_queries.extend([
+                                    "important image",
+                                    "key visual",
+                                    "significant illustration",
+                                    "main diagram"
+                                ])
                             
                             for generic_query in generic_queries:
-                                generic_results = image_processor.search_images(dataset_id, generic_query, top_k=3 if is_image_query else 2)
-                                if generic_results:
-                                    for gen_img in generic_results:
-                                        # Add to results if not already included
-                                        if not any(img.get("id") == gen_img.get("id") for img in img_results):
-                                            img_results.append(gen_img)
-                                    if len(img_results) >= top_k:
-                                        break  # Stop after finding enough results
+                                try:
+                                    generic_results = image_processor.search_images(dataset_id, generic_query, top_k=3 if is_image_query else 2)
+                                    if generic_results:
+                                        for gen_img in generic_results:
+                                            # Add to results if not already included
+                                            if not any(img.get("id") == gen_img.get("id") for img in img_results):
+                                                img_results.append(gen_img)
+                                        if len(img_results) >= top_k:
+                                            break  # Stop after finding enough results
+                                except Exception as generic_search_error:
+                                    print(f"Error with generic image search: {str(generic_search_error)}")
+                                    continue
                         
                         # Add relevant images to results
                         if img_results:
@@ -1340,6 +986,7 @@ def chat_with_bot(user_data, bot_id):
                                     "dataset_id": dataset_id
                                 }
                                 image_results.append(image_info)
+                                
                 except Exception as img_error:
                     print(f"Error with image retrieval for dataset '{dataset_id}': {str(img_error)}")
                     # Continue even if image retrieval fails
@@ -1656,6 +1303,11 @@ def chat_with_bot(user_data, bot_id):
                     else:
                         model_full_context = "## RELEVANT INFORMATION: ##\n\n" + model_specific_context + "\n\n" + model_image_context
                 
+                # Add specific instructions for images to the chorus prompt
+                image_prompt_instruction = ""
+                if image_results:
+                    image_prompt_instruction = "\n\nSeveral images were retrieved that may be relevant to this query. If the user's query relates to images or visual information, please reference the images provided in your response using [Image 1], [Image 2], etc. citations. Only reference images when they are directly relevant to answering the question."
+
                 for i in range(weight):
                     try:
                         if provider == 'OpenAI':
@@ -1663,7 +1315,7 @@ def chat_with_bot(user_data, bot_id):
                                 model=model_name,
                                 messages=[
                                     {"role": "system", "content": system_instruction_with_history},
-                                    {"role": "user", "content": f"Context:\n{model_full_context}\n\nUser question: {message}\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
+                                    {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
                                 temperature=temperature
                             )
@@ -1686,7 +1338,7 @@ def chat_with_bot(user_data, bot_id):
                             response = anthropic_client.messages.create(
                                 model=model_name,
                                 system=system_instruction_with_history,
-                                messages=[{"role": "user", "content": f"Context:\n{model_full_context}\n\nUser question: {message}\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}],
+                                messages=[{"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}],
                                 temperature=temperature,
                                 max_tokens=1024
                             )
@@ -1707,14 +1359,14 @@ def chat_with_bot(user_data, bot_id):
                             })
                         elif provider == 'Groq':
                             headers = {
-                                "Authorization": f"Bearer {GROQ_API_KEY}",
+                                "Authorization": "Bearer " + GROQ_API_KEY,
                                 "Content-Type": "application/json"
                             }
                             payload = {
                                 "model": model_name,
                                 "messages": [
                                     {"role": "system", "content": system_instruction_with_history},
-                                    {"role": "user", "content": f"Context:\n{model_full_context}\n\nUser question: {message}\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
+                                    {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
                                 "temperature": temperature,
                                 "max_tokens": 1024
@@ -1744,7 +1396,7 @@ def chat_with_bot(user_data, bot_id):
                                 model="gpt-3.5-turbo",
                                 messages=[
                                     {"role": "system", "content": system_instruction_with_history},
-                                    {"role": "user", "content": f"Context:\n{model_full_context}\n\nUser question: {message}\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
+                                    {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
                                 temperature=temperature
                             )
@@ -1821,15 +1473,11 @@ def chat_with_bot(user_data, bot_id):
                 temperature = float(model.get('temperature', 0.2))
                 weight = int(model.get('weight', 1))
                 
-                voting_prompt = f"""You are an expert AI response evaluator. You need to rank the following responses to the question: "{message}"
-
-Here are the {len(anonymized_responses)} candidate responses:
-
-{chr(10).join([f"Response {j+1}:\n{resp}" for j, resp in enumerate(anonymized_responses)])}
-
-Which response provides the most accurate, helpful, and relevant answer? Return ONLY the number (1-{len(anonymized_responses)}) of the best response.
-Do not reveal any bias or preference based on writing style or approach - evaluate solely on answer quality, accuracy and helpfulness.
-"""
+                voting_prompt = "Here are the " + str(len(anonymized_responses)) + " candidate responses:\n\n" + \
+chr(10).join([f"Response {j+1}:\n{resp}" for j, resp in enumerate(anonymized_responses)]) + \
+"\n\nWhich response provides the most accurate, helpful, and relevant answer? Return ONLY the number (1-" + \
+str(len(anonymized_responses)) + ") of the best response.\n" + \
+"Do not reveal any bias or preference based on writing style or approach - evaluate solely on answer quality, accuracy and helpfulness."
                 # Apply weight by counting vote multiple times
                 for i in range(weight):
                     try:
@@ -1851,7 +1499,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
                             vote_text = voting_response.content[0].text
                         elif provider == 'Groq':
                             headers = {
-                                "Authorization": f"Bearer {GROQ_API_KEY}",
+                                "Authorization": "Bearer " + GROQ_API_KEY,
                                 "Content-Type": "application/json"
                             }
                             payload = {
@@ -1977,7 +1625,7 @@ Do not reveal any bias or preference based on writing style or approach - evalua
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc.\n\nIMPORTANT: Before stating that information isn't available, check ALL context including image captions. If information is only found in an image caption, still use that information and cite the image."},
-                {"role": "user", "content": f"Context:\n{full_context}\n\nUser question: {message}\n\nIf referencing information, please include citations [1], [2], etc. Only reference images that are directly relevant to answering the question."}
+                {"role": "user", "content": "Context:\n" + full_context + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. Only reference images that are directly relevant to answering the question."}
             ]
         )
         
@@ -2101,31 +1749,31 @@ Do not reveal any bias or preference based on writing style or approach - evalua
 
 # New endpoints for conversation management
 @app.route('/api/bots/<bot_id>/conversations', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_conversations(user_data, bot_id):
     """Get all conversations for a specific bot"""
     return get_conversations_handler(user_data, bot_id, CONVERSATIONS_FOLDER)
 
 @app.route('/api/bots/<bot_id>/conversations/<conversation_id>', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_conversation(user_data, bot_id, conversation_id):
     """Get a specific conversation with all messages"""
     return get_conversation_handler(user_data, bot_id, conversation_id, CONVERSATIONS_FOLDER)
 
 @app.route('/api/bots/<bot_id>/conversations/<conversation_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def delete_conversation(user_data, bot_id, conversation_id):
     """Delete a specific conversation"""
     return delete_conversation_handler(user_data, bot_id, conversation_id, CONVERSATIONS_FOLDER)
 
 @app.route('/api/bots/<bot_id>/conversations', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def delete_all_conversations(user_data, bot_id):
     """Delete all conversations for a specific bot"""
     return delete_all_conversations_handler(user_data, bot_id, CONVERSATIONS_FOLDER)
 
 @app.route('/api/bots/<bot_id>/conversations/<conversation_id>/rename', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def rename_conversation(user_data, bot_id, conversation_id):
     """Rename a conversation"""
     data = request.json
@@ -2134,7 +1782,7 @@ def rename_conversation(user_data, bot_id, conversation_id):
 
 # Add model chorus API endpoints
 @app.route('/api/bots/<bot_id>/chorus', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_chorus_config(user_data, bot_id):
     # Check if bot exists and belongs to user
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
@@ -2179,7 +1827,7 @@ def get_chorus_config(user_data, bot_id):
     return jsonify(chorus), 200
 
 @app.route('/api/bots/<bot_id>/chorus', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def save_chorus_config(user_data, bot_id):
     # This endpoint is now simplified to just associate a chorus with a bot
     # For backward compatibility
@@ -2263,7 +1911,7 @@ def save_chorus_config(user_data, bot_id):
         return jsonify({"error": f"Error creating chorus: {str(e)}"}), 500
 
 @app.route('/api/bots/<bot_id>/set-chorus', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def set_bot_chorus(user_data, bot_id):
     # Check if bot exists and belongs to user
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
@@ -2318,7 +1966,7 @@ def set_bot_chorus(user_data, bot_id):
     }), 200
 
 @app.route('/api/choruses', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def list_choruses(user_data):
     # Get all chorus configurations
     chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
@@ -2339,7 +1987,7 @@ def list_choruses(user_data):
     return jsonify(choruses), 200
 
 @app.route('/api/choruses', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def create_chorus(user_data):
     # Get chorus data from request
     data = request.json
@@ -2391,7 +2039,7 @@ def create_chorus(user_data):
     return jsonify(chorus), 201
 
 @app.route('/api/choruses/<chorus_id>', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_chorus(user_data, chorus_id):
     # Get chorus directory and user choruses file
     chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
@@ -2412,7 +2060,7 @@ def get_chorus(user_data, chorus_id):
     return jsonify(chorus), 200
 
 @app.route('/api/choruses/<chorus_id>', methods=['PUT'])
-@require_auth
+@require_auth_wrapper
 def update_chorus(user_data, chorus_id):
     # Get chorus data from request
     data = request.json
@@ -2466,7 +2114,7 @@ def update_chorus(user_data, chorus_id):
     return jsonify(updated_chorus), 200
 
 @app.route('/api/choruses/<chorus_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def delete_chorus(user_data, chorus_id):
     # Get chorus directory and user choruses file
     chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
@@ -2514,320 +2162,45 @@ def delete_chorus(user_data, chorus_id):
 
 # Bots routes
 @app.route('/api/bots', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_bots(user_data):
-    # Get bots directory and user bots file
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    os.makedirs(bots_dir, exist_ok=True)
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    # If user doesn't have any bots yet, return empty list
-    if not os.path.exists(user_bots_file):
-        return jsonify([]), 200
-        
-    # Return user's bots
-    with open(user_bots_file, 'r') as f:
-        bots = json.load(f)
-    
-    return jsonify(bots), 200
+    return get_bots_handler(user_data)
 
 @app.route('/api/bots', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def create_bot(user_data):
-    # Get bot data from request
-    data = request.json
-    
-    if not data or not data.get('name'):
-        return jsonify({"error": "Bot name is required"}), 400
-    
-    # Process dataset IDs - can be added later or supplied in the request
-    dataset_ids = []
-    if data.get('dataset_id'):  # Support single dataset_id in request for backward compatibility
-        dataset_ids.append(data.get('dataset_id'))
-    if data.get('dataset_ids') and isinstance(data.get('dataset_ids'), list):
-        dataset_ids.extend(data.get('dataset_ids'))
-    
-    # Get chorus_id if provided
-    chorus_id = data.get('chorus_id', '')
-    
-    # Verify that the chorus exists if one was provided
-    if chorus_id:
-        chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
-        
-        if os.path.exists(user_choruses_file):
-            with open(user_choruses_file, 'r') as f:
-                choruses = json.load(f)
-                
-            # Find the chorus by ID
-            chorus = next((c for c in choruses if c["id"] == chorus_id), None)
-            if not chorus:
-                return jsonify({"error": f"Chorus with ID {chorus_id} not found"}), 400
-    
-    # Create a new bot
-    new_bot = {
-        "id": str(uuid.uuid4()),
-        "name": data.get('name'),
-        "description": data.get('description', ''),
-        "dataset_ids": dataset_ids,
-        "chorus_id": chorus_id,  # Set the chorus ID
-        "prompt_template": data.get('prompt_template', ''),
-        "system_instruction": data.get('system_instruction', 'You are a helpful AI assistant. Answer questions based on the provided context.'),
-        "created_at": datetime.datetime.now(UTC).isoformat()
-    }
-    
-    # Save the bot
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    os.makedirs(bots_dir, exist_ok=True)
-    
-    # Check if user already has bots
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    if os.path.exists(user_bots_file):
-        with open(user_bots_file, 'r') as f:
-            bots = json.load(f)
-        bots.append(new_bot)
-    else:
-        bots = [new_bot]
-    
-    with open(user_bots_file, 'w') as f:
-        json.dump(bots, f)
-    
-    return jsonify(new_bot), 201
+    return create_bot_handler(user_data)
 
 @app.route('/api/bots/<bot_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def delete_bot(user_data, bot_id):
-    # Get bots directory and user bots file
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    if not os.path.exists(user_bots_file):
-        return jsonify({"error": "Bot not found"}), 404
-        
-    with open(user_bots_file, 'r') as f:
-        bots = json.load(f)
-    
-    # Find and remove the bot
-    bot_found = False
-    for i, bot in enumerate(bots):
-        if bot["id"] == bot_id:
-            bots.pop(i)
-            bot_found = True
-            break
-    
-    if not bot_found:
-        return jsonify({"error": "Bot not found"}), 404
-    
-    # Save updated bots list
-    with open(user_bots_file, 'w') as f:
-        json.dump(bots, f)
-    
-    return jsonify({"message": "Bot deleted successfully"}), 200
+    return delete_bot_handler(user_data, bot_id)
 
 # Add new endpoints for managing datasets in a bot
 @app.route('/api/bots/<bot_id>/datasets', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_bot_datasets(user_data, bot_id):
-    # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    if not os.path.exists(user_bots_file):
-        return jsonify({"error": "Bot not found"}), 404
-        
-    with open(user_bots_file, 'r') as f:
-        bots = json.load(f)
-        
-    bot = None
-    for b in bots:
-        if b["id"] == bot_id:
-            bot = b
-            break
-            
-    if not bot:
-        return jsonify({"error": "Bot not found"}), 404
-    
-    # Get dataset info for each dataset ID
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    
-    dataset_details = []
-    
-    # Get dataset IDs from bot
-    dataset_ids = bot.get("dataset_ids", [])
-    
-    # First try to find datasets in the user's own datasets
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    user_datasets = []
-    
-    if os.path.exists(user_datasets_file):
-        try:
-            with open(user_datasets_file, 'r') as f:
-                user_datasets = json.load(f)
-        except Exception as e:
-            print(f"Error loading user datasets: {str(e)}")
-    
-    # Check all dataset files to find missing datasets
-    # This searches across all users' datasets
-    for dataset_id in dataset_ids:
-        # First check if it's in the user's own datasets
-        dataset_found = False
-        
-        for d in user_datasets:
-            if d["id"] == dataset_id:
-                dataset_details.append(d)
-                dataset_found = True
-                break
-                
-        if dataset_found:
-            continue
-            
-        # If not found in user's datasets, search all dataset files
-        dataset = find_dataset_by_id(dataset_id)
-        if dataset:
-            dataset_details.append(dataset)
-        else:
-            # Add placeholder for truly missing dataset
-            dataset_details.append({
-                "id": dataset_id,
-                "name": "Unknown dataset",
-                "missing": True
-            })
-    
-    # Get all available datasets for the selection dropdown
-    all_available_datasets = user_datasets.copy()
-    
-    # Add a flag to show which datasets are already associated with this bot
-    for d in all_available_datasets:
-        d["is_associated"] = d["id"] in dataset_ids
-    
-    return jsonify({
-        "bot": bot,
-        "datasets": dataset_details,
-        "available_datasets": all_available_datasets
-    }), 200
+    return get_bot_datasets_handler(user_data, bot_id)
 
 @app.route('/api/bots/<bot_id>/datasets', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def add_dataset_to_bot(user_data, bot_id):
-    data = request.json
-    dataset_id = data.get('dataset_id')
-    
-    if not dataset_id:
-        return jsonify({"error": "Dataset ID is required"}), 400
-    
-    # Check if dataset exists
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    dataset_exists = False
-    dataset_name = "Unknown dataset"
-    if os.path.exists(user_datasets_file):
-        with open(user_datasets_file, 'r') as f:
-            datasets = json.load(f)
-        
-        for d in datasets:
-            if d["id"] == dataset_id:
-                dataset_exists = True
-                dataset_name = d["name"]
-                break
-    
-    if not dataset_exists:
-        return jsonify({"error": "Dataset not found"}), 404
-    
-    # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    if not os.path.exists(user_bots_file):
-        return jsonify({"error": "Bot not found"}), 404
-        
-    with open(user_bots_file, 'r') as f:
-        bots = json.load(f)
-        
-    bot_index = None
-    for i, b in enumerate(bots):
-        if b["id"] == bot_id:
-            bot_index = i
-            break
-            
-    if bot_index is None:
-        return jsonify({"error": "Bot not found"}), 404
-    
-    # Update bot with the new dataset
-    bot = bots[bot_index]
-    
-    # Set up dataset_ids if it doesn't exist
-    if "dataset_ids" not in bot:
-        bot["dataset_ids"] = []
-        
-    # Add dataset if not already added
-    if dataset_id not in bot["dataset_ids"]:
-        bot["dataset_ids"].append(dataset_id)
-        
-    # Save updated bot
-    bots[bot_index] = bot
-    with open(user_bots_file, 'w') as f:
-        json.dump(bots, f)
-    
-    return jsonify({
-        "message": f"Dataset '{dataset_name}' added to bot successfully",
-        "bot": bot
-    }), 200
+    return add_dataset_to_bot_handler(user_data, bot_id)
 
 @app.route('/api/bots/<bot_id>/datasets/<dataset_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def remove_dataset_from_bot(user_data, bot_id, dataset_id):
-    # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    if not os.path.exists(user_bots_file):
-        return jsonify({"error": "Bot not found"}), 404
-        
-    with open(user_bots_file, 'r') as f:
-        bots = json.load(f)
-        
-    bot_index = None
-    for i, b in enumerate(bots):
-        if b["id"] == bot_id:
-            bot_index = i
-            break
-            
-    if bot_index is None:
-        return jsonify({"error": "Bot not found"}), 404
-    
-    # Update bot to remove the dataset
-    bot = bots[bot_index]
-    
-    # Remove dataset from the dataset_ids array
-    dataset_removed = False
-    if "dataset_ids" in bot and dataset_id in bot["dataset_ids"]:
-        bot["dataset_ids"].remove(dataset_id)
-        dataset_removed = True
-    
-    if not dataset_removed:
-        return jsonify({"error": "Dataset not found in bot"}), 404
-    
-    # Save updated bot
-    bots[bot_index] = bot
-    with open(user_bots_file, 'w') as f:
-        json.dump(bots, f)
-    
-    return jsonify({
-        "message": "Dataset removed from bot successfully",
-        "bot": bot
-    }), 200
+    return remove_dataset_from_bot_handler(user_data, bot_id, dataset_id)
 
 # Image generation route
 @app.route('/api/images/generate', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def generate_image(user_data):
     return generate_image_handler(user_data, IMAGE_FOLDER)
 
 # Add a new endpoint for enhancing prompts with GPT-4o
 @app.route('/api/images/enhance-prompt', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def enhance_prompt(user_data):
     return enhance_prompt_handler(user_data)
         
@@ -2839,7 +2212,7 @@ def get_image(filename):
 
 # Add this new endpoint after the existing chat_with_bot function
 @app.route('/api/bots/<bot_id>/chat-with-image', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def chat_with_image(user_data, bot_id):
     # Check if the request is multipart/form-data or JSON
     if request.content_type and request.content_type.startswith('multipart/form-data'):
@@ -3087,7 +2460,7 @@ def serve_frontend(path):
     return jsonify({"message": "API endpoint working. Use React dev server for frontend."})
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>/download/<filename>', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def download_document(user_data, dataset_id, document_id, filename):
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
@@ -3128,58 +2501,13 @@ def download_document(user_data, dataset_id, document_id, filename):
     return send_file(document_path, as_attachment=True, download_name=filename)
 
 @app.route('/api/datasets/<dataset_id>/images', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_dataset_images(user_data, dataset_id):
     """Get all images for a specific dataset"""
-    # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    # Debug information
+    print(f"Getting images for dataset {dataset_id}")
+    print(f"Available image metadata keys: {list(image_processor.image_metadata.keys())}")
     
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-        
-    dataset_exists = False
-    for dataset in datasets:
-        if dataset["id"] == dataset_id:
-            dataset_exists = True
-            break
-            
-    if not dataset_exists:
-        return jsonify({"error": "Dataset not found"}), 404
-    
-    # Get images metadata from the image processor
-    if dataset_id in image_processor.image_metadata:
-        images = []
-        for img_meta in image_processor.image_metadata[dataset_id]:
-            # Create web-accessible URLs for each image
-            img_meta_copy = img_meta.copy()
-            if 'path' in img_meta_copy:
-                img_meta_copy['url'] = f"/api/images/{os.path.basename(img_meta_copy['path'])}"
-                # Don't expose the full path in API
-                if 'path' in img_meta_copy:
-                    del img_meta_copy['path']
-            images.append(img_meta_copy)
-        
-        # Sort images by creation date if available (newest first)
-        images.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-        
-        return jsonify({
-            "images": images,
-            "total_images": len(images)
-        }), 200
-    else:
-        return jsonify({
-            "images": [],
-            "total_images": 0
-        }), 200
-
-@app.route('/api/datasets/<dataset_id>/images', methods=['POST'])
-@require_auth
-def upload_image(user_data, dataset_id):
-    """Upload an image to a dataset"""
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
@@ -3199,105 +2527,199 @@ def upload_image(user_data, dataset_id):
             break
             
     if not dataset_exists:
+        print(f"Dataset {dataset_id} not found in user datasets")
         return jsonify({"error": "Dataset not found"}), 404
     
-    # Handle both form data and JSON requests
-    if request.content_type and request.content_type.startswith('multipart/form-data'):
-        # Handle image file from form data
-        if 'image' not in request.files:
-            return jsonify({"error": "No image file provided"}), 400
-            
-        image_file = request.files['image']
-        if image_file.filename == '':
-            return jsonify({"error": "No image selected"}), 400
-            
-        # Save the image
-        filename = secure_filename(image_file.filename)
-        image_path = os.path.join(IMAGE_FOLDER, f"{uuid.uuid4()}_{filename}")
-        image_file.save(image_path)
-        
-        # Resize image if needed
-        image_path = resize_image(image_path, max_dimension=1024)
-        
-    else:
-        # Handle base64 image data from JSON
-        data = request.json
-        if not data or 'image_data' not in data:
-            return jsonify({"error": "Image data is required"}), 400
-            
-        image_data = data['image_data']
-        filename = data.get('filename', f"image_{uuid.uuid4()}.jpg")
-        
-        # Extract the base64 content
+    # Print the dataset info
+    print(f"Dataset info: {datasets[dataset_index]}")
+    
+    # Attempt to force reload the image indices for this dataset
+    indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+    metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+    index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+    
+    # If metadata exists but not loaded in processor, load it now
+    if os.path.exists(metadata_file) and dataset_id not in image_processor.image_metadata:
         try:
-            if ';base64,' in image_data:
-                header, encoded = image_data.split(';base64,')
-                file_ext = header.split('/')[-1]
-                if not file_ext:
-                    file_ext = 'jpg'
-            else:
-                encoded = image_data
-                file_ext = 'jpg'
-                
-            # Generate a unique filename
-            if not filename:
-                filename = f"image_{uuid.uuid4()}.{file_ext}"
-                
-            # Save the image
-            image_path = os.path.join(IMAGE_FOLDER, secure_filename(filename))
-            with open(image_path, 'wb') as f:
-                f.write(base64.b64decode(encoded))
-                
-        except Exception as e:
-            return jsonify({"error": f"Failed to process image data: {str(e)}"}), 400
-    
-    # Get additional metadata
-    custom_metadata = {}
-    if request.content_type and request.content_type.startswith('multipart/form-data'):
-        # Get metadata from form fields
-        custom_metadata['description'] = request.form.get('description', '')
-        custom_metadata['tags'] = request.form.get('tags', '').split(',') if request.form.get('tags') else []
-    else:
-        # Get metadata from JSON
-        custom_metadata['description'] = data.get('description', '')
-        custom_metadata['tags'] = data.get('tags', [])
-    
-    # Add user information to metadata
-    custom_metadata['user_id'] = user_data['id']
-    custom_metadata['username'] = user_data['username']
-    
-    try:
-        # Add image to dataset in image processor
-        image_metadata = image_processor.add_image_to_dataset(dataset_id, image_path, custom_metadata)
-        
-        # Update image count in dataset
-        datasets[dataset_index]["image_count"] = datasets[dataset_index].get("image_count", 0) + 1
-        with open(user_datasets_file, 'w') as f:
-            json.dump(datasets, f)
+            print(f"Loading metadata file from {metadata_file}")
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
             
-        # Generate URL for the image
-        image_url = f"/api/images/{os.path.basename(image_path)}"
+            # Filter to ensure we only include this dataset's images
+            valid_metadata = []
+            for img_meta in metadata:
+                # Add dataset_id if missing
+                if not img_meta.get('dataset_id'):
+                    img_meta['dataset_id'] = dataset_id
+                # Only include if it's for this dataset
+                if img_meta.get('dataset_id') == dataset_id:
+                    valid_metadata.append(img_meta)
+            
+            # Update processor's metadata
+            image_processor.image_metadata[dataset_id] = valid_metadata
+            
+            # Also load index if it exists
+            if os.path.exists(index_path):
+                image_processor.image_indices[dataset_id] = faiss.read_index(index_path)
+                print(f"Loaded index from {index_path}")
+                
+            print(f"Loaded {len(valid_metadata)} images for dataset {dataset_id}")
+        except Exception as e:
+            print(f"Error loading metadata: {str(e)}")
+    
+    # Get images metadata from the image processor
+    if dataset_id in image_processor.image_metadata:
+        images = []
+        img_count = len(image_processor.image_metadata[dataset_id])
+        print(f"Found {img_count} images in dataset {dataset_id}")
+        
+        for img_meta in image_processor.image_metadata[dataset_id]:
+            # Verify this image belongs to this dataset
+            if img_meta.get('dataset_id') != dataset_id:
+                print(f"Skipping image {img_meta.get('id')} as it belongs to dataset {img_meta.get('dataset_id')}, not {dataset_id}")
+                continue
+                
+            # Create web-accessible URLs for each image
+            img_meta_copy = img_meta.copy()
+            if 'path' in img_meta_copy:
+                img_meta_copy['url'] = f"/api/images/{os.path.basename(img_meta_copy['path'])}"
+                print(f"Image URL: {img_meta_copy['url']}")
+                # Don't expose the full path in API
+                if 'path' in img_meta_copy:
+                    del img_meta_copy['path']
+            images.append(img_meta_copy)
+        
+        # Sort images by creation date if available (newest first)
+        images.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        # Update the dataset's image count if it doesn't match
+        actual_count = len(images)
+        if datasets[dataset_index].get("image_count", 0) != actual_count:
+            print(f"Updating image count for dataset {dataset_id} from {datasets[dataset_index].get('image_count', 0)} to {actual_count}")
+            datasets[dataset_index]["image_count"] = actual_count
+            with open(user_datasets_file, 'w') as f:
+                json.dump(datasets, f)
         
         return jsonify({
-            "message": "Image uploaded and processed successfully",
-            "image": {
-                "id": image_metadata["id"],
-                "filename": os.path.basename(image_path),
-                "url": image_url,
-                "caption": image_metadata["caption"],
-                "description": custom_metadata.get("description", ""),
-                "tags": custom_metadata.get("tags", [])
-            }
+            "images": images,
+            "total_images": len(images)
         }), 200
+    else:
+        print(f"No images found for dataset {dataset_id} in image_processor.image_metadata")
         
-    except Exception as e:
-        print(f"Error processing image: {str(e)}")
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        return jsonify({"error": f"Failed to process image: {str(e)}"}), 500
+        # Try to recreate metadata by scanning uploaded images
+        try:
+            image_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
+            dataset_images = []
+            
+            if os.path.exists(image_folder):
+                print(f"Scanning image folder: {image_folder}")
+                # Create empty index for this dataset
+                image_processor.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                image_processor.image_metadata[dataset_id] = []
+                
+                # Scan all image files in folder and try to load them
+                for filename in os.listdir(image_folder):
+                    if any(filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
+                        file_path = os.path.join(image_folder, filename)
+                        
+                        # Try to associate the file with this dataset
+                        try:
+                            # Load and process image
+                            image_id = str(uuid.uuid4())
+                            # Create metadata
+                            image_meta = {
+                                "id": image_id,
+                                "dataset_id": dataset_id,
+                                "path": file_path,
+                                "original_filename": filename,
+                                "caption": f"Image: {filename}",
+                                "created_at": datetime.datetime.now(UTC).isoformat(),
+                                "url": f"/api/images/{filename}"
+                            }
+                            
+                            # Try to generate caption using BLIP
+                            try:
+                                image_processor._load_models()
+                                caption = image_processor.generate_caption(file_path)
+                                image_meta["caption"] = caption
+                            except Exception as e:
+                                print(f"Error generating caption: {str(e)}")
+                                
+                            # Try to compute embedding and add to index
+                            try:
+                                embedding = image_processor.compute_image_embedding(file_path)
+                                image_processor.image_indices[dataset_id].add(np.array([embedding], dtype=np.float32))
+                            except Exception as e:
+                                print(f"Error computing embedding: {str(e)}")
+                            
+                            # Add to metadata
+                            image_processor.image_metadata[dataset_id].append(image_meta)
+                            dataset_images.append(image_meta)
+                            
+                        except Exception as e:
+                            print(f"Error processing image {filename}: {str(e)}")
+                
+                # If we found images, save the metadata
+                if dataset_images:
+                    # Ensure directory exists
+                    os.makedirs(indices_dir, exist_ok=True)
+                    
+                    # Save index and metadata
+                    try:
+                        faiss.write_index(image_processor.image_indices[dataset_id], index_path)
+                        with open(metadata_file, 'w') as f:
+                            json.dump(image_processor.image_metadata[dataset_id], f)
+                        print(f"Saved index and metadata for {len(dataset_images)} images")
+                    except Exception as e:
+                        print(f"Error saving index and metadata: {str(e)}")
+            
+            if dataset_images:
+                print(f"Found {len(dataset_images)} images in uploads folder")
+                
+                # Update image count in dataset
+                datasets[dataset_index]["image_count"] = len(dataset_images)
+                with open(user_datasets_file, 'w') as f:
+                    json.dump(datasets, f)
+                
+                # Format images for response
+                images = []
+                for img_meta in dataset_images:
+                    img_meta_copy = img_meta.copy()
+                    if 'path' in img_meta_copy:
+                        del img_meta_copy['path']  # Don't expose full path
+                    images.append(img_meta_copy)
+                
+                return jsonify({
+                    "images": images,
+                    "total_images": len(images),
+                    "note": "Images were reconstructed from uploads folder"
+                }), 200
+                
+        except Exception as e:
+            print(f"Error reconstructing images from uploads: {str(e)}")
+        
+        # If we reach here, no images were found or loaded
+        if datasets[dataset_index].get("image_count", 0) > 0:
+            print(f"Dataset claims to have {datasets[dataset_index].get('image_count')} images but none were found")
+            # Reset the count to match reality
+            datasets[dataset_index]["image_count"] = 0
+            with open(user_datasets_file, 'w') as f:
+                json.dump(datasets, f)
+        
+        return jsonify({
+            "images": [],
+            "total_images": 0
+        }), 200
+
+@app.route('/api/datasets/<dataset_id>/images', methods=['POST'])
+@require_auth_wrapper
+def upload_image(user_data, dataset_id):
+    """Upload an image to a dataset"""
+    return upload_image_handler(user_data, dataset_id, IMAGE_FOLDER)
 
 @app.route('/api/datasets/<dataset_id>/images/<image_id>', methods=['DELETE'])
-@require_auth
+@require_auth_wrapper
 def remove_image(user_data, dataset_id, image_id):
     """Remove an image from a dataset"""
     # Check if dataset exists and belongs to user
@@ -3362,7 +2784,7 @@ def remove_image(user_data, dataset_id, image_id):
         return jsonify({"error": f"Failed to remove image: {str(e)}"}), 500
 
 @app.route('/api/datasets/<dataset_id>/search-images', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def search_dataset_images(user_data, dataset_id):
     """Search for images in a dataset using a text query"""
     # Check if dataset exists and belongs to user
@@ -3414,86 +2836,15 @@ def search_dataset_images(user_data, dataset_id):
         print(f"Error searching images: {str(e)}")
         return jsonify({"error": f"Failed to search images: {str(e)}"}), 500
 
-# Helper function to resize large images
-def resize_image(image_path, max_size=1024):
-    """Resize an image if it's larger than max_size in either dimension
-    
-    Args:
-        image_path: Path to the image file
-        max_size: Maximum size for either dimension
-        
-    Returns:
-        str: Path to the resized image (same as input if no resize needed)
-    """
-    try:
-        with Image.open(image_path) as img:
-            width, height = img.size
-            
-            # Check if resize needed
-            if width <= max_size and height <= max_size:
-                return image_path
-                
-            # Calculate new dimensions maintaining aspect ratio
-            if width > height:
-                new_width = max_size
-                new_height = int(height * (max_size / width))
-            else:
-                new_height = max_size
-                new_width = int(width * (max_size / height))
-                
-            # Resize the image
-            resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            
-            # Save the resized image (overwrite original)
-            resized.save(image_path, optimize=True, quality=85)
-            print(f"Resized image from {width}x{height} to {new_width}x{new_height}")
-            
-            return image_path
-    except Exception as e:
-        print(f"Error resizing image: {str(e)}")
-        return image_path  # Return original path if resize fails
+# resize_image function is now imported from image_handlers.py
 
 @app.route('/api/datasets/<dataset_id>/type', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_dataset_type(user_data, dataset_id):
     """Get the type of a dataset (text, image, or mixed) to inform frontend file selection"""
-    # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-        
-    for dataset in datasets:
-        if dataset["id"] == dataset_id:
-            # Return the dataset type and accepted file types
-            dataset_type = dataset.get("type", "text")
-            accepted_files = {
-                "text": [".pdf", ".docx", ".txt", ".pptx"],
-                "image": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"],
-                "mixed": [".pdf", ".docx", ".txt", ".pptx", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]
-            }
-            
-            return jsonify({
-                "type": dataset_type,
-                "supported_extensions": accepted_files.get(dataset_type, []),
-                "mime_types": get_mime_types_for_dataset(dataset_type)
-            }), 200
-            
-    return jsonify({"error": "Dataset not found"}), 404
+    return get_dataset_type_handler(user_data, dataset_id)
 
-def get_mime_types_for_dataset(dataset_type):
-    """Helper function to return appropriate MIME types for dataset type"""
-    mime_types = {
-        "text": "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "image": "image/jpeg,image/png,image/gif,image/webp,image/bmp",
-        "mixed": "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp"
-    }
-    
-    return mime_types.get(dataset_type, "")
+# Using the imported get_mime_types_for_dataset function
 
 @app.route('/api/upload-example', methods=['GET'])
 def upload_example():
@@ -3699,7 +3050,7 @@ def upload_example():
     return html
 
 @app.route('/api/documents/<document_id>/content', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_document_content(user_data, document_id):
     """Get the full content of a document"""
     try:
@@ -3771,7 +3122,7 @@ def get_document_content(user_data, document_id):
         return jsonify({"error": f"Failed to retrieve document content: {str(e)}"}), 500
 
 @app.route('/api/context/<document_id>', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_context_snippet(user_data, document_id):
     """Get the full content of a context snippet with option to view the entire document"""
     try:
@@ -3851,7 +3202,7 @@ def get_context_snippet(user_data, document_id):
         return jsonify({"error": f"Failed to retrieve context snippet: {str(e)}"}), 500
 
 @app.route('/api/documents/<document_id>/original', methods=['GET'])
-@require_auth
+@require_auth_wrapper
 def get_original_document(user_data, document_id):
     """Get the original file content if it exists"""
     try:
@@ -3918,59 +3269,10 @@ def get_original_document(user_data, document_id):
 # After the "remove_dataset_from_bot" function, add the new endpoint:
 
 @app.route('/api/bots/<bot_id>/set-datasets', methods=['POST'])
-@require_auth
+@require_auth_wrapper
 def set_bot_datasets(user_data, bot_id):
     """Replace all datasets on a bot with a new list of datasets"""
-    # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
-    
-    if not os.path.exists(user_bots_file):
-        return jsonify({"error": "Bot not found"}), 404
-        
-    with open(user_bots_file, 'r') as f:
-        bots = json.load(f)
-        
-    bot_index = None
-    for i, b in enumerate(bots):
-        if b["id"] == bot_id:
-            bot_index = i
-            break
-            
-    if bot_index is None:
-        return jsonify({"error": "Bot not found"}), 404
-    
-    # Get the dataset IDs from the request
-    data = request.json
-    dataset_ids = data.get('dataset_ids', [])
-    
-    # Validate all dataset IDs exist
-    for dataset_id in dataset_ids:
-        dataset = find_dataset_by_id(dataset_id)
-        if not dataset:
-            return jsonify({"error": f"Dataset with ID {dataset_id} not found"}), 404
-    
-    # Update bot with the new list of datasets
-    bot = bots[bot_index]
-    bot["dataset_ids"] = dataset_ids
-    
-    # Save updated bot
-    bots[bot_index] = bot
-    with open(user_bots_file, 'w') as f:
-        json.dump(bots, f)
-    
-    # Get the names of all datasets to return in response
-    dataset_names = []
-    for dataset_id in dataset_ids:
-        dataset = find_dataset_by_id(dataset_id)
-        if dataset:
-            dataset_names.append(dataset.get("name", "Unknown dataset"))
-    
-    return jsonify({
-        "message": f"Set {len(dataset_ids)} datasets on bot successfully",
-        "dataset_names": dataset_names,
-        "bot": bot
-    }), 200
+    return set_bot_datasets_handler(user_data, bot_id)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

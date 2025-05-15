@@ -1,0 +1,11 @@
+.git*
+**/*.pyc
+__pycache__/
+venv/
+chroma_db/
+uploads/
+image_indices/
+bots/
+datasets/
+conversations/
+*.md 

@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: ./ragbot-backend
+      dockerfile: Dockerfile
+    ports:
+      - "50505:50505"
+    volumes:
+      - ./ragbot-backend/uploads:/code/uploads
+      - ./ragbot-backend/data:/code/data
+      - ./ragbot-backend/conversations:/code/conversations
+      - ./ragbot-backend/chroma_db:/code/chroma_db
+      - ./ragbot-backend/datasets:/code/datasets
+      - ./ragbot-backend/bots:/code/bots
+      - ./ragbot-backend/image_indices:/code/image_indices
+    env_file:
+      - ./ragbot-backend/.env
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:50505/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./ragbot-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    depends_on:
+      - backend
+    restart: on-failure 
