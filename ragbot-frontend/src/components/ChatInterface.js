@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import botService from '../services/botService';
 import '../markdown-styles.css';
-import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck, FaLightbulb, FaFileAlt } from 'react-icons/fa';
+import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck, FaLightbulb, FaFileAlt, FaDatabase, FaPlus } from 'react-icons/fa';
 import { v4 as uuid } from 'uuid';
 
 // Add some custom styles for the chorus UI
@@ -138,6 +138,12 @@ const ChatInterface = () => {
   // Add state for enhance prompt functionality
   const [enhancingPrompt, setEnhancingPrompt] = useState(false);
 
+  // Add state for datasets
+  const [availableDatasets, setAvailableDatasets] = useState([]);
+  const [botDatasets, setBotDatasets] = useState([]);
+  const [showDatasetsDropdown, setShowDatasetsDropdown] = useState(false);
+  const [loadingDatasets, setLoadingDatasets] = useState(false);
+
   useEffect(() => {
     // Fetch bot details
     const loadBot = async () => {
@@ -169,6 +175,9 @@ const ChatInterface = () => {
           
           // Load conversation history
           loadConversations();
+          
+          // Load bot datasets
+          loadBotDatasets();
         } else {
           setError('Bot not found');
           setTimeout(() => navigate('/bots'), 3000);
@@ -667,6 +676,76 @@ const ChatInterface = () => {
 
   const formatTime = (date) => {
     return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  // Load datasets for this bot
+  const loadBotDatasets = async () => {
+    try {
+      setLoadingDatasets(true);
+      const result = await botService.getBotDatasets(botId);
+      setBotDatasets(result.datasets);
+      setAvailableDatasets(result.available_datasets);
+      setLoadingDatasets(false);
+    } catch (err) {
+      console.error('Error loading bot datasets:', err);
+      setLoadingDatasets(false);
+    }
+  };
+
+  // Add a function to handle dataset selection
+  const handleSelectDataset = async (datasetId) => {
+    try {
+      setLoading(true);
+      const currentDatasetIds = botDatasets.map(dataset => dataset.id);
+      
+      // Add the selected dataset if it's not already in the list
+      if (!currentDatasetIds.includes(datasetId)) {
+        currentDatasetIds.push(datasetId);
+      }
+      
+      // Update bot with the selected datasets
+      await botService.setBotDatasets(botId, currentDatasetIds);
+      
+      // Reload datasets to update UI
+      await loadBotDatasets();
+      
+      setLoading(false);
+      setShowDatasetsDropdown(false);
+    } catch (err) {
+      console.error('Error setting dataset:', err);
+      setError('Failed to update datasets');
+      setLoading(false);
+    }
+  };
+
+  // Add a function to handle removing a dataset
+  const handleRemoveDataset = async (datasetId) => {
+    try {
+      setLoading(true);
+      const currentDatasetIds = botDatasets.map(dataset => dataset.id);
+      
+      // Remove the selected dataset
+      const updatedDatasetIds = currentDatasetIds.filter(id => id !== datasetId);
+      
+      // Don't allow removing the last dataset
+      if (updatedDatasetIds.length === 0) {
+        setError('Cannot remove the last dataset. A bot must have at least one dataset.');
+        setLoading(false);
+        return;
+      }
+      
+      // Update bot with the remaining datasets
+      await botService.setBotDatasets(botId, updatedDatasetIds);
+      
+      // Reload datasets to update UI
+      await loadBotDatasets();
+      
+      setLoading(false);
+    } catch (err) {
+      console.error('Error removing dataset:', err);
+      setError('Failed to update datasets');
+      setLoading(false);
+    }
   };
 
   return (
@@ -1440,6 +1519,81 @@ const ChatInterface = () => {
           </Modal.Footer>
         </Modal>
       )}
+
+      {/* Dataset dropdown */}
+      <div className="d-flex align-items-center ms-2">
+        <OverlayTrigger
+          placement="top"
+          overlay={<Tooltip id="dataset-tooltip">Switch dataset</Tooltip>}
+        >
+          <Dropdown show={showDatasetsDropdown} onToggle={setShowDatasetsDropdown}>
+            <Dropdown.Toggle
+              variant="light"
+              size="sm"
+              className="rounded-pill"
+            >
+              <FaDatabase className="me-1" />
+              <span className="d-none d-md-inline">Datasets</span>
+              {botDatasets && botDatasets.length > 0 && (
+                <Badge 
+                  bg="primary" 
+                  pill 
+                  className="ms-1"
+                >
+                  {botDatasets.length}
+                </Badge>
+              )}
+            </Dropdown.Toggle>
+            <Dropdown.Menu>
+              <Dropdown.Header>Current Datasets</Dropdown.Header>
+              {botDatasets && botDatasets.map((dataset) => (
+                <Dropdown.Item key={dataset.id} className="d-flex justify-content-between align-items-center">
+                  <span>
+                    {dataset.name}
+                    {dataset.missing && <Badge bg="danger" className="ms-1">Missing</Badge>}
+                  </span>
+                  {botDatasets.length > 1 && (
+                    <Button
+                      size="sm"
+                      variant="outline-danger"
+                      className="btn-sm py-0 px-1"
+                      onClick={() => handleRemoveDataset(dataset.id)}
+                      disabled={loading}
+                    >
+                      <FaTimes />
+                    </Button>
+                  )}
+                </Dropdown.Item>
+              ))}
+              <Dropdown.Divider />
+              <Dropdown.Header>Add Dataset</Dropdown.Header>
+              {loadingDatasets ? (
+                <div className="text-center p-2">
+                  <Spinner animation="border" size="sm" />
+                </div>
+              ) : (
+                availableDatasets && availableDatasets
+                  .filter(dataset => !botDatasets.some(bd => bd.id === dataset.id))
+                  .map((dataset) => (
+                    <Dropdown.Item 
+                      key={dataset.id} 
+                      onClick={() => handleSelectDataset(dataset.id)}
+                      disabled={loading}
+                    >
+                      <FaPlus className="me-1" /> {dataset.name}
+                    </Dropdown.Item>
+                  ))
+              )}
+              {availableDatasets && 
+                availableDatasets.filter(dataset => !botDatasets.some(bd => bd.id === dataset.id)).length === 0 && (
+                <div className="text-center text-muted p-2">
+                  <small>No additional datasets available</small>
+                </div>
+              )}
+            </Dropdown.Menu>
+          </Dropdown>
+        </OverlayTrigger>
+      </div>
     </Container>
   );
 };

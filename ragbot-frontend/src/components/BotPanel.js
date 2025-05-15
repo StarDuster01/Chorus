@@ -16,7 +16,7 @@ const BotPanel = () => {
   const [createMode, setCreateMode] = useState(false);
   const [newBot, setNewBot] = useState({
     name: '',
-    dataset_id: '',
+    dataset_ids: [],
     chorus_id: '',
     system_instruction: 'You are a helpful AI assistant. Answer questions based on the provided context.'
   });
@@ -162,7 +162,7 @@ const BotPanel = () => {
       setCreateMode(false);
       setNewBot({
         name: '',
-        dataset_id: '',
+        dataset_ids: [],
         chorus_id: '',
         system_instruction: 'You are a helpful AI assistant. Answer questions based on the provided context.'
       });
@@ -182,6 +182,13 @@ const BotPanel = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
+    
+    // Check if this is the dataset_ids field
+    if (name === 'dataset_ids') {
+      // This field is handled by its own onChange handler
+      return;
+    }
+    
     setNewBot({
       ...newBot,
       [name]: value
@@ -279,21 +286,31 @@ const BotPanel = () => {
                 
                 <Col md={6}>
                   <Form.Group className="mb-3">
-                    <Form.Label>Select Dataset</Form.Label>
+                    <Form.Label>Select Dataset(s)</Form.Label>
                     <Form.Select
-                      name="dataset_id"
-                      value={newBot.dataset_id}
-                      onChange={handleInputChange}
+                      name="dataset_ids"
+                      value={newBot.dataset_ids}
+                      onChange={(e) => {
+                        // Convert the selected options to an array of values
+                        const selectedOptions = Array.from(e.target.selectedOptions).map(option => option.value);
+                        setNewBot({
+                          ...newBot,
+                          dataset_ids: selectedOptions
+                        });
+                      }}
                       required
                       className="rounded-pill"
+                      multiple
                     >
-                      <option value="">Choose a dataset</option>
                       {datasets.map(dataset => (
                         <option key={dataset.id} value={dataset.id}>
                           {dataset.name} ({dataset.document_count} documents)
                         </option>
                       ))}
                     </Form.Select>
+                    <Form.Text className="text-muted">
+                      Hold Ctrl (or Cmd on Mac) to select multiple datasets
+                    </Form.Text>
                   </Form.Group>
                 </Col>
               </Row>
@@ -405,7 +422,22 @@ const BotPanel = () => {
                             <h4 className="mb-2">{bot.name}</h4>
                             <p className="mb-3 text-muted small">
                               <FaDatabase className="me-1" />
-                              {datasets.find(d => d.id === bot.dataset_id)?.name || 'Unknown dataset'}
+                              {bot.dataset_ids && bot.dataset_ids.length > 0 ? (
+                                <>
+                                  {bot.dataset_ids.length === 1 ? (
+                                    datasets.find(d => d.id === bot.dataset_ids[0])?.name || 'Unknown dataset'
+                                  ) : (
+                                    `${bot.dataset_ids.length} datasets`
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  {bot.dataset_id ? 
+                                    datasets.find(d => d.id === bot.dataset_id)?.name || 'Unknown dataset' :
+                                    'No datasets'
+                                  }
+                                </>
+                              )}
                               {bot.chorus_id && (
                                 <Badge className="ms-2" bg="info">
                                   <FaUsers className="me-1" />

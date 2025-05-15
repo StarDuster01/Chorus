@@ -2650,39 +2650,61 @@ def get_bot_datasets(user_data, bot_id):
     
     # Get dataset info for each dataset ID
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     dataset_details = []
     
     # Get dataset IDs from bot
     dataset_ids = bot.get("dataset_ids", [])
     
+    # First try to find datasets in the user's own datasets
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    user_datasets = []
+    
     if os.path.exists(user_datasets_file):
         try:
             with open(user_datasets_file, 'r') as f:
-                all_datasets = json.load(f)
-                
-            for dataset_id in dataset_ids:
-                dataset_found = False
-                for d in all_datasets:
-                    if d["id"] == dataset_id:
-                        dataset_details.append(d)
-                        dataset_found = True
-                        break
-                
-                if not dataset_found:
-                    # Add placeholder for missing dataset
-                    dataset_details.append({
-                        "id": dataset_id,
-                        "name": "Unknown dataset",
-                        "missing": True
-                    })
+                user_datasets = json.load(f)
         except Exception as e:
-            print(f"Error loading datasets: {str(e)}")
+            print(f"Error loading user datasets: {str(e)}")
+    
+    # Check all dataset files to find missing datasets
+    # This searches across all users' datasets
+    for dataset_id in dataset_ids:
+        # First check if it's in the user's own datasets
+        dataset_found = False
+        
+        for d in user_datasets:
+            if d["id"] == dataset_id:
+                dataset_details.append(d)
+                dataset_found = True
+                break
+                
+        if dataset_found:
+            continue
+            
+        # If not found in user's datasets, search all dataset files
+        dataset = find_dataset_by_id(dataset_id)
+        if dataset:
+            dataset_details.append(dataset)
+        else:
+            # Add placeholder for truly missing dataset
+            dataset_details.append({
+                "id": dataset_id,
+                "name": "Unknown dataset",
+                "missing": True
+            })
+    
+    # Get all available datasets for the selection dropdown
+    all_available_datasets = user_datasets.copy()
+    
+    # Add a flag to show which datasets are already associated with this bot
+    for d in all_available_datasets:
+        d["is_associated"] = d["id"] in dataset_ids
     
     return jsonify({
         "bot": bot,
-        "datasets": dataset_details
+        "datasets": dataset_details,
+        "available_datasets": all_available_datasets
     }), 200
 
 @app.route('/api/bots/<bot_id>/datasets', methods=['POST'])
@@ -3892,6 +3914,63 @@ def get_original_document(user_data, document_id):
     except Exception as e:
         print(f"Error retrieving original document: {str(e)}")
         return jsonify({"error": f"Failed to retrieve original document: {str(e)}"}), 500
+
+# After the "remove_dataset_from_bot" function, add the new endpoint:
+
+@app.route('/api/bots/<bot_id>/set-datasets', methods=['POST'])
+@require_auth
+def set_bot_datasets(user_data, bot_id):
+    """Replace all datasets on a bot with a new list of datasets"""
+    # Get bot info
+    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
+    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    
+    if not os.path.exists(user_bots_file):
+        return jsonify({"error": "Bot not found"}), 404
+        
+    with open(user_bots_file, 'r') as f:
+        bots = json.load(f)
+        
+    bot_index = None
+    for i, b in enumerate(bots):
+        if b["id"] == bot_id:
+            bot_index = i
+            break
+            
+    if bot_index is None:
+        return jsonify({"error": "Bot not found"}), 404
+    
+    # Get the dataset IDs from the request
+    data = request.json
+    dataset_ids = data.get('dataset_ids', [])
+    
+    # Validate all dataset IDs exist
+    for dataset_id in dataset_ids:
+        dataset = find_dataset_by_id(dataset_id)
+        if not dataset:
+            return jsonify({"error": f"Dataset with ID {dataset_id} not found"}), 404
+    
+    # Update bot with the new list of datasets
+    bot = bots[bot_index]
+    bot["dataset_ids"] = dataset_ids
+    
+    # Save updated bot
+    bots[bot_index] = bot
+    with open(user_bots_file, 'w') as f:
+        json.dump(bots, f)
+    
+    # Get the names of all datasets to return in response
+    dataset_names = []
+    for dataset_id in dataset_ids:
+        dataset = find_dataset_by_id(dataset_id)
+        if dataset:
+            dataset_names.append(dataset.get("name", "Unknown dataset"))
+    
+    return jsonify({
+        "message": f"Set {len(dataset_ids)} datasets on bot successfully",
+        "dataset_names": dataset_names,
+        "bot": bot
+    }), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

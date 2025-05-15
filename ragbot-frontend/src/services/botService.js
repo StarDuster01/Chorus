@@ -572,6 +572,70 @@ const removeImage = async (datasetId, imageId) => {
   }
 };
 
+// After the getAllChoruses function, add these new functions:
+
+const getBotDatasets = async (botId) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/bots/${botId}/datasets`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching bot datasets:', error);
+    throw error;
+  }
+};
+
+const addDatasetToBot = async (botId, datasetId) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/bots/${botId}/datasets`,
+      { dataset_id: datasetId },
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error adding dataset to bot:', error);
+    throw error;
+  }
+};
+
+const removeDatasetFromBot = async (botId, datasetId) => {
+  try {
+    const response = await axios.delete(
+      `${API_URL}/bots/${botId}/datasets/${datasetId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error removing dataset from bot:', error);
+    throw error;
+  }
+};
+
+const setBotDatasets = async (botId, datasetIds) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/bots/${botId}/set-datasets`,
+      { dataset_ids: datasetIds },
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error setting bot datasets:', error);
+    throw error;
+  }
+};
+
 const botService = {
   getDatasets,
   createDataset,
@@ -605,7 +669,11 @@ const botService = {
   renameConversation,
   getDatasetImages,
   uploadImage,
-  removeImage
+  removeImage,
+  getBotDatasets,
+  addDatasetToBot,
+  removeDatasetFromBot,
+  setBotDatasets
 };
 
 export default botService; 
