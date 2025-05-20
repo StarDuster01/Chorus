@@ -9,6 +9,8 @@ from werkzeug.utils import secure_filename
 from flask import send_from_directory, send_file, jsonify, request
 from PIL import Image
 import openai
+# Import the constant from constants.py instead of app.py
+from constants import DEFAULT_LLM_MODEL
 
 # Helper function to resize large images
 def resize_image(image_path, max_dimension=1024):
@@ -109,7 +111,7 @@ def generate_image_handler(user_data, image_folder):
             # Save the image
             with open(filepath, 'wb') as f:
                 f.write(image_content)
-                
+            
             # Create the URL for accessing the image
             api_image_url = f"/api/images/{filename}"
             
@@ -147,16 +149,16 @@ def enhance_prompt_handler(user_data):
             print("Error: No prompt provided")
             return jsonify({"error": "Prompt is required"}), 400
         
-        # Craft system message for GPT-4o to enhance the prompt
+        # Craft system message for the LLM to enhance the prompt
         system_message = """You are an expert at creating detailed image prompts for AI image generation. 
 Your task is to enhance the user's prompt by adding more descriptive elements, artistic style, lighting, mood, and details.
 Keep the original intent and subject matter, but make it much more detailed and visually compelling.
 Respond with ONLY the enhanced prompt text, nothing else. No explanations or additional text."""
 
-        print("Calling GPT-4o for enhancement...")
-        # Call GPT-4o to enhance the prompt
+        print(f"Calling {DEFAULT_LLM_MODEL} for enhancement...")
+        # Call the LLM to enhance the prompt
         response = openai.chat.completions.create(
-            model="gpt-4o",
+            model=DEFAULT_LLM_MODEL,
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": f"Enhance this image prompt: {original_prompt}"}
@@ -184,6 +186,11 @@ Respond with ONLY the enhanced prompt text, nothing else. No explanations or add
 
 def get_image_handler(image_folder, filename):
     """Serve an uploaded image file"""
+    # Check if client accepts image formats
+    accept_header = request.headers.get('Accept', '')
+    if accept_header and '*/*' not in accept_header and 'image/' not in accept_header:
+        return jsonify({"error": "Client doesn't accept image format"}), 406
+    
     # Check if download parameter is provided
     download = request.args.get('download', 'false').lower() == 'true'
     

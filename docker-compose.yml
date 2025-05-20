@@ -18,7 +18,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 6G
+          cpus: '4'
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:50505/health"]
@@ -36,7 +37,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
+          cpus: '2'
     depends_on:
       - backend
     restart: on-failure 

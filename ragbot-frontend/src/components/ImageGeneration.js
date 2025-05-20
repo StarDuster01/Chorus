@@ -49,7 +49,16 @@ const ImageGeneration = () => {
       
       if (result.images && result.images.length > 0) {
         const imageData = result.images[0];
-        const fullUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000' + imageData.image_url;
+        // Make sure the default URL and API_URL are consistent
+        const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:50505/api';
+        // Remove any duplicate /api prefixes if present
+        const imageUrl = imageData.image_url.startsWith('/api/') 
+          ? imageData.image_url 
+          : `/api${imageData.image_url}`;
+        // Construct full URL correctly
+        const fullUrl = baseUrl.endsWith('/api') 
+          ? `${baseUrl.substring(0, baseUrl.length - 4)}${imageUrl}`
+          : `${baseUrl}${imageUrl}`;
         setGeneratedImage(fullUrl);
         setMessage('Image generated successfully!');
       }
@@ -98,7 +107,16 @@ const ImageGeneration = () => {
       const result = await botService.editImage(formData);
       
       if (result.image_url) {
-        const fullUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000' + result.image_url;
+        // Make sure the default URL and API_URL are consistent
+        const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:50505/api';
+        // Remove any duplicate /api prefixes if present
+        const imageUrl = result.image_url.startsWith('/api/') 
+          ? result.image_url 
+          : `/api${result.image_url}`;
+        // Construct full URL correctly
+        const fullUrl = baseUrl.endsWith('/api') 
+          ? `${baseUrl.substring(0, baseUrl.length - 4)}${imageUrl}`
+          : `${baseUrl}${imageUrl}`;
         setEditedImage(fullUrl);
         setMessage('Image edited successfully!');
       }

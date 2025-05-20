@@ -90,7 +90,9 @@ from chorus_handlers import (
     update_chorus_handler,
     delete_chorus_handler
 )
-
+# Import constants
+from constants import DEFAULT_LLM_MODEL
+from constants import IMAGE_GENERATION_MODEL
 # Load environment variables
 load_dotenv()
 
@@ -556,21 +558,92 @@ def dataset_status(user_data, dataset_id):
         # Check if there's an image index for this dataset
         indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
         index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
         image_index_exists = os.path.exists(index_path)
         
-        # Get image count from image processor
-        if dataset_id in image_processor.image_metadata:
-            image_count = len(image_processor.image_metadata[dataset_id])
-            
-            # Include image previews (first 3 images)
-            if image_count > 0:
-                for i, img_meta in enumerate(image_processor.image_metadata[dataset_id][:3]):
-                    if 'path' in img_meta:
+        # Validate metadata if it exists
+        if os.path.exists(metadata_file):
+            try:
+                # Load metadata from file to ensure it's up-to-date
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                # Filter to ensure we only count images that still exist on disk
+                valid_metadata = []
+                for img_meta in metadata:
+                    # Ensure dataset_id is correct
+                    if not img_meta.get('dataset_id'):
+                        img_meta['dataset_id'] = dataset_id
+                    
+                    # Only include images for this dataset where the file still exists
+                    if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
+                        if os.path.exists(img_meta['path']):
+                            valid_metadata.append(img_meta)
+                
+                # Update processor's metadata to remove any non-existent images
+                image_processor.image_metadata[dataset_id] = valid_metadata
+                
+                # Update the index count to match
+                image_count = len(valid_metadata)
+                
+                # Include image previews (first 3 images that exist)
+                preview_count = 0
+                for img_meta in valid_metadata:
+                    if preview_count >= 3:  # Limit to 3 preview images
+                        break
+                    
+                    if 'path' in img_meta and os.path.exists(img_meta['path']):
                         image_previews.append({
                             "id": img_meta.get("id", ""),
-                            "url": f"/api/images/{os.path.basename(img_meta['path'])}",
+                            "url": f"/images/{os.path.basename(img_meta['path'])}",
                             "caption": img_meta.get("caption", "")
                         })
+                        preview_count += 1
+                
+                # Save updated metadata
+                try:
+                    with open(metadata_file, 'w') as f:
+                        json.dump(valid_metadata, f)
+                    print(f"Updated metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images")
+                except Exception as e:
+                    print(f"Error saving updated metadata: {str(e)}")
+                
+            except Exception as e:
+                print(f"Error validating image metadata: {str(e)}")
+        elif dataset_id in image_processor.image_metadata:
+            # If no metadata file but we have metadata in memory, validate it
+            valid_metadata = []
+            for img_meta in image_processor.image_metadata[dataset_id]:
+                if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
+                    if os.path.exists(img_meta['path']):
+                        valid_metadata.append(img_meta)
+            
+            # Update processor's metadata
+            image_processor.image_metadata[dataset_id] = valid_metadata
+            image_count = len(valid_metadata)
+            
+            # Include image previews (first 3 images)
+            preview_count = 0
+            for img_meta in valid_metadata:
+                if preview_count >= 3:  # Limit to 3 preview images
+                    break
+                
+                if 'path' in img_meta and os.path.exists(img_meta['path']):
+                    image_previews.append({
+                        "id": img_meta.get("id", ""),
+                        "url": f"/images/{os.path.basename(img_meta['path'])}",
+                        "caption": img_meta.get("caption", "")
+                    })
+                    preview_count += 1
+                    
+            # Save metadata file
+            try:
+                os.makedirs(indices_dir, exist_ok=True)
+                with open(metadata_file, 'w') as f:
+                    json.dump(valid_metadata, f)
+                print(f"Created metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images")
+            except Exception as e:
+                print(f"Error saving metadata: {str(e)}")
     
     # Update dataset with accurate counts
     dataset["document_count"] = doc_count
@@ -809,7 +882,7 @@ def chat_with_bot(user_data, bot_id):
             
             # Call OpenAI API with vision capabilities
             response = openai.chat.completions.create(
-                model="gpt-4o",
+                model=DEFAULT_LLM_MODEL,
                 messages=messages,
                 max_tokens=1024
             )
@@ -897,6 +970,32 @@ def chat_with_bot(user_data, bot_id):
                     has_images = False
                     dataset_type = "text"  # Default
                     
+                    # Enhanced image query detection
+                    image_query_terms = [
+                        "image", "picture", "photo", "visual", "diagram", "graph", 
+                        "chart", "illustration", "screenshot", "scan", "drawing", 
+                        "artwork", "logo", "icon", "figure", "graphic", "view", 
+                        "show me", "look like", "appearance", "visual", "display",
+                        "find a picture", "find image", "show image", "display the visual",
+                        "include the diagram", "include image", "with image", "any image",
+                        "the picture", "the image", "the logo", "the diagram", "the illustration"
+                    ]
+                    
+                    # Use a more aggressive check for image queries - partial matches and phrases
+                    is_image_query = any(term in message.lower() for term in image_query_terms)
+                    
+                    # Debug: Log image query detection decision
+                    print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query}")
+                    if is_image_query:
+                        matching_terms = [term for term in image_query_terms if term in message.lower()]
+                        print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}")
+                    
+                    # Skip all image processing if this is not an image query
+                    if not is_image_query:
+                        print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query: '{message}'")
+                        continue
+                    
+                    # If we get here, it is an image query, so check if the dataset has images
                     # Check dataset type and image count from metadata
                     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
                     for user_id in [user_data['id'], "shared"]:  # Check both user and shared datasets
@@ -920,38 +1019,36 @@ def chat_with_bot(user_data, bot_id):
                     if has_images or metadata_count > 0:
                         print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}")
                         
-                        # Enhanced image query detection
-                        image_query_terms = [
-                            "image", "picture", "photo", "visual", "diagram", "graph", 
-                            "chart", "illustration", "screenshot", "scan", "drawing", 
-                            "artwork", "logo", "icon", "figure", "graphic", "view", 
-                            "show me", "look like", "appearance", "visual", "display"
-                        ]
-                        is_image_query = any(term in message.lower() for term in image_query_terms)
-                        
-                        # If using chorus mode, always search for images to provide visual context
+                        # Set search parameters based on whether we're using chorus mode
                         if use_model_chorus:
-                            # Always search for at least a few images with chorus
-                            top_k = 5 if is_image_query else 3
+                            # In chorus mode, more aggressively search for images
+                            top_k = 8 if is_image_query else 4
                         else:
-                            # For standard mode, prioritize image search for image queries
-                            top_k = 5 if is_image_query else 3
+                            # In standard mode, still search for images but with lower priority if not an image query
+                            top_k = 6 if is_image_query else 3
+                        
+                        print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images")
                         
                         # Search for images with the user's query
                         img_results = []
                         try:
+                            print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'")
                             img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
-                            print(f"Found {len(img_results)} images for query '{message}' in dataset {dataset_id}")
+                            print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}")
+                            if img_results:
+                                for i, img in enumerate(img_results):
+                                    print(f"IMAGE SEARCH DEBUG: Image {i+1}: {img.get('caption', 'No caption')} (score: {img.get('score', 0):.4f})")
                         except Exception as img_search_error:
-                            print(f"Error searching images: {str(img_search_error)}")
+                            print(f"IMAGE SEARCH ERROR: {str(img_search_error)}")
                         
-                        # If no results or weak results, also try a more generic search
-                        if not img_results or (img_results and img_results[0].get("score", 0) < 0.2):
+                        # If no results or weak results, also try a more generic search, but only for image queries
+                        if (not img_results or (img_results and img_results[0].get("score", 0) < 0.2)) and is_image_query:
                             # Try searching with a more generic query 
                             generic_queries = [
                                 "relevant image for this topic",
                                 "visual representation",
-                                "image related to this subject"
+                                "image related to this subject",
+                                "picture about this"
                             ]
                             
                             # Add more specific generic queries for likely image questions
@@ -959,7 +1056,9 @@ def chat_with_bot(user_data, bot_id):
                                 generic_queries.extend([
                                     "show me images about this",
                                     "find relevant visuals",
-                                    "diagrams or images for this topic"
+                                    "diagrams or images for this topic",
+                                    "picture showing this",
+                                    "visual of this information"
                                 ])
                                 
                             # For chorus mode, be more aggressive in finding images
@@ -968,12 +1067,16 @@ def chat_with_bot(user_data, bot_id):
                                     "important image",
                                     "key visual",
                                     "significant illustration",
-                                    "main diagram"
+                                    "main diagram",
+                                    "helpful picture for reference"
                                 ])
+                            
+                            print(f"IMAGE SEARCH DEBUG: Using fallback generic queries: {generic_queries[:3]}...")
                             
                             for generic_query in generic_queries:
                                 try:
-                                    generic_results = image_processor.search_images(dataset_id, generic_query, top_k=3 if is_image_query else 2)
+                                    print(f"IMAGE SEARCH DEBUG: Trying generic query: '{generic_query}'")
+                                    generic_results = image_processor.search_images(dataset_id, generic_query, top_k=4 if is_image_query else 2)
                                     if generic_results:
                                         for gen_img in generic_results:
                                             # Add to results if not already included
@@ -992,7 +1095,7 @@ def chat_with_bot(user_data, bot_id):
                                 image_info = {
                                     "id": img["id"],
                                     "caption": img["caption"],
-                                    "url": f"/api/images/{os.path.basename(img['path'])}",
+                                    "url": f"/images/{os.path.basename(img['path'])}",
                                     "score": img["score"],
                                     "dataset_id": dataset_id
                                 }
@@ -1141,6 +1244,9 @@ def chat_with_bot(user_data, bot_id):
         system_instruction += "\n\nYou have access to both text documents and images in your knowledge base. Review ALL the provided context carefully, including both text documents AND image captions, before stating that information is not available. Image captions contain valuable information that should be considered as valid sources."
         
         system_instruction += "\n\nWhen a user asks about visual content or specifically mentions images, prioritize relevant images in your response. Only reference images when they are truly relevant to the query. If there are no relevant images for the query, do not mention images at all."
+        
+        # Add instruction to avoid saying images can't be displayed
+        system_instruction += "\n\nIMPORTANT: Do NOT state that you cannot display or show images to the user. When referencing images, simply describe what they contain and cite them with [Image X]. Images mentioned in the context ARE available to the user for viewing."
         
         # Add conversation history to system instruction if available
         system_instruction_with_history = system_instruction
@@ -1317,7 +1423,7 @@ def chat_with_bot(user_data, bot_id):
                 # Add specific instructions for images to the chorus prompt
                 image_prompt_instruction = ""
                 if image_results:
-                    image_prompt_instruction = "\n\nSeveral images were retrieved that may be relevant to this query. If the user's query relates to images or visual information, please reference the images provided in your response using [Image 1], [Image 2], etc. citations. Only reference images when they are directly relevant to answering the question."
+                    image_prompt_instruction = "\n\nSeveral images were retrieved that may be relevant to this query. If the user's query relates to images or visual information, please reference the images provided in your response using [Image 1], [Image 2], etc. citations. Only reference images when they are directly relevant to answering the question. IMPORTANT: Do NOT state that you cannot display or show images to the user. Images mentioned in the context ARE available to the user for viewing."
 
                 for i in range(weight):
                     try:
@@ -1557,21 +1663,50 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             used_image_indices = set()
             if image_results:
                 # Check which images are explicitly referenced in the response
+                print(f"IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available")
+                
                 for i in range(1, len(image_results[:5]) + 1):
                     if f"[Image {i}]" in winning_response:
                         used_image_indices.add(i)
+                        print(f"IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]")
                         
                 # If the response mentions images but doesn't use the exact citation format,
                 # include highly relevant images that meet our threshold
                 image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
                 has_image_mentions = any(term.lower() in winning_response.lower() for term in image_mention_terms)
                 
-                if has_image_mentions and not used_image_indices:
-                    # Only include images with good relevance scores
-                    relevance_threshold = 0.3
+                if has_image_mentions:
+                    matching_terms = [term for term in image_mention_terms if term.lower() in winning_response.lower()]
+                    print(f"IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}")
+                
+                # Include relevant images only if the response mentions images or the query is explicitly about images
+                image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
+                is_image_query = any(term in message.lower() for term in image_query_terms)
+                
+                if (has_image_mentions or is_image_query) and not used_image_indices:
+                    # Use a reasonable threshold for image relevance
+                    relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
+                    print(f"IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries")
                     for i, img in enumerate(image_results[:5]):
-                        if img.get('score', 0) >= relevance_threshold:
+                        score = img.get('score', 0)
+                        if score >= relevance_threshold:
                             used_image_indices.add(i+1)
+                            print(f"IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})")
+                        else:
+                            print(f"IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}")
+                
+                # Only force-include an image for explicit image queries
+                if is_image_query and not used_image_indices and image_results:
+                    # Include only the highest scoring image and only if it has a minimum score
+                    min_score_threshold = 0.2
+                    best_score = image_results[0].get('score', 0)
+                    if best_score >= min_score_threshold:
+                        used_image_indices.add(1)  # Add the first (highest scoring) image
+                        print(f"IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query")
+                    else:
+                        print(f"IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images")
+                
+                print(f"IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}")
             
             # Prepare image details for referenced images
             image_details = []
@@ -1630,12 +1765,14 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             is_image_query = any(term in message.lower() for term in image_query_terms)
             
             if is_image_query:
-                image_instruction = "\n\nThe user seems to be asking about images. Please prioritize showing and describing relevant images from the provided context when appropriate. When referencing images, be descriptive about what they show."
+                image_instruction = "\n\nThe user seems to be asking about images. Please prioritize showing and describing relevant images from the provided context when appropriate. When referencing images, use the exact format '[Image X]' (where X is the image number) and be descriptive about what they show."
+            else:
+                image_instruction = "\n\nRelevant images are available in the context. When they may help answer the user's question, refer to them using the format '[Image X]' (where X is the image number) and briefly describe what they show."
         
         response = openai.chat.completions.create(
-            model="gpt-4o",
+            model=DEFAULT_LLM_MODEL,
             messages=[
-                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc.\n\nIMPORTANT: Before stating that information isn't available, check ALL context including image captions. If information is only found in an image caption, still use that information and cite the image."},
+                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc.\n\nIMPORTANT: Before stating that information isn't available, check ALL context including image captions. If information is only found in an image caption, still use that information and cite the image.\n\nIMPORTANT: Do NOT state that you cannot display or show images to the user. When referencing images, simply describe what they contain and cite them with [Image X]. Images mentioned in the context ARE available to the user for viewing."},
                 {"role": "user", "content": "Context:\n" + full_context + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. Only reference images that are directly relevant to answering the question."}
             ]
         )
@@ -1652,21 +1789,50 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
         used_image_indices = set()
         if image_results:
             # Check which images are explicitly referenced in the response
+            print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available")
+            
             for i in range(1, len(top_images) + 1):
                 if f"[Image {i}]" in response_text:
                     used_image_indices.add(i)
-                    
+                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]")
+            
             # If the response mentions images or visual content but doesn't use the exact citation format,
             # include highly relevant images that meet our threshold
             image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
             has_image_mentions = any(term.lower() in response_text.lower() for term in image_mention_terms)
             
-            if has_image_mentions and not used_image_indices:
-                # Only include images with good relevance scores
-                relevance_threshold = 0.3  # Higher threshold for implicit inclusion
+            if has_image_mentions:
+                matching_terms = [term for term in image_mention_terms if term.lower() in response_text.lower()]
+                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}")
+            
+            # Include relevant images only if the response mentions images or the query is explicitly about images
+            image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
+            is_image_query = any(term in message.lower() for term in image_query_terms)
+            
+            if (has_image_mentions or is_image_query) and not used_image_indices:
+                # Use a reasonable threshold for image relevance
+                relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
+                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries")
                 for i, img in enumerate(top_images):
-                    if img.get('score', 0) >= relevance_threshold:
+                    score = img.get('score', 0)
+                    if score >= relevance_threshold:
                         used_image_indices.add(i+1)
+                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})")
+                    else:
+                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}")
+            
+            # Only force-include an image for explicit image queries
+            if is_image_query and not used_image_indices and image_results:
+                # Include only the highest scoring image and only if it has a minimum score
+                min_score_threshold = 0.2
+                best_score = top_images[0].get('score', 0) if top_images else 0
+                if best_score >= min_score_threshold:
+                    used_image_indices.add(1)  # Add the first (highest scoring) image
+                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query")
+                else:
+                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images")
+            
+            print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}")
         
         # Filter source_documents to only include those that were actually cited
         used_source_documents = [doc for doc in source_documents if doc['context_index'] in used_indices]
@@ -1882,6 +2048,105 @@ def get_image(filename):
     """Serve an uploaded image file"""
     return get_image_handler(IMAGE_FOLDER, filename)
 
+# New route for editing images
+@app.route('/api/images/edit', methods=['POST'])
+@require_auth_wrapper
+def edit_image(user_data):
+    try:
+        # Check if the request is multipart/form-data
+        if not request.content_type or not request.content_type.startswith('multipart/form-data'):
+            return jsonify({"error": "Request must be multipart/form-data"}), 400
+            
+        # Get the image file
+        if 'image' not in request.files:
+            return jsonify({"error": "Image file is required"}), 400
+            
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify({"error": "No image selected"}), 400
+        
+        # Get the prompt
+        prompt = request.form.get('prompt', '')
+        if not prompt:
+            return jsonify({"error": "Prompt is required"}), 400
+            
+        # Optional parameters
+        model = request.form.get('model', 'gpt-image-1')
+        size = request.form.get('size', '1024x1024')
+        quality = request.form.get('quality', 'medium')
+        output_format = request.form.get('output_format', 'png')
+        
+        # Save the uploaded image
+        filename = secure_filename(f"edit_source_{str(uuid.uuid4())}{os.path.splitext(image_file.filename)[1]}")
+        image_path = os.path.join(IMAGE_FOLDER, filename)
+        image_file.save(image_path)
+        
+        # Resize if needed
+        image_path = resize_image(image_path)
+        
+        # Read image data for the API call
+        with open(image_path, 'rb') as image_file:
+            image_data = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Call OpenAI edit API
+        response = openai.images.edit(
+            image=open(image_path, 'rb'),
+            prompt=prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            n=1
+        )
+        
+        # Process the result
+        if not response.data or len(response.data) == 0:
+            return jsonify({"error": "No image was generated"}), 500
+            
+        image_obj = response.data[0]
+        
+        # Get the image URL or base64 data
+        if hasattr(image_obj, 'b64_json') and image_obj.b64_json:
+            # Decode base64 content
+            image_content = base64.b64decode(image_obj.b64_json)
+            image_url = None
+        elif hasattr(image_obj, 'url') and image_obj.url:
+            # Download the image from URL
+            image_response = requests.get(image_obj.url)
+            if image_response.status_code != 200:
+                return jsonify({"error": "Failed to download edited image"}), 500
+                
+            image_content = image_response.content
+        else:
+            return jsonify({"error": "No image data found in response"}), 500
+            
+        # Save the edited image
+        output_filename = f"edited_{str(uuid.uuid4())}.{output_format}"
+        output_path = os.path.join(IMAGE_FOLDER, output_filename)
+        
+        with open(output_path, 'wb') as f:
+            f.write(image_content)
+            
+        # Create the URL for accessing the image
+        api_image_url = f"/api/images/{output_filename}"
+        
+        return jsonify({
+            "success": True,
+            "image_url": api_image_url,
+            "images": [{
+                "image_url": api_image_url
+            }],
+            "params": {
+                "model": model,
+                "size": size,
+                "quality": quality,
+                "format": output_format
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error editing image: {str(e)}")
+        return jsonify({"error": f"Image editing failed: {str(e)}"}), 500
+
 # Add this new endpoint after the existing chat_with_bot function
 @app.route('/api/bots/<bot_id>/chat-with-image', methods=['POST'])
 @require_auth_wrapper
@@ -2092,8 +2357,8 @@ def chat_with_image(user_data, bot_id):
         image_details = [{
             "index": "Image 1",
             "caption": "Uploaded image",
-            "url": f"/api/images/{os.path.basename(image_path)}",
-            "download_url": f"/api/images/{os.path.basename(image_path)}?download=true",
+            "url": f"/images/{os.path.basename(image_path)}",
+            "download_url": f"/images/{os.path.basename(image_path)}?download=true",
             "id": str(uuid.uuid4()),
             "dataset_id": ""
         }]
@@ -2205,43 +2470,75 @@ def get_dataset_images(user_data, dataset_id):
     # Print the dataset info
     print(f"Dataset info: {datasets[dataset_index]}")
     
-    # Attempt to force reload the image indices for this dataset
+    # Force reload the image metadata if it's not loaded yet or might be stale
     indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
     metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
     index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
     
     # If metadata exists but not loaded in processor, load it now
-    if os.path.exists(metadata_file) and dataset_id not in image_processor.image_metadata:
+    if os.path.exists(metadata_file):
         try:
             print(f"Loading metadata file from {metadata_file}")
             with open(metadata_file, 'r') as f:
                 metadata = json.load(f)
             
-            # Filter to ensure we only include this dataset's images
+            # Filter to ensure we only include this dataset's images AND the image files actually exist
             valid_metadata = []
             for img_meta in metadata:
                 # Add dataset_id if missing
                 if not img_meta.get('dataset_id'):
                     img_meta['dataset_id'] = dataset_id
-                # Only include if it's for this dataset
-                if img_meta.get('dataset_id') == dataset_id:
-                    valid_metadata.append(img_meta)
+                
+                # Only include if it's for this dataset and the file exists
+                if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
+                    if os.path.exists(img_meta['path']):
+                        valid_metadata.append(img_meta)
+                    else:
+                        print(f"Skipping image {img_meta.get('id')} because file doesn't exist: {img_meta.get('path')}")
             
-            # Update processor's metadata
+            # Update processor's metadata with validated images
             image_processor.image_metadata[dataset_id] = valid_metadata
             
             # Also load index if it exists
             if os.path.exists(index_path):
-                image_processor.image_indices[dataset_id] = faiss.read_index(index_path)
-                print(f"Loaded index from {index_path}")
+                # We need to rebuild the index since some images may be missing
+                # This ensures the index and metadata stay in sync
+                if len(valid_metadata) > 0:
+                    # Create a new empty index
+                    index = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                    
+                    # Add all valid images to the index
+                    for img_meta in valid_metadata:
+                        if 'embedding' in img_meta:
+                            # If we have a pre-computed embedding
+                            embedding = np.array([img_meta['embedding']], dtype=np.float32)
+                            index.add(embedding)
+                        else:
+                            # Try to compute embedding from image
+                            try:
+                                embedding = image_processor.compute_image_embedding(img_meta['path'])
+                                index.add(np.array([embedding], dtype=np.float32))
+                            except Exception as e:
+                                print(f"Error computing embedding: {str(e)}")
+                    
+                    # Save the new index
+                    image_processor.image_indices[dataset_id] = index
+                    image_processor._save_dataset_index(dataset_id)
+                    print(f"Rebuilt index for dataset {dataset_id} with {len(valid_metadata)} images")
+                else:
+                    # Create an empty index if no valid images
+                    image_processor.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                    image_processor._save_dataset_index(dataset_id)
+                    print(f"Created empty index for dataset {dataset_id} - no valid images found")
                 
-            print(f"Loaded {len(valid_metadata)} images for dataset {dataset_id}")
+            print(f"Loaded and validated {len(valid_metadata)} images for dataset {dataset_id}")
         except Exception as e:
-            print(f"Error loading metadata: {str(e)}")
+            print(f"Error loading/validating metadata: {str(e)}")
     
-    # Get images metadata from the image processor
+    # Get images metadata from the image processor with validation
+    images = []
+    
     if dataset_id in image_processor.image_metadata:
-        images = []
         img_count = len(image_processor.image_metadata[dataset_id])
         print(f"Found {img_count} images in dataset {dataset_id}")
         
@@ -2250,12 +2547,16 @@ def get_dataset_images(user_data, dataset_id):
             if img_meta.get('dataset_id') != dataset_id:
                 print(f"Skipping image {img_meta.get('id')} as it belongs to dataset {img_meta.get('dataset_id')}, not {dataset_id}")
                 continue
+            
+            # Verify the image file exists
+            if 'path' in img_meta and not os.path.exists(img_meta['path']):
+                print(f"Skipping image {img_meta.get('id')} as file doesn't exist: {img_meta['path']}")
+                continue
                 
             # Create web-accessible URLs for each image
             img_meta_copy = img_meta.copy()
             if 'path' in img_meta_copy:
-                img_meta_copy['url'] = f"/api/images/{os.path.basename(img_meta_copy['path'])}"
-                print(f"Image URL: {img_meta_copy['url']}")
+                img_meta_copy['url'] = f"/images/{os.path.basename(img_meta_copy['path'])}"
                 # Don't expose the full path in API
                 if 'path' in img_meta_copy:
                     del img_meta_copy['path']
@@ -2264,7 +2565,7 @@ def get_dataset_images(user_data, dataset_id):
         # Sort images by creation date if available (newest first)
         images.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         
-        # Update the dataset's image count if it doesn't match
+        # Update the dataset's image count to match reality
         actual_count = len(images)
         if datasets[dataset_index].get("image_count", 0) != actual_count:
             print(f"Updating image count for dataset {dataset_id} from {datasets[dataset_index].get('image_count', 0)} to {actual_count}")
@@ -2307,7 +2608,7 @@ def get_dataset_images(user_data, dataset_id):
                                 "original_filename": filename,
                                 "caption": f"Image: {filename}",
                                 "created_at": datetime.datetime.now(UTC).isoformat(),
-                                "url": f"/api/images/{filename}"
+                                "url": f"/images/{filename}"
                             }
                             
                             # Try to generate caption using BLIP
@@ -2433,19 +2734,101 @@ def remove_image(user_data, dataset_id, image_id):
         if image_path and os.path.exists(image_path):
             try:
                 os.remove(image_path)
+                print(f"Successfully deleted image file: {image_path}")
             except Exception as e:
                 print(f"Warning: Failed to delete image file: {str(e)}")
         
-        # Update image count in dataset
-        if "image_count" in datasets[dataset_index] and datasets[dataset_index]["image_count"] > 0:
-            datasets[dataset_index]["image_count"] -= 1
+        # Validate and update image metadata for dataset
+        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+        
+        # Load the current metadata
+        if os.path.exists(metadata_file):
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                # Filter to only include existing images
+                valid_metadata = []
+                for img_meta in metadata:
+                    if img_meta.get('id') != image_id:  # Skip the deleted image
+                        if 'path' in img_meta and os.path.exists(img_meta['path']):
+                            valid_metadata.append(img_meta)
+                
+                # Update the image processor's metadata
+                image_processor.image_metadata[dataset_id] = valid_metadata
+                
+                # Save updated metadata
+                with open(metadata_file, 'w') as f:
+                    json.dump(valid_metadata, f)
+                
+                # Rebuild the FAISS index to remove the deleted image
+                try:
+                    # Import VECTOR_DIMENSION from image_processor
+                    # Standard CLIP embeddings are 512-dimensional
+                    VECTOR_DIMENSION = 512
+                    
+                    # Create a new empty index
+                    index = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                    
+                    # Add all valid images to the index
+                    for img in valid_metadata:
+                        if 'embedding' in img and isinstance(img['embedding'], list):
+                            # Convert embedding from list to numpy array
+                            embedding = np.array([img['embedding']], dtype=np.float32)
+                            index.add(embedding)
+                        elif 'path' in img and os.path.exists(img['path']):
+                            # If embedding missing but file exists, try to compute it
+                            try:
+                                embedding = image_processor.compute_image_embedding(img['path'])
+                                if embedding is not None:
+                                    index.add(np.array([embedding], dtype=np.float32))
+                                    # Store embedding in metadata for future use
+                                    img['embedding'] = embedding.tolist()
+                            except Exception as emb_error:
+                                print(f"Error computing embedding: {str(emb_error)}")
+                    
+                    # Replace the old index with the new one
+                    image_processor.image_indices[dataset_id] = index
+                    
+                    # Save the updated index
+                    index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+                    faiss.write_index(index, index_path)
+                    print(f"Successfully rebuilt FAISS index for dataset {dataset_id} with {index.ntotal} images")
+                except Exception as idx_error:
+                    print(f"Error rebuilding FAISS index: {str(idx_error)}")
+                
+                # Update image count in dataset
+                actual_count = len(valid_metadata)
+                datasets[dataset_index]["image_count"] = actual_count
+                print(f"Updated image count for dataset {dataset_id} to {actual_count}")
+                
+            except Exception as e:
+                print(f"Error updating metadata after removal: {str(e)}")
+                # Count images directly from processor
+                if dataset_id in image_processor.image_metadata:
+                    # Update count based on valid images in memory
+                    valid_count = 0
+                    for img in image_processor.image_metadata[dataset_id]:
+                        if 'path' in img and os.path.exists(img['path']):
+                            valid_count += 1
+                    
+                    datasets[dataset_index]["image_count"] = valid_count
+                else:
+                    # No metadata found, set count to 0
+                    datasets[dataset_index]["image_count"] = 0
         else:
-            # Set image count to actual count if it wasn't tracked before
-            image_count = 0
+            # No metadata file, use in-memory count
             if dataset_id in image_processor.image_metadata:
-                image_count = len(image_processor.image_metadata[dataset_id])
-            datasets[dataset_index]["image_count"] = image_count
-            
+                valid_count = 0
+                for img in image_processor.image_metadata[dataset_id]:
+                    if 'path' in img and os.path.exists(img['path']):
+                        valid_count += 1
+                datasets[dataset_index]["image_count"] = valid_count
+            else:
+                datasets[dataset_index]["image_count"] = 0
+        
+        # Save updated dataset info
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
                 
@@ -2495,7 +2878,7 @@ def search_dataset_images(user_data, dataset_id):
         for result in results:
             result_copy = result.copy()
             if 'path' in result_copy:
-                result_copy['url'] = f"/api/images/{os.path.basename(result_copy['path'])}"
+                result_copy['url'] = f"/images/{os.path.basename(result_copy['path'])}"
                 del result_copy['path']  # Don't expose full path
             formatted_results.append(result_copy)
             

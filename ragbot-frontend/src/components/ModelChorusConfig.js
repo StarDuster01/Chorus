@@ -13,7 +13,7 @@ import {
 import botService from '../services/botService';
 
 const MODEL_OPTIONS = [
-  { provider: 'OpenAI', models: ['gpt-4o'] },
+  { provider: 'OpenAI', models: ['gpt-4.1-nano-2025-04-14'] },
   { provider: 'Anthropic', models: ['claude-3-7-sonnet-latest'] },
   { provider: 'Groq', models: ['llama3-70b-8192', 'llama3-8b-8192'] },
   { provider: 'Mistral', models: ['mistral-large', 'mistral-medium', 'mistral-small'] },
@@ -45,7 +45,7 @@ const ModelChorusConfig = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [modelType, setModelType] = useState('response'); // 'response' or 'evaluator'
   const [newModelProvider, setNewModelProvider] = useState('OpenAI');
-  const [newModelName, setNewModelName] = useState('gpt-4o');
+  const [newModelName, setNewModelName] = useState('gpt-4.1-nano-2025-04-14');
   const [newModelTemperature, setNewModelTemperature] = useState(0.7);
   const [newModelWeight, setNewModelWeight] = useState(1);
   
@@ -75,10 +75,10 @@ const ModelChorusConfig = () => {
           setIsActive(false);
           setUseDiverseRag(false);
           setResponseModels([
-            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4o', temperature: 0.7, weight: 1 }
+            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.7, weight: 1 }
           ]);
           setEvaluatorModels([
-            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4o', temperature: 0.2, weight: 1 }
+            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.2, weight: 1 }
           ]);
         }
       } catch (err) {
@@ -174,7 +174,7 @@ const ModelChorusConfig = () => {
   const openAddModelModal = (type) => {
     setModelType(type);
     setNewModelProvider('OpenAI');
-    setNewModelName('gpt-4o');
+    setNewModelName('gpt-4.1-nano-2025-04-14');
     setNewModelTemperature(type === 'response' ? 0.7 : 0.2);
     setNewModelWeight(1);
     setShowAddModal(true);

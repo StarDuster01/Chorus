@@ -129,18 +129,106 @@ def get_datasets_handler(user_data):
     # Initialize ImageProcessor
     image_processor = ImageProcessor(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
     
+    # Process each dataset to update counts and previews
+    updated_datasets = []
     for dataset in datasets:
         # Update the dataset with document counts
         dataset["document_count"] = dataset.get("document_count", 0)
         
-        # Update image counts from ImageProcessor
+        # Update image counts and add image previews from ImageProcessor
         dataset_id = dataset["id"]
-        if dataset_id in image_processor.image_metadata:
-            dataset["image_count"] = len(image_processor.image_metadata[dataset_id])
-        else:
-            dataset["image_count"] = 0
+        image_count = 0
+        image_previews = []
+        
+        # First check if this dataset has a metadata file
+        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+        
+        # If metadata file exists, load and validate it
+        if os.path.exists(metadata_file):
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                # Filter to ensure we only count images that still exist on disk
+                valid_metadata = []
+                for img_meta in metadata:
+                    # Ensure dataset_id is correct
+                    if not img_meta.get('dataset_id'):
+                        img_meta['dataset_id'] = dataset_id
+                    
+                    # Only include images for this dataset where the file still exists
+                    if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
+                        if os.path.exists(img_meta['path']):
+                            valid_metadata.append(img_meta)
+                
+                # Update processor's metadata to remove any non-existent images
+                image_processor.image_metadata[dataset_id] = valid_metadata
+                image_count = len(valid_metadata)
+                
+                # Add image previews (up to 4 images)
+                preview_count = 0
+                for img_meta in valid_metadata:
+                    if preview_count >= 4:  # Limit to 4 preview images
+                        break
+                    
+                    if 'path' in img_meta and os.path.exists(img_meta['path']):
+                        # Extract just the filename from the path
+                        filename = os.path.basename(img_meta["path"])
+                        # Create preview info with URL
+                        preview_info = {
+                            "id": img_meta.get("id", ""),
+                            "url": f"/images/{filename}",
+                            "caption": img_meta.get("caption", "")
+                        }
+                        image_previews.append(preview_info)
+                        preview_count += 1
+                
+                # Save the updated metadata back to disk
+                try:
+                    with open(metadata_file, 'w') as f:
+                        json.dump(valid_metadata, f)
+                except Exception as e:
+                    print(f"Error saving updated metadata for dataset {dataset_id}: {str(e)}")
+                    
+            except Exception as e:
+                print(f"Error processing metadata for dataset {dataset_id}: {str(e)}")
+                # Fall back to in-memory metadata if available
+                if dataset_id in image_processor.image_metadata:
+                    valid_metadata = []
+                    for img_meta in image_processor.image_metadata[dataset_id]:
+                        if 'path' in img_meta and os.path.exists(img_meta['path']):
+                            valid_metadata.append(img_meta)
+                    
+                    image_processor.image_metadata[dataset_id] = valid_metadata
+                    image_count = len(valid_metadata)
+                    
+                    # Add image previews (up to 4 images)
+                    preview_count = 0
+                    for img_meta in valid_metadata:
+                        if preview_count >= 4:
+                            break
+                        
+                        if 'path' in img_meta:
+                            filename = os.path.basename(img_meta["path"])
+                            preview_info = {
+                                "id": img_meta.get("id", ""),
+                                "url": f"/images/{filename}",
+                                "caption": img_meta.get("caption", "")
+                            }
+                            image_previews.append(preview_info)
+                            preview_count += 1
+        
+        # Update dataset with accurate image count and previews
+        dataset["image_count"] = image_count
+        dataset["image_previews"] = image_previews
+        updated_datasets.append(dataset)
     
-    return jsonify(datasets), 200
+    # Save updated datasets back to file
+    with open(user_datasets_file, 'w') as f:
+        json.dump(updated_datasets, f)
+    
+    return jsonify(updated_datasets), 200
 
 def create_dataset_handler(user_data):
     """Create a new dataset
@@ -239,39 +327,129 @@ def delete_dataset_handler(user_data, dataset_id):
     # Save updated datasets list
     with open(user_datasets_file, 'w') as f:
         json.dump(datasets, f)
+
+    # Document and file cleanup
+    DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
+    IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
+    document_files_deleted = 0
+    image_files_deleted = 0
     
-    # Delete documents from disk
+    # First try to get document file paths from ChromaDB
+    try:
+        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
+        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model_name="text-embedding-ada-002"
+        )
+        
+        # Get the collection for this dataset
+        try:
+            collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+            # Get all metadata from collection
+            results = collection.get()
+            
+            # Extract file paths from metadata and delete files
+            if results and results['metadatas'] and len(results['metadatas']) > 0:
+                unique_file_paths = set()
+                for metadata in results['metadatas']:
+                    if metadata and 'file_path' in metadata and metadata['file_path']:
+                        unique_file_paths.add(metadata['file_path'])
+                
+                # Delete all document files
+                for file_path in unique_file_paths:
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            document_files_deleted += 1
+                            print(f"Deleted document file: {file_path}")
+                    except Exception as e:
+                        print(f"Error deleting document file {file_path}: {str(e)}")
+            
+            # Now delete the collection itself
+            chroma_client.delete_collection(name=dataset_id)
+            print(f"Deleted ChromaDB collection for dataset {dataset_id}")
+            
+        except Exception as e:
+            print(f"Error accessing ChromaDB collection: {str(e)}")
+            # Try to delete the collection anyway
+            try:
+                chroma_client.delete_collection(name=dataset_id)
+                print(f"Deleted ChromaDB collection for dataset {dataset_id}")
+            except Exception as e2:
+                print(f"Error deleting ChromaDB collection: {str(e2)}")
+    except Exception as e:
+        print(f"Error connecting to ChromaDB: {str(e)}")
+    
+    # Clean up image dataset resources (FAISS index and metadata)
+    indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+    index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+    metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+    
+    # Delete image files referenced in metadata file
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file, 'r') as f:
+                image_metadata = json.load(f)
+                
+            # Delete all image files referenced in metadata
+            for img_meta in image_metadata:
+                if 'path' in img_meta and os.path.exists(img_meta['path']):
+                    try:
+                        os.remove(img_meta['path'])
+                        image_files_deleted += 1
+                        print(f"Deleted image file: {img_meta['path']}")
+                    except Exception as e:
+                        print(f"Error deleting image file: {str(e)}")
+            
+            # Now delete the metadata file itself
+            os.remove(metadata_file)
+            print(f"Deleted image metadata file for dataset {dataset_id}")
+        except Exception as e:
+            print(f"Error processing image metadata: {str(e)}")
+    
+    # Delete FAISS index file if it exists
+    if os.path.exists(index_path):
+        try:
+            os.remove(index_path)
+            print(f"Deleted FAISS index for dataset {dataset_id}")
+        except Exception as e:
+            print(f"Error deleting FAISS index: {str(e)}")
+    
+    # Try to remove the dataset from image processor memory
+    try:
+        from app import image_processor
+        if hasattr(image_processor, 'image_indices') and dataset_id in image_processor.image_indices:
+            del image_processor.image_indices[dataset_id]
+            print(f"Removed dataset {dataset_id} from image processor indices")
+        
+        if hasattr(image_processor, 'image_metadata') and dataset_id in image_processor.image_metadata:
+            del image_processor.image_metadata[dataset_id]
+            print(f"Removed dataset {dataset_id} from image processor metadata")
+    except Exception as e:
+        print(f"Error cleaning up image processor resources: {str(e)}")
+    
+    # Legacy cleanup for older datasets that might still use the documents array
     if dataset_to_delete and dataset_to_delete.get("documents"):
-        DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
         for doc in dataset_to_delete["documents"]:
             doc_path = os.path.join(DOCUMENT_FOLDER, doc["filename"])
             try:
                 if os.path.exists(doc_path):
                     os.remove(doc_path)
+                    document_files_deleted += 1
             except Exception as e:
-                print(f"Error deleting document {doc['filename']}: {str(e)}")
+                print(f"Error deleting legacy document {doc['filename']}: {str(e)}")
     
-    # Delete images from disk
+    # Legacy cleanup for older datasets that might still use the images array
     if dataset_to_delete and dataset_to_delete.get("images"):
-        IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
         for img in dataset_to_delete["images"]:
             img_path = os.path.join(IMAGE_FOLDER, img["filename"])
             try:
                 if os.path.exists(img_path):
                     os.remove(img_path)
+                    image_files_deleted += 1
             except Exception as e:
-                print(f"Error deleting image {img['filename']}: {str(e)}")
-    
-    # Delete ChromaDB collection
-    try:
-        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        try:
-            chroma_client.delete_collection(name=dataset_id)
-        except Exception as e:
-            print(f"Error deleting ChromaDB collection: {str(e)}")
-    except Exception as e:
-        print(f"Error connecting to ChromaDB: {str(e)}")
+                print(f"Error deleting legacy image {img['filename']}: {str(e)}")
     
     # Also remove the dataset from any bots that use it
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
@@ -295,6 +473,7 @@ def delete_dataset_handler(user_data, dataset_id):
                 except Exception as e:
                     print(f"Error updating bots file {filename}: {str(e)}")
     
+    print(f"Deleted dataset {dataset_id} with {document_files_deleted} document files and {image_files_deleted} image files")
     return jsonify({"message": "Dataset deleted successfully"}), 200
 
 def get_dataset_type_handler(user_data, dataset_id):
@@ -390,10 +569,30 @@ def remove_document_handler(user_data, dataset_id, document_id):
         # Get number of chunks to remove for updating chunk count
         num_chunks_to_remove = len(results['ids'])
         
+        # Get file paths from metadata before deleting
+        file_paths = set()
+        if results and results['metadatas'] and len(results['metadatas']) > 0:
+            for metadata in results['metadatas']:
+                if 'file_path' in metadata and metadata['file_path']:
+                    file_paths.add(metadata['file_path'])
+
         # Delete the chunks from ChromaDB
         collection.delete(
             ids=results['ids']
         )
+        
+        # Now delete the document files from disk
+        deleted_files = []
+        for file_path in file_paths:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    deleted_files.append(file_path)
+                    print(f"Removed document file: {file_path}")
+            except Exception as e:
+                print(f"Error deleting file {file_path}: {str(e)}")
+
+        print(f"Removed {len(deleted_files)} document files")
         
         # Update document count and chunk count in dataset
         if datasets[dataset_index]["document_count"] > 0:
@@ -410,7 +609,8 @@ def remove_document_handler(user_data, dataset_id, document_id):
             
         return jsonify({
             "message": "Document removed successfully",
-            "chunks_removed": num_chunks_to_remove
+            "chunks_removed": num_chunks_to_remove,
+            "files_removed": len(deleted_files)
         }), 200
     
     except Exception as e:
@@ -583,7 +783,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
         "dataset_id": dataset_id,
         "original_filename": filename,
         "path": image_path,
-        "url": f"/api/images/{os.path.basename(image_path)}",
+        "url": f"/images/{new_filename}",  # Use just the filename for the URL
         "type": "image",
         "created_at": datetime.datetime.now(UTC).isoformat()
     }
@@ -608,37 +808,17 @@ def upload_image_handler(user_data, dataset_id, image_folder):
         # Add image to dataset in image processor
         image_metadata = image_processor.add_image_to_dataset(dataset_id, image_path, custom_metadata)
         
-        # Let's double check that the image was added to the image processor
-        if dataset_id in image_processor.image_metadata:
-            is_indexed = False
-            for img in image_processor.image_metadata[dataset_id]:
-                if img.get('id') == image_metadata['id']:
-                    is_indexed = True
-                    break
-            
-            if not is_indexed:
-                print(f"Warning: Image not found in image_processor metadata after add_image_to_dataset call")
-                # Add it manually if the processor didn't do it
-                if image_metadata not in image_processor.image_metadata[dataset_id]:
-                    image_processor.image_metadata[dataset_id].append(image_metadata)
-        else:
-            print(f"Warning: Dataset ID {dataset_id} not in image_processor metadata after adding")
-            # Initialize the dataset in the processor
-            image_processor.image_metadata[dataset_id] = [image_metadata]
-            
-        # Generate URL for the image
-        image_url = f"/api/images/{os.path.basename(image_path)}"
-        
         # Update image count in dataset
-        current_count = datasets[dataset_index].get("image_count", 0)
-        datasets[dataset_index]["image_count"] = current_count + 1
-        print(f"Updated image count for dataset {dataset_id} from {current_count} to {current_count + 1}")
+        if "image_count" not in datasets[dataset_index]:
+            datasets[dataset_index]["image_count"] = 0
+        datasets[dataset_index]["image_count"] += 1
         
+        # Save updated dataset
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
         
-        # Also save the metadata file directly to ensure it persists
-        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "indices")
+        # Save the metadata file
+        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
         os.makedirs(indices_dir, exist_ok=True)
         metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
         
@@ -666,8 +846,8 @@ def upload_image_handler(user_data, dataset_id, image_folder):
             "message": "Image uploaded and processed successfully",
             "image": {
                 "id": image_metadata["id"],
-                "filename": os.path.basename(image_path),
-                "url": image_url,
+                "filename": new_filename,
+                "url": f"/images/{new_filename}",
                 "caption": image_metadata.get("caption", ""),
                 "description": custom_metadata.get("description", ""),
                 "tags": custom_metadata.get("tags", [])

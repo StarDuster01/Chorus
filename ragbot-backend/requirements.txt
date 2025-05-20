@@ -14,6 +14,7 @@ werkzeug
 requests
 Pillow
 torch
+tesseract
 transformers
 open_clip_torch
 ftfy
