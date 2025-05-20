@@ -10,16 +10,15 @@ A powerful Retrieval-Augmented Generation (RAG) chatbot platform that allows you
 - **Visual Analysis**: Upload and analyze images in conversations
 - **Multiple LLM Support**: Integration with OpenAI, Anthropic Claude, and Groq
 - **Conversation Management**: Save and manage conversations with your bots
-- **Image Generation**: Create images with OpenAI's DALL-E model
+- **Image Generation**: Create images with OpenAI's gpt-image-1 model
 - **Advanced RAG Pipeline**: Optimized document chunking and retrieval
 
 ## Prerequisites
 
-- Python 3.8+
-- Node.js and npm (for frontend)
-- OpenAI, Anthropic, and/or Groq API keys
+- Docker Desktop installed on your system
+- OpenAI, Anthropic, and/or Groq API keysq
 
-## Installation
+## Quick Start with Docker
 
 1. Clone this repository:
    ```
@@ -27,30 +26,7 @@ A powerful Retrieval-Augmented Generation (RAG) chatbot platform that allows you
    cd RagBot
    ```
 
-2. Set up the backend:
-   ```
-   cd ragbot-backend
-   
-   # Create virtual environment inside the backend directory
-   python -m venv venv
-   
-   # On Windows
-   venv\Scripts\activate
-   
-   # On macOS/Linux
-   source venv/bin/activate
-   
-   # Install required packages using the existing requirements.txt
-   pip install -r requirements.txt
-   ```
-
-3. Set up the frontend:
-   ```
-   cd ../ragbot-frontend
-   npm install
-   ```
-
-4. Create a `.env` file in the ragbot-backend directory with your API keys:
+2. Create a `.env` file in the ragbot-backend directory with your API keys:
    ```
    OPENAI_API_KEY=your_openai_key_here
    ANTHROPIC_API_KEY=your_anthropic_key_here
@@ -58,53 +34,42 @@ A powerful Retrieval-Augmented Generation (RAG) chatbot platform that allows you
    JWT_SECRET=choose_a_secure_random_string
    ```
 
+3. Start the application using Docker Compose:
+   ```
+   docker-compose up --build
+   ```
+
+4. Access the application:
+   - Frontend: http://localhost
+   - Backend API: http://localhost:50505
+
 ## Project Structure
 
 - `ragbot-backend/`: Contains the Flask backend application
-  - `app.py`: Main application file
+  - `Dockerfile`: Backend container configuration
   - `uploads/`: Directory where uploaded documents and images are stored
   - `chroma_db/`: Vector database storage
   - `datasets/`, `bots/`, `chorus/`, `conversations/`: Configuration and data storage
-  - `requirements.txt`: Python dependencies
-  - `venv/`: Virtual environment (to be created during installation)
 - `ragbot-frontend/`: Contains the React frontend application
-- `start_ragbot.bat`: Windows batch script to start both backend and frontend
+  - `Dockerfile`: Frontend container configuration
+  - `nginx.conf`: Nginx configuration for serving the frontend
+- `docker-compose.yml`: Orchestrates the frontend and backend containers
 
-## Running the Application
+## Docker Configuration
 
-### Method 1: Using the Startup Script (Windows)
+The application uses two containers:
 
-For Windows users, simply run the included batch script:
-```
-start_ragbot.bat
-```
+1. **Backend Container**:
+   - Runs on port 50505
+   - Uses Python 3.11
+   - Includes all necessary dependencies for document processing
+   - Optimized for performance with 2 workers
 
-This script will:
-1. Determine your local IP address
-2. Start the backend server on port 5000
-3. Start the frontend server on port 3000
-4. Display URLs that can be used to access the application, including from other devices on your network
-
-### Method 2: Manual Startup
-
-1. Start the backend server:
-   ```
-   cd ragbot-backend
-   venv\Scripts\activate  # On Windows
-   # OR
-   source venv/bin/activate  # On macOS/Linux
-   python app.py
-   ```
-   The API server will run on http://localhost:5000
-
-2. Start the frontend server (in a new terminal):
-   ```
-   cd ragbot-frontend
-   npm start
-   ```
-   The frontend will run on http://localhost:3000
-
-3. Access the application in your web browser at http://localhost:3000
+2. **Frontend Container**:
+   - Runs on port 80
+   - Serves the React application
+   - Uses Nginx for static file serving
+   - Proxies API requests to the backend
 
 ## Usage
 
@@ -152,7 +117,10 @@ The backend is built with Flask and uses:
 - JWT for authentication
 - Various libraries for document processing
 
-The frontend is built with React.
+The frontend is built with React and uses:
+- Bootstrap for styling
+- Axios for API communication
+- React Router for navigation
 
 ## License
 

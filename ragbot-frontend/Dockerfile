@@ -9,8 +9,8 @@ RUN npm ci
 # Copy source files
 COPY . .
 
-# Update the proxy setting in package.json to point to the backend
-RUN sed -i 's|"proxy": "http://192.168.17.64:5000"|"proxy": "http://backend:50505"|g' package.json
+# Update the API URL to point to the backend service
+ENV REACT_APP_API_URL=http://localhost:50505/api
 
 # Build the application
 RUN npm run build

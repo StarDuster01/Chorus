@@ -61,4 +61,5 @@ htmlcov/
 # Data and generated content
 ragbot-backend/datasets/
 ragbot-backend/uploads/images/
+ragbot-backend/conversations/
 
