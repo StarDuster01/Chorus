@@ -50,7 +50,7 @@ const ImageGeneration = () => {
       if (result.images && result.images.length > 0) {
         const imageData = result.images[0];
         // Make sure the default URL and API_URL are consistent
-        const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:50505/api';
+        const baseUrl = process.env.REACT_APP_API_URL || '/api';
         // Remove any duplicate /api prefixes if present
         const imageUrl = imageData.image_url.startsWith('/api/') 
           ? imageData.image_url 
@@ -108,7 +108,7 @@ const ImageGeneration = () => {
       
       if (result.image_url) {
         // Make sure the default URL and API_URL are consistent
-        const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:50505/api';
+        const baseUrl = process.env.REACT_APP_API_URL || '/api';
         // Remove any duplicate /api prefixes if present
         const imageUrl = result.image_url.startsWith('/api/') 
           ? result.image_url 

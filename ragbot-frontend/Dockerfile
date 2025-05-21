@@ -9,8 +9,8 @@ RUN npm ci
 # Copy source files
 COPY . .
 
-# Update the API URL to point to the backend service
-ENV REACT_APP_API_URL=http://localhost:50505/api
+# Set the API URL to use a relative path - this inherits the protocol (https://)
+ENV REACT_APP_API_URL=/api
 
 # Build the application
 RUN npm run build

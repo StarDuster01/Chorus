@@ -658,7 +658,7 @@ const DatasetPanel = () => {
                       <Card className="h-100 border-0 shadow-sm image-card">
                         <div className="image-container" style={{ height: '160px', overflow: 'hidden' }}>
                           <img 
-                            src={`${process.env.REACT_APP_API_URL || 'http://localhost:50505'}${img.url}`} 
+                            src={`${process.env.REACT_APP_API_URL || '/api'}${img.url}`} 
                             alt={img.caption || 'Dataset image'} 
                             className="card-img-top" 
                             style={{ objectFit: 'cover', width: '100%', height: '100%' }}
@@ -676,7 +676,7 @@ const DatasetPanel = () => {
                             <Button 
                               variant="outline-secondary" 
                               size="sm"
-                              onClick={() => window.open(`${process.env.REACT_APP_API_URL || 'http://localhost:50505'}${img.url}`, '_blank')}
+                              onClick={() => window.open(`${process.env.REACT_APP_API_URL || '/api'}${img.url}`, '_blank')}
                               className="rounded-pill"
                             >
                               <FaImage className="me-1" /> View
@@ -781,7 +781,7 @@ const DatasetPanel = () => {
                                   {dataset.image_previews.map((img, index) => (
                                     <div key={img.id || index} className="me-2 mb-2" style={{ maxWidth: '80px' }}>
                                       <img 
-                                        src={`${process.env.REACT_APP_API_URL || 'http://localhost:50505'}${img.url}`} 
+                                        src={`${process.env.REACT_APP_API_URL || '/api'}${img.url}`} 
                                         alt={img.caption || 'Dataset image'} 
                                         className="img-thumbnail" 
                                         style={{ width: '100%', height: '60px', objectFit: 'cover' }}
@@ -892,7 +892,7 @@ const DatasetPanel = () => {
             <div className="my-3 p-3 bg-light rounded">
               <div className="d-flex align-items-center">
                 <img 
-                  src={`${process.env.REACT_APP_API_URL || 'http://localhost:50505'}${imageToDelete.url}`} 
+                  src={`${process.env.REACT_APP_API_URL || '/api'}${imageToDelete.url}`} 
                   alt={imageToDelete.caption || 'Dataset image'} 
                   className="img-thumbnail" 
                   style={{ width: '80px', height: '60px', objectFit: 'cover' }}

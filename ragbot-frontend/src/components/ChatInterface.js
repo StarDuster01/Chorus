@@ -562,7 +562,7 @@ const ChatInterface = () => {
       });
       
       if (result.image_url) {
-        const fullUrl = `${process.env.REACT_APP_API_URL || 'http://localhost:50505'}${result.image_url}`;
+        const fullUrl = `${process.env.REACT_APP_API_URL || '/api'}${result.image_url}`;
         setGeneratedImage(fullUrl);
         
         // Add bot response with the generated image
@@ -1449,8 +1449,8 @@ const ChatInterface = () => {
                               if (debugMode) {
                                 // Display API details in console for debugging
                                 console.log('Debug info for enhance prompt:');
-                                console.log('Primary API URL:', `${process.env.REACT_APP_API_URL || 'http://localhost:50505'}/api/bots/enhance-prompt`);
-                                console.log('Fallback API URL:', `${process.env.REACT_APP_API_URL || 'http://localhost:50505'}/api/bots/[botId]/chat`);
+                                console.log('Primary API URL:', `${process.env.REACT_APP_API_URL || '/api'}/api/bots/enhance-prompt`);
+                                console.log('Fallback API URL:', `${process.env.REACT_APP_API_URL || '/api'}/api/bots/[botId]/chat`);
                                 console.log('Current message:', message);
                                 alert('Check console for API debugging info');
                               }

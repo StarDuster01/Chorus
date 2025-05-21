@@ -57,7 +57,7 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
-
+ragbot-frontend/update_deploy_README.txt
 # Data and generated content
 ragbot-backend/datasets/
 ragbot-backend/uploads/images/
@@ -69,4 +69,5 @@ ragbot-backend/logs
 ragbot-backend/datasets
 ragbot-backend/chroma_db
 ragbot-backend/chorus
+ragbot-frontend/build
 

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:50505/api';
+const API_URL = process.env.REACT_APP_API_URL;
 
 // Helper function to get auth header
 const getAuthHeader = () => {
