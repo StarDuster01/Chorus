@@ -63,4 +63,10 @@ ragbot-backend/datasets/
 ragbot-backend/uploads/images/
 ragbot-backend/conversations/
 ragbot-backend/chroma_db/
+ragbot-backend/uploads/
+ragbot-backend/bots
+ragbot-backend/logs
+ragbot-backend/datasets
+ragbot-backend/chroma_db
+ragbot-backend/chorus
 

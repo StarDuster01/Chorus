@@ -22,7 +22,7 @@ A powerful Retrieval-Augmented Generation (RAG) chatbot platform that allows you
 
 1. Clone this repository:
    ```
-   git clone <repository-url>
+   git clone https://github.com/StarDuster01/RagBot.git
    cd RagBot
    ```
 

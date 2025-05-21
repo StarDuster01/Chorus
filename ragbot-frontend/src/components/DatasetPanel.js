@@ -43,8 +43,6 @@ const DatasetPanel = () => {
         switch(datasetType) {
           case 'text':
             return '.pdf,.txt,.docx,.pptx';
-          case 'image':
-            return '.jpg,.jpeg,.png,.gif,.webp,.bmp';
           case 'mixed':
           default:
             return '.pdf,.txt,.docx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp';
@@ -58,8 +56,6 @@ const DatasetPanel = () => {
         switch(datasetType) {
           case 'text':
             return 'Supported formats: PDF, TXT, DOCX, PPTX';
-          case 'image':
-            return 'Supported formats: JPG, JPEG, PNG, GIF, WEBP, BMP';
           case 'mixed':
           default:
             return 'Supported formats: PDF, TXT, DOCX, PPTX, JPG, JPEG, PNG, GIF, WEBP, BMP';
@@ -367,11 +363,9 @@ const DatasetPanel = () => {
                     >
                       <option value="mixed">Mixed (Documents & Images)</option>
                       <option value="text">Text Only (Documents)</option>
-                      <option value="image">Images Only</option>
                     </Form.Select>
                     <Form.Text className="text-muted">
                       {newDataset.type === 'text' ? 'Only document files will be accepted (PDF, DOCX, etc.)' :
-                       newDataset.type === 'image' ? 'Only image files will be accepted (JPG, PNG, etc.)' :
                        'Both document and image files will be accepted'}
                     </Form.Text>
                   </Form.Group>
@@ -397,7 +391,6 @@ const DatasetPanel = () => {
               {selectedDataset.type && (
                 <Badge bg="light" text="dark" className="ms-2">
                   {selectedDataset.type === 'text' ? 'Text Only' : 
-                   selectedDataset.type === 'image' ? 'Images Only' : 
                    'Mixed Content'}
                 </Badge>
               )}

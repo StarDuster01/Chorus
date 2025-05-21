@@ -1280,6 +1280,72 @@ const ChatInterface = () => {
                         </Dropdown.Item>
                       </Dropdown.Menu>
                     </Dropdown>
+                    
+                    {/* Dataset dropdown moved here from bottom */}
+                    <Dropdown className="d-inline-block me-2 position-relative" show={showDatasetsDropdown} onToggle={setShowDatasetsDropdown}>
+                      <Dropdown.Toggle
+                        variant="outline-primary"
+                        size="sm"
+                        id="dropdown-datasets"
+                        title="Select datasets for this bot"
+                      >
+                        <FaDatabase className="me-1" />
+                        Datasets
+                        {botDatasets && botDatasets.length > 0 && (
+                          <Badge 
+                            bg="primary" 
+                            pill 
+                            className="ms-1"
+                          >
+                            {botDatasets.length}
+                          </Badge>
+                        )}
+                      </Dropdown.Toggle>
+                      <Dropdown.Menu>
+                        <Dropdown.Header>Current Datasets</Dropdown.Header>
+                        {botDatasets && botDatasets.map((dataset) => (
+                          <Dropdown.Item key={dataset.id} className="d-flex justify-content-between align-items-center">
+                            <span>
+                              {dataset.name}
+                              {dataset.missing && <Badge bg="danger" className="ms-1">Missing</Badge>}
+                            </span>
+                            {botDatasets.length > 1 && (
+                              <Button
+                                size="sm"
+                                variant="outline-danger"
+                                className="btn-sm py-0 px-1"
+                                onClick={() => handleRemoveDataset(dataset.id)}
+                                disabled={loading}
+                              >
+                                <FaTimes />
+                              </Button>
+                            )}
+                          </Dropdown.Item>
+                        ))}
+                        <Dropdown.Divider />
+                        <Dropdown.Header>Add Dataset</Dropdown.Header>
+                        {loadingDatasets ? (
+                          <div className="text-center p-2">
+                            <Spinner animation="border" size="sm" />
+                          </div>
+                        ) : (
+                          availableDatasets && availableDatasets
+                            .filter(dataset => !botDatasets.some(bd => bd.id === dataset.id))
+                            .map((dataset) => (
+                              <Dropdown.Item 
+                                key={dataset.id} 
+                                onClick={() => handleSelectDataset(dataset.id)}
+                                disabled={loading}
+                              >
+                                <FaPlus className="me-1" /> {dataset.name}
+                              </Dropdown.Item>
+                            ))
+                        )}
+                        {availableDatasets && availableDatasets.length === botDatasets.length && (
+                          <Dropdown.Item disabled>No more datasets available</Dropdown.Item>
+                        )}
+                      </Dropdown.Menu>
+                    </Dropdown>
                   </div>
                   <div>
                     <Button
@@ -1536,81 +1602,6 @@ const ChatInterface = () => {
           </Modal.Footer>
         </Modal>
       )}
-
-      {/* Dataset dropdown */}
-      <div className="d-flex align-items-center ms-2">
-        <OverlayTrigger
-          placement="top"
-          overlay={<Tooltip id="dataset-tooltip">Switch dataset</Tooltip>}
-        >
-          <Dropdown show={showDatasetsDropdown} onToggle={setShowDatasetsDropdown}>
-            <Dropdown.Toggle
-              variant="light"
-              size="sm"
-              className="rounded-pill"
-            >
-              <FaDatabase className="me-1" />
-              <span className="d-none d-md-inline">Datasets</span>
-              {botDatasets && botDatasets.length > 0 && (
-                <Badge 
-                  bg="primary" 
-                  pill 
-                  className="ms-1"
-                >
-                  {botDatasets.length}
-                </Badge>
-              )}
-            </Dropdown.Toggle>
-            <Dropdown.Menu>
-              <Dropdown.Header>Current Datasets</Dropdown.Header>
-              {botDatasets && botDatasets.map((dataset) => (
-                <Dropdown.Item key={dataset.id} className="d-flex justify-content-between align-items-center">
-                  <span>
-                    {dataset.name}
-                    {dataset.missing && <Badge bg="danger" className="ms-1">Missing</Badge>}
-                  </span>
-                  {botDatasets.length > 1 && (
-                    <Button
-                      size="sm"
-                      variant="outline-danger"
-                      className="btn-sm py-0 px-1"
-                      onClick={() => handleRemoveDataset(dataset.id)}
-                      disabled={loading}
-                    >
-                      <FaTimes />
-                    </Button>
-                  )}
-                </Dropdown.Item>
-              ))}
-              <Dropdown.Divider />
-              <Dropdown.Header>Add Dataset</Dropdown.Header>
-              {loadingDatasets ? (
-                <div className="text-center p-2">
-                  <Spinner animation="border" size="sm" />
-                </div>
-              ) : (
-                availableDatasets && availableDatasets
-                  .filter(dataset => !botDatasets.some(bd => bd.id === dataset.id))
-                  .map((dataset) => (
-                    <Dropdown.Item 
-                      key={dataset.id} 
-                      onClick={() => handleSelectDataset(dataset.id)}
-                      disabled={loading}
-                    >
-                      <FaPlus className="me-1" /> {dataset.name}
-                    </Dropdown.Item>
-                  ))
-              )}
-              {availableDatasets && 
-                availableDatasets.filter(dataset => !botDatasets.some(bd => bd.id === dataset.id)).length === 0 && (
-                <div className="text-center text-muted p-2">
-                  <small>No additional datasets available</small>
-                </div>
-              )}
-            </Dropdown.Menu>
-          </Dropdown>
-        </OverlayTrigger>
-      </div>
     </Container>
   );
 };
