@@ -31,6 +31,9 @@ const DatasetPanel = () => {
   const [showConfirmImageDelete, setShowConfirmImageDelete] = useState(false);
   const [acceptedFileTypes, setAcceptedFileTypes] = useState('.pdf,.txt,.docx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp');
   const [fileTypeDescription, setFileTypeDescription] = useState('Supported formats: PDF, TXT, DOCX, PPTX, JPG, JPEG, PNG, GIF, WEBP, BMP');
+  const [bulkUploadMode, setBulkUploadMode] = useState(false);
+  const [bulkZipFile, setBulkZipFile] = useState(null);
+  const [bulkResult, setBulkResult] = useState(null);
 
   useEffect(() => {
     loadDatasets();
@@ -103,6 +106,10 @@ const DatasetPanel = () => {
     setFile(e.target.files[0]);
   };
 
+  const handleBulkZipChange = (e) => {
+    setBulkZipFile(e.target.files[0]);
+  };
+
   const handleUploadDocument = async (e) => {
     e.preventDefault();
     if (!file) {
@@ -131,6 +138,43 @@ const DatasetPanel = () => {
       setLoading(false);
     } catch (err) {
       setError(`Failed to upload ${file.name}`);
+      setLoading(false);
+    }
+  };
+
+  const handleBulkUpload = async (e) => {
+    e.preventDefault();
+    if (!bulkZipFile) {
+      setError('Please select a zip file to upload');
+      return;
+    }
+    setLoading(true);
+    setBulkResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', bulkZipFile);
+      const response = await fetch(`/api/datasets/${selectedDataset.id}/bulk-upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setError(result.error || 'Bulk upload failed');
+        setLoading(false);
+        return;
+      }
+      setBulkResult(result);
+      setSuccess('Bulk upload completed');
+      setTimeout(() => setSuccess(null), 3000);
+      setLoading(false);
+      // Refresh datasets
+      loadDatasets();
+      setBulkZipFile(null);
+    } catch (err) {
+      setError('Bulk upload failed');
       setLoading(false);
     }
   };
@@ -390,58 +434,135 @@ const DatasetPanel = () => {
               Upload to {selectedDataset.name}
               {selectedDataset.type && (
                 <Badge bg="light" text="dark" className="ms-2">
-                  {selectedDataset.type === 'text' ? 'Text Only' : 
-                   'Mixed Content'}
+                  {selectedDataset.type === 'text' ? 'Text Only' : 'Mixed Content'}
                 </Badge>
               )}
             </Card.Title>
-            <Form onSubmit={handleUploadDocument}>
-              <Form.Group className="mb-4">
-                <Form.Label>Select File</Form.Label>
-                <div className="custom-file-upload">
+            <div className="mb-3 d-flex gap-2">
+              <Button
+                variant={!bulkUploadMode ? 'primary' : 'outline-primary'}
+                onClick={() => setBulkUploadMode(false)}
+                className="rounded-pill"
+              >
+                Single File Upload
+              </Button>
+              <Button
+                variant={bulkUploadMode ? 'primary' : 'outline-primary'}
+                onClick={() => setBulkUploadMode(true)}
+                className="rounded-pill"
+              >
+                Bulk Upload Zip
+              </Button>
+            </div>
+            {!bulkUploadMode ? (
+              <Form onSubmit={handleUploadDocument}>
+                <Form.Group className="mb-4">
+                  <Form.Label>Select File</Form.Label>
+                  <div className="custom-file-upload">
+                    <Form.Control
+                      type="file"
+                      onChange={handleFileChange}
+                      required
+                      accept={acceptedFileTypes}
+                      className="rounded-pill"
+                    />
+                    {file && (
+                      <div className="selected-file mt-2">
+                        <Card className="p-2 border-0 bg-light">
+                          <div className="d-flex align-items-center">
+                            {getFileIcon(file.name)}
+                            <div className="ms-2">
+                              <strong>{file.name}</strong>
+                              <div className="text-muted small">{(file.size / 1024).toFixed(2)} KB</div>
+                            </div>
+                          </div>
+                        </Card>
+                      </div>
+                    )}
+                  </div>
+                  <Form.Text className="text-muted">
+                    {fileTypeDescription}
+                  </Form.Text>
+                </Form.Group>
+                <div className="d-flex">
+                  <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
+                    {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Upload'}
+                  </Button>
+                  <Button 
+                    variant="outline-secondary" 
+                    onClick={() => {
+                      setUploadMode(false);
+                      setSelectedDataset(null);
+                    }} 
+                    disabled={loading}
+                    className="rounded-pill"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </Form>
+            ) : (
+              <Form onSubmit={handleBulkUpload}>
+                <Form.Group className="mb-4">
+                  <Form.Label>Select Zip File</Form.Label>
                   <Form.Control
                     type="file"
-                    onChange={handleFileChange}
+                    accept=".zip"
+                    onChange={handleBulkZipChange}
                     required
-                    accept={acceptedFileTypes}
                     className="rounded-pill"
                   />
-                  {file && (
-                    <div className="selected-file mt-2">
-                      <Card className="p-2 border-0 bg-light">
-                        <div className="d-flex align-items-center">
-                          {getFileIcon(file.name)}
-                          <div className="ms-2">
-                            <strong>{file.name}</strong>
-                            <div className="text-muted small">{(file.size / 1024).toFixed(2)} KB</div>
-                          </div>
-                        </div>
-                      </Card>
-                    </div>
-                  )}
+                  <Form.Text className="text-muted">
+                    Upload a .zip file containing documents and images. Supported: PDF, DOCX, TXT, PPTX, JPG, PNG, etc.
+                  </Form.Text>
+                </Form.Group>
+                <div className="d-flex">
+                  <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
+                    {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Bulk Upload'}
+                  </Button>
+                  <Button 
+                    variant="outline-secondary" 
+                    onClick={() => {
+                      setUploadMode(false);
+                      setSelectedDataset(null);
+                      setBulkUploadMode(false);
+                      setBulkZipFile(null);
+                      setBulkResult(null);
+                    }} 
+                    disabled={loading}
+                    className="rounded-pill"
+                  >
+                    Cancel
+                  </Button>
                 </div>
-                <Form.Text className="text-muted">
-                  {fileTypeDescription}
-                </Form.Text>
-              </Form.Group>
-
-              <div className="d-flex">
-                <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                  {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Upload'}
-                </Button>
-                <Button 
-                  variant="outline-secondary" 
-                  onClick={() => {
-                    setUploadMode(false);
-                    setSelectedDataset(null);
-                  }} 
-                  disabled={loading}
-                  className="rounded-pill"
-                >
-                  Cancel
-                </Button>
+              </Form>
+            )}
+            {bulkResult && (
+              <div className="mt-4">
+                <h5>Bulk Upload Summary</h5>
+                <div className="mb-2 text-success">{bulkResult.message}</div>
+                {bulkResult.successes && bulkResult.successes.length > 0 && (
+                  <div className="mb-2">
+                    <strong>Added:</strong>
+                    <ul>
+                      {bulkResult.successes.map((s, i) => (
+                        <li key={i}>{s.file} ({s.type}{s.chunks ? `, ${s.chunks} chunks` : ''})</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {bulkResult.errors && bulkResult.errors.length > 0 && (
+                  <div className="mb-2 text-danger">
+                    <strong>Errors:</strong>
+                    <ul>
+                      {bulkResult.errors.map((e, i) => (
+                        <li key={i}>{e.file}: {e.error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
-            </Form>
+            )}
           </Card.Body>
         </Card>
       )}

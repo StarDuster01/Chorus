@@ -11,6 +11,8 @@ from chromadb.utils import embedding_functions
 import faiss
 import numpy as np
 import io
+import zipfile
+import shutil
 
 from text_extractors import (
     extract_text_from_image,
@@ -862,5 +864,170 @@ def upload_image_handler(user_data, dataset_id, image_folder):
             except:
                 pass
         return jsonify({"error": f"Failed to process image: {str(e)}"}), 500
+
+def bulk_upload_handler(user_data, dataset_id):
+    """Bulk upload a zip file of documents/images to a dataset
+    Args:
+        user_data: User data from JWT token
+        dataset_id: ID of the dataset to upload to
+    Returns:
+        tuple: JSON response and status code
+    """
+    from app import image_processor
+    from image_handlers import resize_image
+    
+    # Check if dataset exists and belongs to user
+    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    if not os.path.exists(user_datasets_file):
+        return jsonify({"error": "Dataset not found"}), 404
+    with open(user_datasets_file, 'r') as f:
+        datasets = json.load(f)
+    dataset = next((d for d in datasets if d["id"] == dataset_id), None)
+    if not dataset:
+        return jsonify({"error": "Dataset not found"}), 404
+    dataset_type = dataset.get("type", "mixed")
+    # Only allow for mixed or text/image datasets
+    if dataset_type not in ["mixed", "text", "image"]:
+        return jsonify({"error": "Bulk upload only supported for mixed, text, or image datasets"}), 400
+    # Check for file in request
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    filename = secure_filename(file.filename)
+    file_ext = os.path.splitext(filename)[1].lower()
+    if file_ext != '.zip':
+        return jsonify({"error": "Only zip files are supported for bulk upload"}), 400
+    # Save zip to temp dir
+    temp_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(temp_dir, filename)
+    file.save(zip_path)
+    extract_dir = os.path.join(temp_dir, "extracted")
+    os.makedirs(extract_dir, exist_ok=True)
+    # Extract zip
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+    except Exception as e:
+        shutil.rmtree(temp_dir)
+        return jsonify({"error": f"Failed to extract zip: {str(e)}"}), 400
+    # Walk extracted files
+    successes = []
+    errors = []
+    text_exts = ['.pdf', '.docx', '.txt', '.pptx']
+    image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
+    DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
+    IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
+    os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
+    os.makedirs(IMAGE_FOLDER, exist_ok=True)
+    for root, dirs, files in os.walk(extract_dir):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            ext = os.path.splitext(fname)[1].lower()
+            try:
+                if ext in text_exts and dataset_type in ["mixed", "text"]:
+                    # Copy to DOCUMENT_FOLDER
+                    doc_id = str(uuid.uuid4())
+                    dest_name = f"{doc_id}_{secure_filename(fname)}"
+                    dest_path = os.path.join(DOCUMENT_FOLDER, dest_name)
+                    shutil.copy2(fpath, dest_path)
+                    # Use existing logic for document upload
+                    # Extract text
+                    if ext == '.pptx':
+                        text, pptx_image_metadata = extract_text_from_pptx(dest_path)
+                    else:
+                        text = extract_text_from_file(dest_path)
+                        pptx_image_metadata = []
+                    if not text:
+                        os.remove(dest_path)
+                        errors.append({"file": fname, "error": "Could not extract text"})
+                        continue
+                    # Chunking
+                    is_powerpoint = ext == '.pptx' or "## SLIDE " in text
+                    max_chunk_size = 3000 if is_powerpoint else 1000
+                    overlap = 500 if is_powerpoint else 200
+                    chunks = create_semantic_chunks(text, max_chunk_size=max_chunk_size, overlap=overlap)
+                    # Add to ChromaDB
+                    try:
+                        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+                        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
+                        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+                            api_key=os.getenv("OPENAI_API_KEY"),
+                            model_name="text-embedding-ada-002"
+                        )
+                        collection = chroma_client.get_or_create_collection(
+                            name=dataset_id,
+                            embedding_function=openai_ef
+                        )
+                        chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
+                        metadatas = [{
+                            "document_id": doc_id,
+                            "dataset_id": dataset_id,
+                            "filename": fname,
+                            "source": fname,
+                            "file_path": dest_path,
+                            "chunk": i,
+                            "total_chunks": len(chunks),
+                            "file_type": ext,
+                            "is_powerpoint": is_powerpoint,
+                            "created_at": datetime.datetime.now(UTC).isoformat(),
+                        } for i in range(len(chunks))]
+                        collection.add(
+                            ids=chunk_ids,
+                            documents=chunks,
+                            metadatas=metadatas
+                        )
+                        successes.append({"file": fname, "type": "document", "chunks": len(chunks)})
+                    except Exception as e:
+                        errors.append({"file": fname, "error": f"ChromaDB error: {str(e)}"})
+                        continue
+                    # Add pptx images if any
+                    if pptx_image_metadata:
+                        for img_meta in pptx_image_metadata:
+                            img_meta["document_id"] = doc_id
+                            img_meta["file_path"] = dest_path
+                            img_meta["dataset_id"] = dataset_id
+                            img_meta["type"] = "image"
+                            img_filename = f"{uuid.uuid4()}.png"
+                            img_save_path = os.path.join(IMAGE_FOLDER, img_filename)
+                            shutil.copy(img_meta["image_path"], img_save_path)
+                            img_meta["path"] = img_save_path
+                            img_meta["url"] = f"/images/{img_filename}"
+                            image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
+                elif ext in image_exts and dataset_type in ["mixed", "image"]:
+                    # Copy to IMAGE_FOLDER
+                    img_id = str(uuid.uuid4())
+                    dest_name = f"{img_id}{ext}"
+                    dest_path = os.path.join(IMAGE_FOLDER, dest_name)
+                    shutil.copy2(fpath, dest_path)
+                    dest_path = resize_image(dest_path, max_dimension=1024)
+                    meta = {
+                        "id": img_id,
+                        "dataset_id": dataset_id,
+                        "original_filename": fname,
+                        "path": dest_path,
+                        "url": f"/images/{dest_name}",
+                        "type": "image",
+                        "created_at": datetime.datetime.now(UTC).isoformat(),
+                        "user_id": user_data['id'],
+                        "username": user_data['username']
+                    }
+                    image_processor.add_image_to_dataset(dataset_id, dest_path, meta)
+                    successes.append({"file": fname, "type": "image"})
+                else:
+                    errors.append({"file": fname, "error": "Unsupported file type for this dataset"})
+            except Exception as e:
+                errors.append({"file": fname, "error": str(e)})
+    # Clean up temp dir
+    shutil.rmtree(temp_dir)
+    # Update dataset counts
+    # (Optional: could re-count documents/images here)
+    return jsonify({
+        "successes": successes,
+        "errors": errors,
+        "message": f"Bulk upload complete: {len(successes)} files added, {len(errors)} errors."
+    }), 200
 
 # More handlers can be added here for specific dataset operations 

@@ -59,7 +59,8 @@ from dataset_handlers import (
     get_dataset_type_handler,
     remove_document_handler,
     rebuild_dataset_handler,
-    upload_image_handler
+    upload_image_handler,
+    bulk_upload_handler
 )
 # Import auth handlers
 from auth_handlers import (
@@ -110,6 +111,7 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # Initialize Flask app
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024  # 1000 MB upload limit
 CORS(app)
 
 # Configure OpenAI
@@ -232,7 +234,7 @@ def create_dataset(user_data):
         )
         chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
     except Exception as e:
-        print(f"Error creating ChromaDB collection: {str(e)}")
+        print(f"Error creating ChromaDB collection: {str(e)}", flush=True)
     
     return jsonify(new_dataset), 201
 
@@ -256,7 +258,7 @@ def upload_document(user_data, dataset_id):
     is_admin = user_data.get('isAdmin', False)
     
     # Print debug information
-    print(f"Dataset user_id: {dataset.get('user_id')}, Current user_id: {user_id}, isAdmin: {is_admin}")
+    print(f"Dataset user_id: {dataset.get('user_id')}, Current user_id: {user_id}, isAdmin: {is_admin}", flush=True)
     
     # Handle legacy datasets that might not have user_id
     # 1. If dataset has no user_id, assume it belongs to the current user
@@ -558,7 +560,7 @@ def dataset_status(user_data, dataset_id):
                                 document_ids.add(metadata["document_id"])
                         doc_count = len(document_ids)
                 except Exception as e:
-                    print(f"Error calculating document count: {str(e)}")
+                    print(f"Error calculating document count: {str(e)}", flush=True)
                     # Fallback to existing document count in dataset
                     doc_count = dataset.get("document_count", 0)
                     
@@ -624,12 +626,12 @@ def dataset_status(user_data, dataset_id):
                 try:
                     with open(metadata_file, 'w') as f:
                         json.dump(valid_metadata, f)
-                    print(f"Updated metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images")
+                    print(f"Updated metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images", flush=True)
                 except Exception as e:
-                    print(f"Error saving updated metadata: {str(e)}")
+                    print(f"Error saving updated metadata: {str(e)}", flush=True)
                 
             except Exception as e:
-                print(f"Error validating image metadata: {str(e)}")
+                print(f"Error validating image metadata: {str(e)}", flush=True)
         elif dataset_id in image_processor.image_metadata:
             # If no metadata file but we have metadata in memory, validate it
             valid_metadata = []
@@ -661,9 +663,9 @@ def dataset_status(user_data, dataset_id):
                 os.makedirs(indices_dir, exist_ok=True)
                 with open(metadata_file, 'w') as f:
                     json.dump(valid_metadata, f)
-                print(f"Created metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images")
+                print(f"Created metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images", flush=True)
             except Exception as e:
-                print(f"Error saving metadata: {str(e)}")
+                print(f"Error saving metadata: {str(e)}", flush=True)
     
     # Update dataset with accurate counts
     dataset["document_count"] = doc_count
@@ -744,7 +746,7 @@ def get_dataset_documents(user_data, dataset_id):
         }), 200
     
     except Exception as e:
-        print(f"Error getting documents: {str(e)}")
+        print(f"Error getting documents: {str(e)}", flush=True)
         return jsonify({"error": f"Failed to get documents: {str(e)}"}), 500
 
 @app.route('/api/datasets/<dataset_id>', methods=['DELETE'])
@@ -807,7 +809,7 @@ def chat_with_bot(user_data, bot_id):
                 message = f"{message} [Image uploaded]"
                 
         except Exception as img_error:
-            print(f"Error processing image: {str(img_error)}")
+            print(f"Error processing image: {str(img_error)}", flush=True)
             return jsonify({"error": f"Failed to process image: {str(img_error)}"}), 400
     
     # Create a new message object
@@ -928,7 +930,7 @@ def chat_with_bot(user_data, bot_id):
             }), 200
             
         except Exception as vision_error:
-            print(f"Error processing image with Vision API: {str(vision_error)}")
+            print(f"Error processing image with Vision API: {str(vision_error)}", flush=True)
             # If the vision API fails, continue with the regular RAG process
     
     if not dataset_ids:
@@ -1005,14 +1007,14 @@ def chat_with_bot(user_data, bot_id):
                     is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
                     
                     # Debug: Log image query detection decision
-                    print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query}")
+                    print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query}", flush=True)
                     if is_image_query:
                         matching_terms = [term for term in image_query_terms if term in message.lower()]
-                        print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}")
+                        print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}", flush=True)
                     
                     # Skip all image processing if this is not an image query
                     if not is_image_query:
-                        print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query: '{message}'")
+                        print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query: '{message}'", flush=True)
                         continue
                     
                     # If we get here, it is an image query, so check if the dataset has images
@@ -1037,7 +1039,7 @@ def chat_with_bot(user_data, bot_id):
                     
                     # If dataset has images according to either source, retrieve them
                     if has_images or metadata_count > 0:
-                        print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}")
+                        print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}", flush=True)
                         
                         # Set search parameters based on whether we're using chorus mode
                         if use_model_chorus:
@@ -1047,19 +1049,19 @@ def chat_with_bot(user_data, bot_id):
                             # In standard mode, still search for images but with lower priority if not an image query
                             top_k = 6 if is_image_query else 3
                         
-                        print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images")
+                        print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images", flush=True)
                         
                         # Search for images with the user's query
                         img_results = []
                         try:
-                            print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'")
+                            print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'", flush=True)
                             img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
-                            print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}")
+                            print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}", flush=True)
                             if img_results:
                                 for i, img in enumerate(img_results):
-                                    print(f"IMAGE SEARCH DEBUG: Image {i+1}: {img.get('caption', 'No caption')} (score: {img.get('score', 0):.4f})")
+                                    print(f"IMAGE SEARCH DEBUG: Image {i+1}: {img.get('caption', 'No caption')} (score: {img.get('score', 0):.4f})", flush=True)
                         except Exception as img_search_error:
-                            print(f"IMAGE SEARCH ERROR: {str(img_search_error)}")
+                            print(f"IMAGE SEARCH ERROR: {str(img_search_error)}", flush=True)
                         
                         # If no results or weak results, also try a more generic search, but only for image queries
                         if (not img_results or (img_results and img_results[0].get("score", 0) < 0.2)) and is_image_query:
@@ -1091,11 +1093,11 @@ def chat_with_bot(user_data, bot_id):
                                     "helpful picture for reference"
                                 ])
                             
-                            print(f"IMAGE SEARCH DEBUG: Using fallback generic queries: {generic_queries[:3]}...")
+                            print(f"IMAGE SEARCH DEBUG: Using fallback generic queries: {generic_queries[:3]}...", flush=True)
                             
                             for generic_query in generic_queries:
                                 try:
-                                    print(f"IMAGE SEARCH DEBUG: Trying generic query: '{generic_query}'")
+                                    print(f"IMAGE SEARCH DEBUG: Trying generic query: '{generic_query}'", flush=True)
                                     generic_results = image_processor.search_images(dataset_id, generic_query, top_k=4 if is_image_query else 2)
                                     if generic_results:
                                         for gen_img in generic_results:
@@ -1105,7 +1107,7 @@ def chat_with_bot(user_data, bot_id):
                                         if len(img_results) >= top_k:
                                             break  # Stop after finding enough results
                                 except Exception as generic_search_error:
-                                    print(f"Error with generic image search: {str(generic_search_error)}")
+                                    print(f"Error with generic image search: {str(generic_search_error)}", flush=True)
                                     continue
                         
                         # Add relevant images to results
@@ -1122,11 +1124,11 @@ def chat_with_bot(user_data, bot_id):
                                 image_results.append(image_info)
                                 
                 except Exception as img_error:
-                    print(f"Error with image retrieval for dataset '{dataset_id}': {str(img_error)}")
+                    print(f"Error with image retrieval for dataset '{dataset_id}': {str(img_error)}", flush=True)
                     # Continue even if image retrieval fails
                 
             except Exception as coll_error:
-                print(f"Error with collection '{dataset_id}': {str(coll_error)}")
+                print(f"Error with collection '{dataset_id}': {str(coll_error)}", flush=True)
                 # Continue with other datasets even if one fails
                 continue
                 
@@ -1319,9 +1321,9 @@ def chat_with_bot(user_data, bot_id):
                     chorus_config = next((c for c in choruses if c["id"] == specific_chorus_id), None)
                     
                     if debug_mode and chorus_config:
-                        print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}")
+                        print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}", flush=True)
                 except Exception as e:
-                    print(f"Error loading chorus configuration: {str(e)}")
+                    print(f"Error loading chorus configuration: {str(e)}", flush=True)
             
             # If no chorus config found, return an error
             if not chorus_config:
@@ -1348,9 +1350,9 @@ def chat_with_bot(user_data, bot_id):
             
             # For debugging
             if debug_mode:
-                print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}")
-                print(f"Response models: {len(response_models)}")
-                print(f"Evaluator models: {len(evaluator_models)}")
+                print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}", flush=True)
+                print(f"Response models: {len(response_models)}", flush=True)
+                print(f"Evaluator models: {len(evaluator_models)}", flush=True)
             
             # Validate the configuration
             if not response_models or not evaluator_models:
@@ -1708,12 +1710,12 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             used_image_indices = set()
             if image_results:
                 # Check which images are explicitly referenced in the response
-                print(f"IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available")
+                print(f"IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
                 
                 for i in range(1, len(image_results[:5]) + 1):
                     if f"[Image {i}]" in winning_response:
                         used_image_indices.add(i)
-                        print(f"IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]")
+                        print(f"IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]", flush=True)
                         
                 # If the response mentions images but doesn't use the exact citation format,
                 # include highly relevant images that meet our threshold
@@ -1722,7 +1724,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 
                 if has_image_mentions:
                     matching_terms = [term for term in image_mention_terms if term.lower() in winning_response.lower()]
-                    print(f"IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}")
+                    print(f"IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
                 
                 # Include relevant images only if the response mentions images or the query is explicitly about images
                 image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
@@ -1731,14 +1733,14 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 if (has_image_mentions or is_image_query) and not used_image_indices:
                     # Use a reasonable threshold for image relevance
                     relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
-                    print(f"IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries")
+                    print(f"IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
                     for i, img in enumerate(image_results[:5]):
                         score = img.get('score', 0)
                         if score >= relevance_threshold:
                             used_image_indices.add(i+1)
-                            print(f"IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})")
+                            print(f"IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
                         else:
-                            print(f"IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}")
+                            print(f"IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}", flush=True)
                 
                 # Only force-include an image for explicit image queries
                 if is_image_query and not used_image_indices and image_results:
@@ -1747,11 +1749,11 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                     best_score = image_results[0].get('score', 0)
                     if best_score >= min_score_threshold:
                         used_image_indices.add(1)  # Add the first (highest scoring) image
-                        print(f"IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query")
+                        print(f"IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query", flush=True)
                     else:
-                        print(f"IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images")
+                        print(f"IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images", flush=True)
                 
-                print(f"IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}")
+                print(f"IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}", flush=True)
             
             # Prepare image details for referenced images
             image_details = []
@@ -1845,25 +1847,25 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
             max_images = 5 if is_image_query else 3
             top_images = image_results[:max_images]
-            print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available")
+            print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
             # Flexible extraction: match [Image X], [Image X ...], [Image X in ...], etc.
             for i in range(1, len(top_images) + 1):
                 if re.search(rf"\\[Image {i}(?:[^\\]]*\\])?", response_text):
                     used_image_indices.add(i)
-                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]")
+                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]", flush=True)
             image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
             has_image_mentions = any(term.lower() in response_text.lower() for term in image_mention_terms)
             if has_image_mentions:
                 matching_terms = [term for term in image_mention_terms if term.lower() in response_text.lower()]
-                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}")
+                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
             if (has_image_mentions or is_image_query) and not used_image_indices:
                 relevance_threshold = 0.3
-                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries")
+                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
                 for i, img in enumerate(top_images):
                     score = img.get('score', 0)
                     if score >= relevance_threshold:
                         used_image_indices.add(i+1)
-                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})")
+                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
                 if not used_image_indices and top_images:
                     used_image_indices.add(1)
                     print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Force including top image for image query")
@@ -3372,6 +3374,13 @@ def get_original_document(user_data, document_id):
 def set_bot_datasets(user_data, bot_id):
     """Replace all datasets on a bot with a new list of datasets"""
     return set_bot_datasets_handler(user_data, bot_id)
+
+@app.route('/api/datasets/<dataset_id>/bulk-upload', methods=['POST'])
+@require_auth_wrapper
+def bulk_upload(user_data, dataset_id):
+    """Bulk upload a zip file of documents/images to a dataset"""
+    from dataset_handlers import bulk_upload_handler
+    return bulk_upload_handler(user_data, dataset_id)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
