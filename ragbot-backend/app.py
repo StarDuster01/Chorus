@@ -291,8 +291,8 @@ def upload_document(user_data, dataset_id):
             file.save(file_path)
             
             # Add image to dataset
-            img_processor = ImageProcessor(DATA_FOLDER)
-            image_meta = img_processor.add_image_to_dataset(
+            
+            image_meta = image_processor.add_image_to_dataset(
                 dataset_id, 
                 file_path,
                 {
