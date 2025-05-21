@@ -28,7 +28,7 @@ from text_extractors import (
     extract_text_from_image,
     extract_text_from_pdf,
     extract_text_from_docx,
-    extract_text_from_pptx,
+    extract_text_from_pptx,  # now returns (text, image_metadata)
     extract_text_from_file,
     create_semantic_chunks,
     chunk_powerpoint_content
@@ -341,9 +341,12 @@ def upload_document(user_data, dataset_id):
         # Save the file
         file_path = os.path.join(DOCUMENT_FOLDER, f"{uuid.uuid4()}_{filename}")
         file.save(file_path)
-        
         # Extract text from file
-        text = extract_text_from_file(file_path)
+        if file_extension.lower() == '.pptx':
+            text, pptx_image_metadata = extract_text_from_pptx(file_path)
+        else:
+            text = extract_text_from_file(file_path)
+            pptx_image_metadata = []
         if not text:
             os.remove(file_path)
             return jsonify({"error": "Could not extract text from file"}), 400
@@ -470,6 +473,23 @@ def upload_document(user_data, dataset_id):
                 except:
                     pass
             return jsonify({"error": f"Error processing document: {str(e)}"}), 500
+        # After chunking and before returning success, add images from pptx_image_metadata
+        if pptx_image_metadata:
+            for img_meta in pptx_image_metadata:
+                # Add document_id and file_path to image metadata
+                img_meta["document_id"] = document_id
+                img_meta["file_path"] = file_path
+                img_meta["dataset_id"] = dataset_id
+                img_meta["type"] = "image"
+                # Save image to uploads/images and update path/url
+                img_filename = f"{uuid.uuid4()}.png"
+                img_save_path = os.path.join(IMAGE_FOLDER, img_filename)
+                import shutil
+                shutil.copy(img_meta["image_path"], img_save_path)
+                img_meta["path"] = img_save_path
+                img_meta["url"] = f"/images/{img_filename}"
+                # Add to image dataset/index
+                image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
     else:
         return jsonify({"error": "Unsupported file type"}), 400
 
@@ -589,7 +609,7 @@ def dataset_status(user_data, dataset_id):
                 # Include image previews (first 3 images that exist)
                 preview_count = 0
                 for img_meta in valid_metadata:
-                    if preview_count >= 3:  # Limit to 3 preview images
+                    if preview_count >= 10:  # Limit to 10 preview images
                         break
                     
                     if 'path' in img_meta and os.path.exists(img_meta['path']):
@@ -982,7 +1002,7 @@ def chat_with_bot(user_data, bot_id):
                     ]
                     
                     # Use a more aggressive check for image queries - partial matches and phrases
-                    is_image_query = any(term in message.lower() for term in image_query_terms)
+                    is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
                     
                     # Debug: Log image query detection decision
                     print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query}")
@@ -1145,37 +1165,62 @@ def chat_with_bot(user_data, bot_id):
         
         # Prepare image information for context
         image_context = ""
+        dataset_id_to_name = {}
         if image_results:
+            # Build a mapping from dataset_id to dataset name
+            for img in image_results:
+                dsid = img["dataset_id"]
+                if dsid not in dataset_id_to_name:
+                    ds = find_dataset_by_id(dsid)
+                    if ds and ds.get("name"):
+                        dataset_id_to_name[dsid] = ds["name"]
+                    else:
+                        dataset_id_to_name[dsid] = dsid[:8]  # fallback to short id
             # Sort images by score
             image_results.sort(key=lambda x: x["score"], reverse=True)
-            
-            # Check if query is likely about images
             image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
-            is_image_query = any(term in message.lower() for term in image_query_terms)
-            
-            # Take top images up to a limit - use more for image queries
+            is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
             max_images = 5 if is_image_query else 3
             top_images = image_results[:max_images]
-            
-            # Format image information - make it more prominent for image queries
+            # If more than one dataset, prefix image refs with dataset name
+            multi_dataset = len(set(img["dataset_id"] for img in top_images)) > 1
             if is_image_query:
                 image_context = "\n\n## RELEVANT IMAGES: ##\n"
             else:
                 image_context = "\n\nRelevant Images:\n"
-                
+            # When building image_context and image_details, prefix with document/slide info if available
+            doc_id_to_name = {}
+            for img in image_results:
+                docid = img.get("document_id")
+                if docid and docid not in doc_id_to_name:
+                    docid_val = docid
+                    # Try to get filename from image metadata
+                    if "filename" in img:
+                        docid_val = img["filename"]
+                    doc_id_to_name[docid] = docid_val
+            multi_doc = len(set(img.get("document_id") for img in top_images if img.get("document_id"))) > 1
             for i, img in enumerate(top_images):
-                image_context += f"[Image {i+1}] Caption: {img['caption']}\n"
+                prefix = ""
+                if multi_doc and img.get("document_id"):
+                    docname = doc_id_to_name.get(img["document_id"], img["document_id"][:8])
+                    slide = img.get("slide_number")
+                    slide_title = img.get("slide_title")
+                    if slide:
+                        prefix = f"[{docname}, Slide {slide}] "
+                    else:
+                        prefix = f"[{docname}] "
+                elif multi_dataset:
+                    prefix = f"[{dataset_id_to_name.get(img['dataset_id'], img['dataset_id'][:8])}] "
+                image_context += f"{prefix}[Image {i+1}] Caption: {img['caption']}\n"
                 image_context += f"            This image is available for viewing and download.\n"
-            
-            # Add the URLs to image metadata for later
             top_image_urls = [img["url"] for img in top_images]
-            
+        
         # Combine text and image contexts
         if context_text and image_context:
             # Instead of keeping them separate, integrate image info into the main context
             # This helps the AI be aware of all information sources at once
             image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
-            is_image_query = any(term in message.lower() for term in image_query_terms)
+            is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
             
             # For image queries, prioritize image information
             if is_image_query and image_results:
@@ -1396,7 +1441,7 @@ def chat_with_bot(user_data, bot_id):
                 if image_results:
                     # Check if query is likely about images
                     image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration", "logo", "icon"]
-                    is_image_query = any(term in message.lower() for term in image_query_terms)
+                    is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
                     
                     # Format image information - make it more prominent for image queries
                     model_image_context = ""
@@ -1681,7 +1726,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 
                 # Include relevant images only if the response mentions images or the query is explicitly about images
                 image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
-                is_image_query = any(term in message.lower() for term in image_query_terms)
+                is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
                 
                 if (has_image_mentions or is_image_query) and not used_image_indices:
                     # Use a reasonable threshold for image relevance
@@ -1712,20 +1757,26 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             image_details = []
             if used_image_indices and image_results:
                 top_images = image_results[:5]  # Consider up to 5 images
+                multi_dataset = len(set(img["dataset_id"] for img in top_images)) > 1
                 for img_idx in used_image_indices:
                     if 1 <= img_idx <= len(top_images):
                         img = top_images[img_idx-1]
-                        # Create specific download URL by adding download=true parameter
                         base_url = img['url']
                         download_url = f"{base_url}?download=true"
-                        
+                        prefix = ""
+                        if multi_dataset:
+                            prefix = f"[{dataset_id_to_name.get(img['dataset_id'], img['dataset_id'][:8])}] "
                         image_details.append({
-                            "index": f"Image {img_idx}",
+                            "index": f"{prefix}Image {img_idx}",
                             "caption": img['caption'],
                             "url": img['url'],
                             "download_url": download_url,
                             "id": img['id'],
-                            "dataset_id": img['dataset_id']
+                            "dataset_id": img['dataset_id'],
+                            "document_id": img.get("document_id"),
+                            "slide_number": img.get("slide_number"),
+                            "slide_title": img.get("slide_title"),
+                            "filename": img.get("filename")
                         })
             
             # Save the response in the conversation with image details
@@ -1762,7 +1813,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
         image_instruction = ""
         if image_results:
             image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
-            is_image_query = any(term in message.lower() for term in image_query_terms)
+            is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
             
             if is_image_query:
                 image_instruction = "\n\nThe user seems to be asking about images. Please prioritize showing and describing relevant images from the provided context when appropriate. When referencing images, use the exact format '[Image X]' (where X is the image number) and be descriptive about what they show."
@@ -1788,50 +1839,34 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
         # Extract which image indices were referenced
         used_image_indices = set()
         if image_results:
-            # Check which images are explicitly referenced in the response
+            # Always define top_images here to avoid undefined variable errors
+            image_results.sort(key=lambda x: x["score"], reverse=True)
+            image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
+            is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
+            max_images = 5 if is_image_query else 3
+            top_images = image_results[:max_images]
             print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available")
-            
+            # Flexible extraction: match [Image X], [Image X ...], [Image X in ...], etc.
             for i in range(1, len(top_images) + 1):
-                if f"[Image {i}]" in response_text:
+                if re.search(rf"\\[Image {i}(?:[^\\]]*\\])?", response_text):
                     used_image_indices.add(i)
                     print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]")
-            
-            # If the response mentions images or visual content but doesn't use the exact citation format,
-            # include highly relevant images that meet our threshold
             image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
             has_image_mentions = any(term.lower() in response_text.lower() for term in image_mention_terms)
-            
             if has_image_mentions:
                 matching_terms = [term for term in image_mention_terms if term.lower() in response_text.lower()]
                 print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}")
-            
-            # Include relevant images only if the response mentions images or the query is explicitly about images
-            image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
-            is_image_query = any(term in message.lower() for term in image_query_terms)
-            
             if (has_image_mentions or is_image_query) and not used_image_indices:
-                # Use a reasonable threshold for image relevance
-                relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
+                relevance_threshold = 0.3
                 print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries")
                 for i, img in enumerate(top_images):
                     score = img.get('score', 0)
                     if score >= relevance_threshold:
                         used_image_indices.add(i+1)
                         print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})")
-                    else:
-                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}")
-            
-            # Only force-include an image for explicit image queries
-            if is_image_query and not used_image_indices and image_results:
-                # Include only the highest scoring image and only if it has a minimum score
-                min_score_threshold = 0.2
-                best_score = top_images[0].get('score', 0) if top_images else 0
-                if best_score >= min_score_threshold:
-                    used_image_indices.add(1)  # Add the first (highest scoring) image
-                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query")
-                else:
-                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images")
-            
+                if not used_image_indices and top_images:
+                    used_image_indices.add(1)
+                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Force including top image for image query")
             print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}")
         
         # Filter source_documents to only include those that were actually cited
@@ -1861,22 +1896,31 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                         "dataset_id": source_doc.get('dataset_id', '')
                     })
 
-        # Add image details to context details for referenced images
+        # Build image_details directly from top_images and used_image_indices
         image_details = []
-        if used_source_images:
-            for img in used_source_images:
-                # Create specific download URL by adding download=true parameter
-                base_url = img['url']
-                download_url = f"{base_url}?download=true"
-                
-                image_details.append({
-                    "index": img['context_index'],
-                    "caption": img['caption'],
-                    "url": img['url'],
-                    "download_url": download_url,
-                    "id": img['id'],
-                    "dataset_id": img['dataset_id']
-                })
+        if image_results:
+            top_images = image_results[:5]
+            multi_dataset = len(set(img["dataset_id"] for img in top_images)) > 1
+            for img_idx in used_image_indices:
+                if 1 <= img_idx <= len(top_images):
+                    img = top_images[img_idx-1]
+                    base_url = img['url']
+                    download_url = f"{base_url}?download=true"
+                    prefix = ""
+                    if multi_dataset:
+                        prefix = f"[{dataset_id_to_name.get(img['dataset_id'], img['dataset_id'][:8])}] "
+                    image_details.append({
+                        "index": f"{prefix}Image {img_idx}",
+                        "caption": img['caption'],
+                        "url": img['url'],
+                        "download_url": download_url,
+                        "id": img['id'],
+                        "dataset_id": img['dataset_id'],
+                        "document_id": img.get("document_id"),
+                        "slide_number": img.get("slide_number"),
+                        "slide_title": img.get("slide_title"),
+                        "filename": img.get("filename")
+                    })
 
         # Save the response in the conversation
         bot_response = {
@@ -1884,7 +1928,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             "role": "assistant",
             "content": response_text,
             "timestamp": datetime.datetime.now(UTC).isoformat(),
-            "referenced_images": [img["url"] for img in used_source_images] if used_source_images else [],
+            "referenced_images": [img["url"] for img in image_details] if image_details else [],
             "context_details": context_details,  # Add context details to the saved response
             "image_details": image_details  # Add image details to the saved response
         }
@@ -1895,9 +1939,9 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
         return jsonify({
             "response": response_text,
             "source_documents": used_source_documents,
-            "source_images": used_source_images,
             "context_details": context_details,  # Include context details in response
             "image_details": image_details,  # Include image details in response
+            "referenced_images": [img["url"] for img in image_details] if image_details else [],
             "debug": {
                 "contexts": contexts,
                 "image_results": image_results if image_results else []

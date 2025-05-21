@@ -157,12 +157,13 @@ def extract_text_from_pptx(pptx_path):
         pptx_path: Path to the pptx file
         
     Returns:
-        str: Extracted text
+        tuple: (Extracted text, List of image metadata dicts)
     """
     summary_lines = []
     image_text = ""
     image_captions = ""
     prs = Presentation(pptx_path)
+    slide_image_metadata = []
     
     # Log the total number of slides
     slide_count = len(prs.slides)
@@ -250,26 +251,21 @@ def extract_text_from_pptx(pptx_path):
             for shape_index, shape in enumerate(slide.shapes):
                 if hasattr(shape, "shape_type") and shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
                     try:
-                        # Save image to temp file
                         image_path = os.path.join(temp_dir, f"slide_{slide_num+1}_img_{uuid.uuid4()}.png")
                         with open(image_path, 'wb') as f:
                             f.write(shape.image.blob)
-                        
-                        # Process the image in two ways:
                         image_info = {
-                            "index": shape_index,
-                            "path": image_path,
+                            "slide_number": slide_num+1,
+                            "slide_title": slide_title,
+                            "filename": os.path.basename(pptx_path),
+                            "image_path": image_path,
                             "ocr_text": "",
                             "caption": ""
                         }
-                        
-                        # 1. Extract text using OCR
                         img_text = extract_text_from_image(image_path)
                         if img_text.strip():
                             image_info["ocr_text"] = img_text.strip()
                             slide_has_content = True
-                        
-                        # 2. Generate image caption if ImageProcessor is available
                         if img_processor:
                             try:
                                 caption = img_processor.generate_caption(image_path)
@@ -278,9 +274,8 @@ def extract_text_from_pptx(pptx_path):
                                     slide_has_content = True
                             except Exception as e:
                                 print(f"Warning: Failed to generate caption for image on slide {slide_num+1}: {str(e)}")
-                        
                         slide_images.append(image_info)
-                                
+                        slide_image_metadata.append(image_info)
                     except Exception as e:
                         print(f"Warning: Failed to extract image from slide {slide_num+1}: {str(e)}")
             
@@ -309,7 +304,7 @@ def extract_text_from_pptx(pptx_path):
     if not combined_text.strip():
         print("WARNING: No content was extracted from the PowerPoint file!")
         
-    return combined_text
+    return combined_text, slide_image_metadata
 
 def extract_text_from_file(file_path):
     """Extract text from a file based on its extension

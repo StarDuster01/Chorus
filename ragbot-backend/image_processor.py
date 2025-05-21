@@ -302,27 +302,27 @@ class ImageProcessor:
         Returns:
             List[Dict]: List of image metadata for matching images
         """
+        # Always reload the latest index and metadata from disk before searching
+        print(f"[Image Search] Reloading index and metadata for dataset {dataset_id} before search...")
+        self._load_existing_indices()
         # Check if dataset exists
         if dataset_id not in self.image_indices or dataset_id not in self.image_metadata:
+            print(f"[Image Search] Dataset {dataset_id} not found in indices or metadata after reload.")
             return []
-            
         # Get the index and metadata
         index = self.image_indices[dataset_id]
         metadata = self.image_metadata[dataset_id]
-        
         if len(metadata) == 0:
+            print(f"[Image Search] No images in metadata for dataset {dataset_id} after reload.")
             return []
-            
         # Load models only when needed
         try:
             self._load_models()
             # Compute query embedding
             query_embedding = self.compute_text_embedding(query)
-            
             # Search the index
             k = min(top_k, len(metadata))
             scores, indices = index.search(np.array([query_embedding], dtype=np.float32), k)
-            
             # Return results with scores
             results = []
             for i, idx in enumerate(indices[0]):
@@ -330,7 +330,7 @@ class ImageProcessor:
                     result = metadata[idx].copy()
                     result["score"] = float(scores[0][i])  # Add similarity score
                     results.append(result)
-            
+            print(f"[Image Search] Returning {len(results)} results for query '{query}' in dataset {dataset_id}.")
             return results
         except Exception as e:
             print(f"Error in image search: {str(e)}")
