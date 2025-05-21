@@ -62,4 +62,5 @@ htmlcov/
 ragbot-backend/datasets/
 ragbot-backend/uploads/images/
 ragbot-backend/conversations/
+ragbot-backend/chroma_db/
 
