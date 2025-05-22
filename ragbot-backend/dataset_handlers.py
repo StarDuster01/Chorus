@@ -69,6 +69,7 @@ def sync_datasets_with_collections(chroma_client, openai_ef):
     
     # In ChromaDB v0.6.0, list_collections() only returns collection names
     existing_collections = chroma_client.list_collections()
+    existing_collection_names = [col.name for col in existing_collections]
     
     for dataset_file in dataset_files:
         try:
@@ -79,12 +80,14 @@ def sync_datasets_with_collections(chroma_client, openai_ef):
                 dataset_id = dataset["id"]
                 
                 # Check if collection exists in ChromaDB
-                if dataset_id not in existing_collections:
+                if dataset_id not in existing_collection_names:
                     print(f"Creating missing collection for dataset: {dataset_id}")
                     try:
-                        chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
+                        # Use get_or_create_collection which handles the "already exists" case
+                        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+                        print(f"Collection for dataset {dataset_id} ensured.")
                     except Exception as e:
-                        print(f"Error creating collection for dataset {dataset_id}: {str(e)}")
+                        print(f"Error ensuring collection for dataset {dataset_id}: {str(e)}")
         except Exception as e:
             print(f"Error processing dataset file {dataset_file}: {str(e)}")
     
@@ -288,9 +291,12 @@ def create_dataset_handler(user_data):
             api_key=os.getenv("OPENAI_API_KEY"),
             model_name="text-embedding-ada-002"
         )
-        chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
+        
+        # Use get_or_create_collection which handles the "already exists" case
+        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+        print(f"Collection for dataset {dataset_id} ensured.")
     except Exception as e:
-        print(f"Error creating ChromaDB collection: {str(e)}")
+        print(f"Error ensuring ChromaDB collection: {str(e)}")
     
     return jsonify(new_dataset), 201
 
@@ -673,7 +679,11 @@ def rebuild_dataset_handler(user_data, dataset_id):
             api_key=os.getenv("OPENAI_API_KEY"),
             model_name="text-embedding-ada-002"
         )
-        chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
+        
+        # Use get_or_create_collection which handles the "already exists" case
+        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+        print(f"Collection for dataset {dataset_id} ensured.")
+                
         return jsonify({"message": "Dataset collection has been rebuilt. Please re-upload your documents."}), 200
     except Exception as e:
         return jsonify({"error": f"Failed to rebuild dataset: {str(e)}"}), 500

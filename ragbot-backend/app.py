@@ -232,9 +232,12 @@ def create_dataset(user_data):
             api_key=os.getenv("OPENAI_API_KEY"),
             model_name="text-embedding-ada-002"
         )
-        chroma_client.create_collection(name=dataset_id, embedding_function=openai_ef)
+        
+        # Use get_or_create_collection which handles the "already exists" case
+        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+        print(f"Collection for dataset {dataset_id} ensured.", flush=True)
     except Exception as e:
-        print(f"Error creating ChromaDB collection: {str(e)}", flush=True)
+        print(f"Error ensuring ChromaDB collection: {str(e)}", flush=True)
     
     return jsonify(new_dataset), 201
 
