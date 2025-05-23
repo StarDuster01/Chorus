@@ -4,6 +4,7 @@ openai
 anthropic
 python-dotenv
 chromadb
+gunicorn
 PyPDF2
 python-docx
 python-pptx

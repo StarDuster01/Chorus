@@ -5,6 +5,7 @@ import base64
 import datetime
 from typing import List, Dict, Any, Tuple, Optional
 import torch
+import gc  # For garbage collection
 from PIL import Image
 import open_clip
 from transformers import BlipProcessor, BlipForConditionalGeneration
@@ -28,6 +29,8 @@ class ImageProcessor:
         self.data_dir = data_dir
         self.image_indices = {}  # Dataset ID -> FAISS index
         self.image_metadata = {}  # Dataset ID -> list of metadata dictionaries
+        
+        # Models are now loaded lazily to save memory
         self.clip_model = None
         self.clip_preprocess = None
         self.blip_model = None
@@ -42,19 +45,68 @@ class ImageProcessor:
     
     def _load_models(self):
         """Load CLIP and BLIP models if not already loaded"""
-        if self.clip_model is None:
-            print(f"Loading CLIP model on {DEVICE}...")
-            self.clip_model, _, self.clip_preprocess = open_clip.create_model_and_transforms(
-                DEFAULT_CLIP_MODEL, 
-                pretrained=DEFAULT_CLIP_PRETRAINED,
-                device=DEVICE
-            )
-            self.clip_model.eval()
-        
-        if self.blip_model is None:
-            print(f"Loading BLIP model on {DEVICE}...")
-            self.blip_processor = BlipProcessor.from_pretrained(DEFAULT_BLIP_MODEL)
-            self.blip_model = BlipForConditionalGeneration.from_pretrained(DEFAULT_BLIP_MODEL).to(DEVICE)
+        try:
+            if self.clip_model is None:
+                print(f"Loading CLIP model on {DEVICE}...")
+                self.clip_model, _, self.clip_preprocess = open_clip.create_model_and_transforms(
+                    DEFAULT_CLIP_MODEL, 
+                    pretrained=DEFAULT_CLIP_PRETRAINED,
+                    device=DEVICE
+                )
+                self.clip_model.eval()
+                
+                # Clear GPU cache if using CUDA
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            
+            if self.blip_model is None:
+                print(f"Loading BLIP model on {DEVICE}...")
+                # Use lower memory settings for BLIP
+                self.blip_processor = BlipProcessor.from_pretrained(
+                    DEFAULT_BLIP_MODEL,
+                    use_fast=True  # Use faster tokenizer
+                )
+                self.blip_model = BlipForConditionalGeneration.from_pretrained(
+                    DEFAULT_BLIP_MODEL,
+                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+                ).to(DEVICE)
+                
+                # Clear GPU cache if using CUDA
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    
+        except Exception as e:
+            print(f"Error loading models: {str(e)}")
+            # Clear any partially loaded models
+            self._clear_models()
+            raise
+    
+    def _clear_models(self):
+        """Clear models from memory to free up RAM/VRAM"""
+        try:
+            if self.clip_model is not None:
+                del self.clip_model
+                self.clip_model = None
+            if self.clip_preprocess is not None:
+                del self.clip_preprocess
+                self.clip_preprocess = None
+            if self.blip_model is not None:
+                del self.blip_model
+                self.blip_model = None
+            if self.blip_processor is not None:
+                del self.blip_processor
+                self.blip_processor = None
+                
+            # Force garbage collection
+            gc.collect()
+            
+            # Clear GPU cache if using CUDA
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            print("Cleared ML models from memory")
+        except Exception as e:
+            print(f"Error clearing models: {str(e)}")
     
     def _load_existing_indices(self):
         """Load existing FAISS indices and metadata for datasets"""
@@ -154,9 +206,9 @@ class ImageProcessor:
         Returns:
             str: Generated caption
         """
-        self._load_models()
-        
         try:
+            self._load_models()
+            
             # Load and preprocess image
             raw_image = Image.open(image_path).convert('RGB')
             inputs = self.blip_processor(raw_image, return_tensors="pt").to(DEVICE)
@@ -165,11 +217,21 @@ class ImageProcessor:
             with torch.no_grad():
                 outputs = self.blip_model.generate(**inputs, max_new_tokens=50)
                 caption = self.blip_processor.decode(outputs[0], skip_special_tokens=True)
+            
+            # Clean up memory after processing
+            del inputs, outputs, raw_image
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
                 
             return caption
         except Exception as e:
             print(f"Error generating caption: {str(e)}")
             return "No caption available"
+        finally:
+            # Clear models to free memory after processing
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     
     def compute_image_embedding(self, image_path: str) -> np.ndarray:
         """Compute CLIP embedding for an image
@@ -180,9 +242,9 @@ class ImageProcessor:
         Returns:
             np.ndarray: Normalized embedding vector
         """
-        self._load_models()
-        
         try:
+            self._load_models()
+            
             # Load and preprocess image
             image = Image.open(image_path).convert('RGB')
             image_tensor = self.clip_preprocess(image).unsqueeze(0).to(DEVICE)
@@ -193,10 +255,21 @@ class ImageProcessor:
                 
             # Normalize the embedding
             embedding = embedding / np.linalg.norm(embedding)
+            
+            # Clean up memory after processing
+            del image, image_tensor
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+            
             return embedding[0]  # Return the first (and only) embedding
         except Exception as e:
             print(f"Error computing image embedding: {str(e)}")
             return np.zeros(VECTOR_DIMENSION, dtype=np.float32)
+        finally:
+            # Clear GPU cache after processing
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     
     def compute_text_embedding(self, text: str) -> np.ndarray:
         """Compute CLIP embedding for a text query
@@ -207,9 +280,9 @@ class ImageProcessor:
         Returns:
             np.ndarray: Normalized embedding vector
         """
-        self._load_models()
-        
         try:
+            self._load_models()
+            
             # Tokenize and encode text
             with torch.no_grad():
                 text_tokens = open_clip.tokenize([text]).to(DEVICE)
@@ -217,10 +290,21 @@ class ImageProcessor:
                 
             # Normalize the embedding
             embedding = embedding / np.linalg.norm(embedding)
+            
+            # Clean up memory after processing
+            del text_tokens
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+            
             return embedding[0]  # Return the first (and only) embedding
         except Exception as e:
             print(f"Error computing text embedding: {str(e)}")
             return np.zeros(VECTOR_DIMENSION, dtype=np.float32)
+        finally:
+            # Clear GPU cache after processing
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     
     def add_image_to_dataset(self, dataset_id: str, image_path: str, metadata: Dict = None) -> Dict:
         """Add an image to a dataset's index

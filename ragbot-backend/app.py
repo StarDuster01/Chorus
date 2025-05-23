@@ -110,7 +110,7 @@ DATA_FOLDER = os.path.join(app_base_dir, "data")
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, static_folder='frontend', static_url_path='')
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024  # 1000 MB upload limit
 CORS(app)
 
@@ -292,7 +292,7 @@ def upload_document(user_data, dataset_id):
             file_id = str(uuid.uuid4())
             original_filename = filename
             filename = f"{file_id}{file_extension}"
-            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            file_path = os.path.join(IMAGE_FOLDER, filename)
             file.save(file_path)
             
             # Add image to dataset
@@ -303,7 +303,7 @@ def upload_document(user_data, dataset_id):
                 {
                     "dataset_id": dataset_id,
                     "original_filename": original_filename,
-                    "url": f"/uploads/{filename}",
+                    "url": f"/api/images/{filename}",
                     "type": "image"
                 }
             )
@@ -333,7 +333,7 @@ def upload_document(user_data, dataset_id):
                 "filename": original_filename,
                 "type": "image",
                 "caption": image_meta.get("caption", ""),
-                "url": f"/uploads/{filename}"
+                "url": f"/api/images/{filename}"
             }), 201
             
         except Exception as e:
@@ -492,7 +492,7 @@ def upload_document(user_data, dataset_id):
                 import shutil
                 shutil.copy(img_meta["image_path"], img_save_path)
                 img_meta["path"] = img_save_path
-                img_meta["url"] = f"/images/{img_filename}"
+                img_meta["url"] = f"/api/images/{img_filename}"
                 # Add to image dataset/index
                 image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
     else:
@@ -620,7 +620,7 @@ def dataset_status(user_data, dataset_id):
                     if 'path' in img_meta and os.path.exists(img_meta['path']):
                         image_previews.append({
                             "id": img_meta.get("id", ""),
-                            "url": f"/images/{os.path.basename(img_meta['path'])}",
+                            "url": f"/api/images/{os.path.basename(img_meta['path'])}",
                             "caption": img_meta.get("caption", "")
                         })
                         preview_count += 1
@@ -656,7 +656,7 @@ def dataset_status(user_data, dataset_id):
                 if 'path' in img_meta and os.path.exists(img_meta['path']):
                     image_previews.append({
                         "id": img_meta.get("id", ""),
-                        "url": f"/images/{os.path.basename(img_meta['path'])}",
+                        "url": f"/api/images/{os.path.basename(img_meta['path'])}",
                         "caption": img_meta.get("caption", "")
                     })
                     preview_count += 1
@@ -1120,7 +1120,7 @@ def chat_with_bot(user_data, bot_id):
                                 image_info = {
                                     "id": img["id"],
                                     "caption": img["caption"],
-                                    "url": f"/images/{os.path.basename(img['path'])}",
+                                    "url": f"/api/images/{os.path.basename(img['path'])}",
                                     "score": img["score"],
                                     "dataset_id": dataset_id
                                 }
@@ -2097,6 +2097,8 @@ def get_image(filename):
     """Serve an uploaded image file"""
     return get_image_handler(IMAGE_FOLDER, filename)
 
+
+
 # New route for editing images
 @app.route('/api/images/edit', methods=['POST'])
 @require_auth_wrapper
@@ -2406,8 +2408,8 @@ def chat_with_image(user_data, bot_id):
         image_details = [{
             "index": "Image 1",
             "caption": "Uploaded image",
-            "url": f"/images/{os.path.basename(image_path)}",
-            "download_url": f"/images/{os.path.basename(image_path)}?download=true",
+            "url": f"/api/images/{os.path.basename(image_path)}",
+            "download_url": f"/api/images/{os.path.basename(image_path)}?download=true",
             "id": str(uuid.uuid4()),
             "dataset_id": ""
         }]
@@ -2435,15 +2437,14 @@ def chat_with_image(user_data, bot_id):
 # This will serve the React frontend from the bundled location
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-def serve_frontend(path):
-    # Check if app is running in bundled mode
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        frontend_path = os.path.join(sys._MEIPASS, 'frontend_build')
-        if path and os.path.exists(os.path.join(frontend_path, path)):
-            return send_from_directory(frontend_path, path)
-        return send_from_directory(frontend_path, 'index.html')
-    # In development mode, let React dev server handle frontend
-    return jsonify({"message": "API endpoint working. Use React dev server for frontend."})
+def serve_react(path):
+    if path.startswith('api/'):
+        # Let API routes be handled as usual
+        return None
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>/download/<filename>', methods=['GET'])
 @require_auth_wrapper
@@ -2605,7 +2606,7 @@ def get_dataset_images(user_data, dataset_id):
             # Create web-accessible URLs for each image
             img_meta_copy = img_meta.copy()
             if 'path' in img_meta_copy:
-                img_meta_copy['url'] = f"/images/{os.path.basename(img_meta_copy['path'])}"
+                img_meta_copy['url'] = f"/api/images/{os.path.basename(img_meta_copy['path'])}"
                 # Don't expose the full path in API
                 if 'path' in img_meta_copy:
                     del img_meta_copy['path']
@@ -2657,7 +2658,7 @@ def get_dataset_images(user_data, dataset_id):
                                 "original_filename": filename,
                                 "caption": f"Image: {filename}",
                                 "created_at": datetime.datetime.now(UTC).isoformat(),
-                                "url": f"/images/{filename}"
+                                "url": f"/api/images/{filename}"
                             }
                             
                             # Try to generate caption using BLIP
@@ -2927,7 +2928,7 @@ def search_dataset_images(user_data, dataset_id):
         for result in results:
             result_copy = result.copy()
             if 'path' in result_copy:
-                result_copy['url'] = f"/images/{os.path.basename(result_copy['path'])}"
+                result_copy['url'] = f"/api/images/{os.path.basename(result_copy['path'])}"
                 del result_copy['path']  # Don't expose full path
             formatted_results.append(result_copy)
             
@@ -3386,4 +3387,4 @@ def bulk_upload(user_data, dataset_id):
     return bulk_upload_handler(user_data, dataset_id)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=50505, debug=True)

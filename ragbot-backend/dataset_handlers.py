@@ -183,7 +183,7 @@ def get_datasets_handler(user_data):
                         # Create preview info with URL
                         preview_info = {
                             "id": img_meta.get("id", ""),
-                            "url": f"/images/{filename}",
+                            "url": f"/api/images/{filename}",
                             "caption": img_meta.get("caption", "")
                         }
                         image_previews.append(preview_info)
@@ -218,7 +218,7 @@ def get_datasets_handler(user_data):
                             filename = os.path.basename(img_meta["path"])
                             preview_info = {
                                 "id": img_meta.get("id", ""),
-                                "url": f"/images/{filename}",
+                                "url": f"/api/images/{filename}",
                                 "caption": img_meta.get("caption", "")
                             }
                             image_previews.append(preview_info)
@@ -795,7 +795,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
         "dataset_id": dataset_id,
         "original_filename": filename,
         "path": image_path,
-        "url": f"/images/{new_filename}",  # Use just the filename for the URL
+        "url": f"/api/images/{new_filename}",  # Use just the filename for the URL
         "type": "image",
         "created_at": datetime.datetime.now(UTC).isoformat()
     }
@@ -859,7 +859,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
             "image": {
                 "id": image_metadata["id"],
                 "filename": new_filename,
-                "url": f"/images/{new_filename}",
+                "url": f"/api/images/{new_filename}",
                 "caption": image_metadata.get("caption", ""),
                 "description": custom_metadata.get("description", ""),
                 "tags": custom_metadata.get("tags", [])
@@ -1004,7 +1004,7 @@ def bulk_upload_handler(user_data, dataset_id):
                             img_save_path = os.path.join(IMAGE_FOLDER, img_filename)
                             shutil.copy(img_meta["image_path"], img_save_path)
                             img_meta["path"] = img_save_path
-                            img_meta["url"] = f"/images/{img_filename}"
+                            img_meta["url"] = f"/api/images/{img_filename}"
                             image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
                 elif ext in image_exts and dataset_type in ["mixed", "image"]:
                     # Copy to IMAGE_FOLDER
@@ -1018,7 +1018,7 @@ def bulk_upload_handler(user_data, dataset_id):
                         "dataset_id": dataset_id,
                         "original_filename": fname,
                         "path": dest_path,
-                        "url": f"/images/{dest_name}",
+                        "url": f"/api/images/{dest_name}",
                         "type": "image",
                         "created_at": datetime.datetime.now(UTC).isoformat(),
                         "user_id": user_data['id'],
