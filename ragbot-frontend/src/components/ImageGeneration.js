@@ -49,17 +49,8 @@ const ImageGeneration = () => {
       
       if (result.images && result.images.length > 0) {
         const imageData = result.images[0];
-        // Make sure the default URL and API_URL are consistent
-        const baseUrl = process.env.REACT_APP_API_URL || '/api';
-        // Remove any duplicate /api prefixes if present
-        const imageUrl = imageData.image_url.startsWith('/api/') 
-          ? imageData.image_url 
-          : `/api${imageData.image_url}`;
-        // Construct full URL correctly
-        const fullUrl = baseUrl.endsWith('/api') 
-          ? `${baseUrl.substring(0, baseUrl.length - 4)}${imageUrl}`
-          : `${baseUrl}${imageUrl}`;
-        setGeneratedImage(fullUrl);
+        // Since we're using relative URLs, just use the image_url directly
+        setGeneratedImage(imageData.image_url);
         setMessage('Image generated successfully!');
       }
     } catch (err) {
@@ -107,17 +98,8 @@ const ImageGeneration = () => {
       const result = await botService.editImage(formData);
       
       if (result.image_url) {
-        // Make sure the default URL and API_URL are consistent
-        const baseUrl = process.env.REACT_APP_API_URL || '/api';
-        // Remove any duplicate /api prefixes if present
-        const imageUrl = result.image_url.startsWith('/api/') 
-          ? result.image_url 
-          : `/api${result.image_url}`;
-        // Construct full URL correctly
-        const fullUrl = baseUrl.endsWith('/api') 
-          ? `${baseUrl.substring(0, baseUrl.length - 4)}${imageUrl}`
-          : `${baseUrl}${imageUrl}`;
-        setEditedImage(fullUrl);
+        // Since we're using relative URLs, just use the image_url directly
+        setEditedImage(result.image_url);
         setMessage('Image edited successfully!');
       }
     } catch (err) {

@@ -1293,10 +1293,14 @@ def chat_with_bot(user_data, bot_id):
         # Updated instructions for better integration of text and images
         system_instruction += "\n\nYou have access to both text documents and images in your knowledge base. Review ALL the provided context carefully, including both text documents AND image captions, before stating that information is not available. Image captions contain valuable information that should be considered as valid sources."
         
-        system_instruction += "\n\nWhen a user asks about visual content or specifically mentions images, prioritize relevant images in your response. Only reference images when they are truly relevant to the query. If there are no relevant images for the query, do not mention images at all."
+        system_instruction += "\n\nWhen referencing images, you MUST follow these exact formatting rules:"
+        system_instruction += "\n1. Use the exact format '[Image X]' (where X is the image number) when citing an image"
+        system_instruction += "\n2. Place the image citation AFTER describing what the image shows"
+        system_instruction += "\n3. Example format: 'Here is an image of a man in a suit holding a martini [Image 1]'"
+        system_instruction += "\n4. Never say you can't show or display images - they are automatically displayed when you cite them"
+        system_instruction += "\n5. Don't use any other format for image citations (no parentheses, no lowercase 'image', etc.)"
         
-        # Add instruction to avoid saying images can't be displayed
-        system_instruction += "\n\nIMPORTANT: Do NOT state that you cannot display or show images to the user. When referencing images, simply describe what they contain and cite them with [Image X]. Images mentioned in the context ARE available to the user for viewing."
+        system_instruction += "\n\nWhen a user asks about visual content or specifically mentions images, prioritize relevant images in your response. Only reference images when they are truly relevant to the query. If there are no relevant images for the query, do not mention images at all."
         
         # Add conversation history to system instruction if available
         system_instruction_with_history = system_instruction
@@ -1460,8 +1464,9 @@ def chat_with_bot(user_data, bot_id):
                     top_images = image_results[:max_images]
                     
                     for i, img in enumerate(top_images):
-                        model_image_context += f"[Image {i+1}] Caption: {img['caption']}\n"
-                        model_image_context += f"            This image is available for viewing and download.\n"
+                        model_image_context += f"Available Image {i+1}:\n"
+                        model_image_context += f"- Description: {img['caption']}\n"
+                        model_image_context += f"- To reference this image in your response, use exactly: [Image {i+1}]\n"
                     
                     # Add image context to the full context
                     if is_image_query:
@@ -1604,16 +1609,104 @@ def chat_with_bot(user_data, bot_id):
                     "conversation_id": conversation_id
                 }), 200
             
-            # If only one response, return it directly
+            # If only one response, return it directly (but still process images)
             if len(all_responses) == 1:
                 response_text = all_responses[0]["response"]
                 
-                # Save the response in the conversation
+                # Extract which image indices were referenced in the response using robust regex
+                used_image_indices = set()
+                if image_results:
+                    # Check which images are explicitly referenced in the response
+                    print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
+                    
+                    # Use robust regex to find all [Image X] references
+                    matches = re.findall(r'\[Image (\d+)\]', response_text)
+                    for match in matches:
+                        idx = int(match)
+                        if 1 <= idx <= len(image_results[:5]):
+                            used_image_indices.add(idx)
+                            print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
+                            
+                    # If the response mentions images but doesn't use the exact citation format,
+                    # include highly relevant images that meet our threshold
+                    image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
+                    has_image_mentions = any(term.lower() in response_text.lower() for term in image_mention_terms)
+                    
+                    if has_image_mentions:
+                        matching_terms = [term for term in image_mention_terms if term.lower() in response_text.lower()]
+                        print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
+                    
+                    # Include relevant images only if the response mentions images or the query is explicitly about images
+                    image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
+                    is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
+                    
+                    if (has_image_mentions or is_image_query) and not used_image_indices:
+                        # Use a reasonable threshold for image relevance
+                        relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
+                        print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
+                        for i, img in enumerate(image_results[:5]):
+                            score = img.get('score', 0)
+                            if score >= relevance_threshold:
+                                used_image_indices.add(i+1)
+                                print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
+                            else:
+                                print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}", flush=True)
+                    
+                    # Only force-include an image for explicit image queries
+                    if is_image_query and not used_image_indices and image_results:
+                        # Include only the highest scoring image and only if it has a minimum score
+                        min_score_threshold = 0.2
+                        best_score = image_results[0].get('score', 0)
+                        if best_score >= min_score_threshold:
+                            used_image_indices.add(1)  # Add the first (highest scoring) image
+                            print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query", flush=True)
+                        else:
+                            print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images", flush=True)
+                    
+                    print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}", flush=True)
+                
+                # Prepare image details for referenced images
+                image_details = []
+                if used_image_indices and image_results:
+                    top_images = image_results[:5]  # Consider up to 5 images
+                    multi_dataset = len(set(img["dataset_id"] for img in top_images)) > 1
+                    for img_idx in used_image_indices:
+                        if 1 <= img_idx <= len(top_images):
+                            img = top_images[img_idx-1]
+                            base_url = img['url']
+                            download_url = f"{base_url}?download=true"
+                            prefix = ""
+                            if multi_dataset:
+                                prefix = f"[{dataset_id_to_name.get(img['dataset_id'], img['dataset_id'][:8])}] "
+                            image_details.append({
+                                "index": f"{prefix}Image {img_idx}",
+                                "caption": img['caption'],
+                                "url": img['url'],
+                                "download_url": download_url,
+                                "id": img['id'],
+                                "dataset_id": img['dataset_id'],
+                                "document_id": img.get("document_id"),
+                                "slide_number": img.get("slide_number"),
+                                "slide_title": img.get("slide_title"),
+                                "filename": img.get("filename")
+                            })
+                
+                # Debug logging before response
+                print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
+                print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
+                print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
+                if image_details:
+                    for detail in image_details:
+                        print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
+                
+                # Save the response in the conversation with image details
                 bot_response = {
                     "id": str(uuid.uuid4()),
                     "role": "assistant",
                     "content": response_text,
-                    "timestamp": datetime.datetime.now(UTC).isoformat()
+                    "timestamp": datetime.datetime.now(UTC).isoformat(),
+                    "referenced_images": [img["url"] for img in image_details] if image_details else [],
+                    "image_details": image_details
                 }
                 conversation["messages"].append(bot_response)
                 with open(conversation_file, 'w') as f:
@@ -1621,12 +1714,14 @@ def chat_with_bot(user_data, bot_id):
                     
                 return jsonify({
                     "response": response_text,
+                    "image_details": image_details if image_details else [],  # Always include image_details, even if empty
                     "debug": {
                         "all_responses": all_responses,
                         "anonymized_responses": anonymized_responses,
                         "response_metadata": response_metadata,
                         "logs": logs,
-                        "contexts": contexts
+                        "contexts": contexts,
+                        "image_results": image_results if image_results else []
                     } if debug_mode else None,
                     "conversation_id": conversation_id
                 }), 200
@@ -1709,16 +1804,19 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             
             winning_response = all_responses[winning_index]["response"]
             
-            # Extract which image indices were referenced in the winning response
+            # Extract which image indices were referenced in the winning response using robust regex
             used_image_indices = set()
             if image_results:
                 # Check which images are explicitly referenced in the response
-                print(f"IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
+                print(f"CHORUS MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
                 
-                for i in range(1, len(image_results[:5]) + 1):
-                    if f"[Image {i}]" in winning_response:
-                        used_image_indices.add(i)
-                        print(f"IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]", flush=True)
+                # Use robust regex to find all [Image X] references
+                matches = re.findall(r'\[Image (\d+)\]', winning_response)
+                for match in matches:
+                    idx = int(match)
+                    if 1 <= idx <= len(image_results[:5]):
+                        used_image_indices.add(idx)
+                        print(f"CHORUS MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
                         
                 # If the response mentions images but doesn't use the exact citation format,
                 # include highly relevant images that meet our threshold
@@ -1784,6 +1882,14 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                             "filename": img.get("filename")
                         })
             
+            # Debug logging before response
+            print(f"CHORUS MODE - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
+            print(f"CHORUS MODE - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
+            print(f"CHORUS MODE - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
+            if image_details:
+                for detail in image_details:
+                    print(f"CHORUS MODE - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
+            
             # Save the response in the conversation with image details
             bot_response = {
                 "id": str(uuid.uuid4()),
@@ -1799,7 +1905,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 
             return jsonify({
                 "response": winning_response,
-                "image_details": image_details,
+                "image_details": image_details if image_details else [],  # Always include image_details, even if empty
                 "debug": {
                     "all_responses": all_responses,
                     "anonymized_responses": anonymized_responses,
@@ -1841,7 +1947,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             if f"[{i}]" in response_text:
                 used_indices.add(i)
         
-        # Extract which image indices were referenced
+        # Extract which image indices were referenced using robust regex detection
         used_image_indices = set()
         if image_results:
             # Always define top_images here to avoid undefined variable errors
@@ -1851,11 +1957,21 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             max_images = 5 if is_image_query else 3
             top_images = image_results[:max_images]
             print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
-            # Flexible extraction: match [Image X], [Image X ...], [Image X in ...], etc.
+            
+            # Use robust regex to find all [Image X] references
+            matches = re.findall(r'\[Image (\d+)\]', response_text)
+            for match in matches:
+                idx = int(match)
+                if 1 <= idx <= len(top_images):
+                    used_image_indices.add(idx)
+                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
+                
+            # Also check if the image caption is mentioned in the response
             for i in range(1, len(top_images) + 1):
-                if re.search(rf"\\[Image {i}(?:[^\\]]*\\])?", response_text):
-                    used_image_indices.add(i)
-                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {i}]", flush=True)
+                if top_images[i-1].get('caption'):
+                    if top_images[i-1]['caption'].lower() in response_text.lower():
+                        used_image_indices.add(i)
+                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response mentions image caption for Image {i}", flush=True)
             image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
             has_image_mentions = any(term.lower() in response_text.lower() for term in image_mention_terms)
             if has_image_mentions:
@@ -1926,6 +2042,14 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                         "slide_title": img.get("slide_title"),
                         "filename": img.get("filename")
                     })
+        
+        # Debug logging before response
+        print(f"STANDARD MODE - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
+        print(f"STANDARD MODE - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
+        print(f"STANDARD MODE - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
+        if image_details:
+            for detail in image_details:
+                print(f"STANDARD MODE - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
 
         # Save the response in the conversation
         bot_response = {
@@ -1941,18 +2065,29 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
         with open(conversation_file, 'w') as f:
             json.dump(conversation, f)
             
-        return jsonify({
+        # Ensure we have image_details even if no images were found
+        if not image_details:
+            image_details = []
+            
+        # Log the final response structure
+        print(f"STANDARD MODE - RESPONSE DEBUG: Sending response with {len(image_details)} images", flush=True)
+        print(f"STANDARD MODE - RESPONSE DEBUG: Response text contains {response_text.count('[Image')} image references", flush=True)
+        
+        response_data = {
             "response": response_text,
             "source_documents": used_source_documents,
             "context_details": context_details,  # Include context details in response
-            "image_details": image_details,  # Include image details in response
-            "referenced_images": [img["url"] for img in image_details] if image_details else [],
+            "image_details": image_details,  # Always include image_details array
+            "referenced_images": [img["url"] for img in image_details],  # Always include referenced_images array
             "debug": {
                 "contexts": contexts,
-                "image_results": image_results if image_results else []
+                "image_results": image_results if image_results else [],
+                "used_image_indices": list(used_image_indices) if used_image_indices else []
             } if debug_mode else None,
             "conversation_id": conversation_id
-        }), 200
+        }
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"Error in chat_with_bot: {str(e)}")

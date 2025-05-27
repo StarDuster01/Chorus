@@ -159,12 +159,17 @@ const ChatInterface = () => {
             setSelectedChorusId(foundBot.chorus_id);
           }
           
-          // Check dataset status
+          // Check dataset status for each dataset associated with the bot
           try {
-            const statusResult = await botService.checkDatasetStatus(foundBot.dataset_id);
-            if (!statusResult.collection_exists || statusResult.document_count === 0) {
-              setError(`Dataset issue detected: ${!statusResult.collection_exists ? 
-                'Collection does not exist' : 'No documents in collection'}. Try rebuilding the dataset.`);
+            const botDatasets = await botService.getBotDatasets(botId);
+            if (botDatasets && botDatasets.length > 0) {
+              for (const dataset of botDatasets) {
+                const statusResult = await botService.checkDatasetStatus(dataset.id);
+                if (!statusResult.collection_exists || statusResult.document_count === 0) {
+                  console.warn(`Dataset ${dataset.id} issue: ${!statusResult.collection_exists ? 
+                    'Collection does not exist' : 'No documents in collection'}`);
+                }
+              }
             }
           } catch (statusErr) {
             console.error('Error checking dataset status:', statusErr);

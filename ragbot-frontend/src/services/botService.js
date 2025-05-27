@@ -5,7 +5,10 @@ const API_URL = process.env.REACT_APP_API_URL;
 // Helper function to get auth header
 const getAuthHeader = () => {
   const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (!token) {
+    throw new Error('No authentication token found. Please log in again.');
+  }
+  return { Authorization: `Bearer ${token}` };
 };
 
 // Datasets
@@ -174,6 +177,12 @@ const createBot = async (bot) => {
 
 const chatWithBot = async (botId, message, debugMode = false, useModelChorus = false, chorusId = '', conversationId = '') => {
   try {
+    // First get the bot's datasets to ensure they exist and are accessible
+    const botDatasets = await getBotDatasets(botId);
+    if (!botDatasets || botDatasets.length === 0) {
+      console.warn('Bot has no datasets configured');
+    }
+
     const response = await axios.post(
       `${API_URL}/bots/${botId}/chat`,
       { 
@@ -188,6 +197,12 @@ const chatWithBot = async (botId, message, debugMode = false, useModelChorus = f
         headers: getAuthHeader()
       }
     );
+
+    // Ensure image_details is always an array
+    if (!response.data.image_details) {
+      response.data.image_details = [];
+    }
+
     return response.data;
   } catch (error) {
     console.error('Error chatting with bot:', error);
