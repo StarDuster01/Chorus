@@ -69,5 +69,7 @@ ragbot-backend/logs
 ragbot-backend/datasets
 ragbot-backend/chroma_db
 ragbot-backend/chorus
+
 ragbot-frontend/build
 
+ragbot-backend/frontend/

@@ -1032,8 +1032,49 @@ def bulk_upload_handler(user_data, dataset_id):
                 errors.append({"file": fname, "error": str(e)})
     # Clean up temp dir
     shutil.rmtree(temp_dir)
-    # Update dataset counts
-    # (Optional: could re-count documents/images here)
+    
+    # Update dataset counts in the user's dataset file
+    try:
+        with open(user_datasets_file, 'r') as f:
+            datasets = json.load(f)
+        
+        # Find the dataset and update counts
+        for idx, ds in enumerate(datasets):
+            if ds["id"] == dataset_id:
+                # Count successful documents and images
+                doc_successes = [s for s in successes if s["type"] == "document"]
+                img_successes = [s for s in successes if s["type"] == "image"]
+                
+                # Update document count
+                if doc_successes:
+                    if "document_count" in ds:
+                        ds["document_count"] += len(doc_successes)
+                    else:
+                        ds["document_count"] = len(doc_successes)
+                
+                # Update chunk count
+                total_chunks = sum(s.get("chunks", 0) for s in doc_successes)
+                if total_chunks > 0:
+                    if "chunk_count" in ds:
+                        ds["chunk_count"] += total_chunks
+                    else:
+                        ds["chunk_count"] = total_chunks
+                
+                # Update image count
+                if img_successes:
+                    if "image_count" in ds:
+                        ds["image_count"] += len(img_successes)
+                    else:
+                        ds["image_count"] = len(img_successes)
+                break
+        
+        # Save updated dataset file
+        with open(user_datasets_file, 'w') as f:
+            json.dump(datasets, f)
+            
+    except Exception as e:
+        print(f"Error updating dataset counts: {str(e)}")
+    
     return jsonify({
         "successes": successes,
         "errors": errors,
