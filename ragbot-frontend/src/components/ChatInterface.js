@@ -1197,7 +1197,7 @@ const ChatInterface = () => {
                 {loading && (
                   <div className="bot-message">
                     <div className="message-content thinking-indicator">
-                      <TesseractLoader />
+                      <TesseractLoader size={80} />
                     </div>
                   </div>
                 )}

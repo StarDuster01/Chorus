@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 
-const TesseractLoader = ({ size = 40 }) => {
+const TesseractLoader = ({ size = 60 }) => {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
@@ -14,14 +14,14 @@ const TesseractLoader = ({ size = 40 }) => {
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // Camera setup
+    // Camera setup - moved further back to reduce zoom
     const camera = new THREE.PerspectiveCamera(
-      50,
+      45,
       1,
       0.1,
       1000
     );
-    camera.position.z = 5;
+    camera.position.z = 8;
 
     // Renderer setup
     const renderer = new THREE.WebGLRenderer({ 
@@ -104,9 +104,9 @@ const TesseractLoader = ({ size = 40 }) => {
       return [x, y, z, w];
     };
 
-    // Project 4D to 3D
+    // Project 4D to 3D - adjusted projection distance for better view
     const project4Dto3D = (vertex4D) => {
-      const distance = 2;
+      const distance = 3;
       const w = vertex4D[3];
       const scale = distance / (distance - w);
       return [

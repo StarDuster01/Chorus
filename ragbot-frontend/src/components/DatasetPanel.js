@@ -157,7 +157,7 @@ const DatasetPanel = () => {
       const response = await fetch(`/api/datasets/${selectedDataset.id}/bulk-upload`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: formData
       });
