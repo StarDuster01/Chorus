@@ -232,6 +232,8 @@ def get_datasets_handler(user_data):
     # Save updated datasets back to file
     with open(user_datasets_file, 'w') as f:
         json.dump(updated_datasets, f)
+        f.flush()  # Ensure data is written to disk
+        os.fsync(f.fileno())  # Force write to disk
     
     return jsonify(updated_datasets), 200
 
@@ -282,6 +284,8 @@ def create_dataset_handler(user_data):
     
     with open(user_datasets_file, 'w') as f:
         json.dump(datasets, f)
+        f.flush()  # Ensure data is written to disk
+        os.fsync(f.fileno())  # Force write to disk
     
     # Create a ChromaDB collection for this dataset
     try:
@@ -335,6 +339,8 @@ def delete_dataset_handler(user_data, dataset_id):
     # Save updated datasets list
     with open(user_datasets_file, 'w') as f:
         json.dump(datasets, f)
+        f.flush()  # Ensure data is written to disk
+        os.fsync(f.fileno())  # Force write to disk
 
     # Document and file cleanup
     DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
@@ -614,6 +620,8 @@ def remove_document_handler(user_data, dataset_id, document_id):
             
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
             
         return jsonify({
             "message": "Document removed successfully",
@@ -661,6 +669,8 @@ def rebuild_dataset_handler(user_data, dataset_id):
     
     with open(user_datasets_file, 'w') as f:
         json.dump(datasets, f)
+        f.flush()  # Ensure data is written to disk
+        os.fsync(f.fileno())  # Force write to disk
     
     # Try to delete the existing collection if it exists
     try:
@@ -828,6 +838,8 @@ def upload_image_handler(user_data, dataset_id, image_folder):
         # Save updated dataset
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
         
         # Save the metadata file
         indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
@@ -844,15 +856,21 @@ def upload_image_handler(user_data, dataset_id, image_folder):
                 # Write back
                 with open(metadata_file, 'w') as f:
                     json.dump(existing_metadata, f)
+                    f.flush()  # Ensure data is written to disk
+                    os.fsync(f.fileno())  # Force write to disk
             except Exception as e:
                 print(f"Error updating metadata file: {str(e)}")
                 # Create new file
                 with open(metadata_file, 'w') as f:
                     json.dump([image_metadata], f)
+                    f.flush()  # Ensure data is written to disk
+                    os.fsync(f.fileno())  # Force write to disk
         else:
             # Create new file
             with open(metadata_file, 'w') as f:
                 json.dump([image_metadata], f)
+                f.flush()  # Ensure data is written to disk
+                os.fsync(f.fileno())  # Force write to disk
         
         return jsonify({
             "message": "Image uploaded and processed successfully",
@@ -995,17 +1013,11 @@ def bulk_upload_handler(user_data, dataset_id):
                         continue
                     # Add pptx images if any
                     if pptx_image_metadata:
-                        for img_meta in pptx_image_metadata:
-                            img_meta["document_id"] = doc_id
-                            img_meta["file_path"] = dest_path
-                            img_meta["dataset_id"] = dataset_id
-                            img_meta["type"] = "image"
-                            img_filename = f"{uuid.uuid4()}.png"
-                            img_save_path = os.path.join(IMAGE_FOLDER, img_filename)
-                            shutil.copy(img_meta["image_path"], img_save_path)
-                            img_meta["path"] = img_save_path
-                            img_meta["url"] = f"/api/images/{img_filename}"
-                            image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
+                        # Skip saving PowerPoint slide images as separate files in bulk upload
+                        # The OCR text from slide images is already extracted and included in the document content
+                        # This avoids temp file path issues while preserving searchable text content
+                        print(f"Skipping saving {len(pptx_image_metadata)} slide images from {fname} as separate files")
+                        print("Note: OCR text from slide images is already included in the document content for searching")
                 elif ext in image_exts and dataset_type in ["mixed", "image"]:
                     # Copy to IMAGE_FOLDER
                     img_id = str(uuid.uuid4())
@@ -1032,6 +1044,28 @@ def bulk_upload_handler(user_data, dataset_id):
                 errors.append({"file": fname, "error": str(e)})
     # Clean up temp dir
     shutil.rmtree(temp_dir)
+    
+    # Update metadata files for images that were successfully uploaded
+    if successes:
+        img_successes = [s for s in successes if s["type"] == "image"]
+        if img_successes:
+            # Update the metadata file for image previews
+            indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+            os.makedirs(indices_dir, exist_ok=True)
+            metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+            
+            # Get the current metadata from the image processor
+            try:
+                if dataset_id in image_processor.image_metadata:
+                    current_metadata = image_processor.image_metadata[dataset_id]
+                    # Save/update the metadata file
+                    with open(metadata_file, 'w') as f:
+                        json.dump(current_metadata, f)
+                        f.flush()  # Ensure data is written to disk
+                        os.fsync(f.fileno())  # Force write to disk
+                    print(f"Updated metadata file for dataset {dataset_id} with {len(current_metadata)} images")
+            except Exception as e:
+                print(f"Error updating image metadata file: {str(e)}")
     
     # Update dataset counts in the user's dataset file
     try:
@@ -1071,6 +1105,8 @@ def bulk_upload_handler(user_data, dataset_id):
         # Save updated dataset file
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
             
     except Exception as e:
         print(f"Error updating dataset counts: {str(e)}")

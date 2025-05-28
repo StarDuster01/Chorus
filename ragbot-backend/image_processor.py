@@ -528,6 +528,8 @@ class ImageProcessor:
         metadata_path = os.path.join(self.indices_dir, f"{dataset_id}_metadata.json")
         with open(metadata_path, 'w') as f:
             json.dump(self.image_metadata[dataset_id], f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
     
     def delete_dataset(self, dataset_id: str) -> bool:
         """Delete a dataset's index and metadata

@@ -61,9 +61,13 @@ const TesseractLoader = ({ size = 60 }) => {
     const positions = new Float32Array(edges.length * 6);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-    // Material with dark green color for visibility on light backgrounds
+    // Random color selection - 1 in 10 chance for purple, otherwise dark green
+    const isPurple = Math.random() < 0.1; // 10% chance
+    const color = isPurple ? 0x6A1B9A : 0x1B5E20; // Purple or dark green
+    
+    // Material with randomly selected color
     const material = new THREE.LineBasicMaterial({ 
-      color: 0x1B5E20, // Dark green color
+      color: color,
       linewidth: 3,
       transparent: true,
       opacity: 0.9
