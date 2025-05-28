@@ -304,7 +304,7 @@ const BotPanel = () => {
                     >
                       {datasets.map(dataset => (
                         <option key={dataset.id} value={dataset.id}>
-                          {dataset.name} ({dataset.document_count} documents)
+                          {dataset.name} ({dataset.document_count || 0} documents{dataset.image_count > 0 ? `, ${dataset.image_count} images` : ''})
                         </option>
                       ))}
                     </Form.Select>
