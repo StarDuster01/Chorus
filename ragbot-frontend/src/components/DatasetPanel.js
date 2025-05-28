@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal } from 'react-bootstrap';
 import botService from '../services/botService';
+import TesseractLoader from './TesseractLoader';
 import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle, FaImage, FaChartBar } from 'react-icons/fa';
 
 const DatasetPanel = () => {
@@ -418,7 +419,7 @@ const DatasetPanel = () => {
 
               <div className="d-flex justify-content-end">
                 <Button variant="success" type="submit" disabled={loading} className="px-4 rounded-pill">
-                  {loading ? <><Spinner as="span" animation="border" size="sm" /> Creating...</> : 'Create Dataset'}
+                  {loading ? <><TesseractLoader /> Creating...</> : 'Create Dataset'}
                 </Button>
               </div>
             </Form>
@@ -486,7 +487,7 @@ const DatasetPanel = () => {
                 </Form.Group>
                 <div className="d-flex">
                   <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                    {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Upload'}
+                    {loading ? <><TesseractLoader /> Uploading...</> : 'Upload'}
                   </Button>
                   <Button 
                     variant="outline-secondary" 
@@ -518,7 +519,7 @@ const DatasetPanel = () => {
                 </Form.Group>
                 <div className="d-flex">
                   <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                    {loading ? <><Spinner as="span" animation="border" size="sm" /> Uploading...</> : 'Bulk Upload'}
+                    {loading ? <><TesseractLoader /> Uploading...</> : 'Bulk Upload'}
                   </Button>
                   <Button 
                     variant="outline-secondary" 
@@ -577,7 +578,7 @@ const DatasetPanel = () => {
             
             {documentListLoading ? (
               <div className="text-center py-4">
-                <Spinner animation="border" variant="primary" />
+                <TesseractLoader />
                 <p className="mt-2 text-muted">Loading documents...</p>
               </div>
             ) : documents.length === 0 ? (
@@ -645,7 +646,7 @@ const DatasetPanel = () => {
             
             {imageListLoading ? (
               <div className="text-center py-4">
-                <Spinner animation="border" variant="primary" />
+                <TesseractLoader />
                 <p className="mt-2 text-muted">Loading images...</p>
               </div>
             ) : images.length === 0 ? (
@@ -718,7 +719,7 @@ const DatasetPanel = () => {
 
       {loading && !createMode && !uploadMode && !viewDocumentsMode && !viewImagesMode ? (
         <div className="text-center my-5">
-          <Spinner animation="border" variant="primary" />
+          <TesseractLoader />
           <p className="mt-2 text-muted">Loading your datasets...</p>
         </div>
       ) : (
@@ -865,7 +866,7 @@ const DatasetPanel = () => {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleRemoveDocument} disabled={loading}>
-            {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Document'}
+            {loading ? <><TesseractLoader /> Removing...</> : 'Remove Document'}
           </Button>
         </Modal.Footer>
       </Modal>
@@ -902,7 +903,7 @@ const DatasetPanel = () => {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleRemoveImage} disabled={loading}>
-            {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Image'}
+            {loading ? <><TesseractLoader /> Removing...</> : 'Remove Image'}
           </Button>
         </Modal.Footer>
       </Modal>
@@ -936,7 +937,7 @@ const DatasetPanel = () => {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleRemoveDataset} disabled={loading}>
-            {loading ? <><Spinner as="span" animation="border" size="sm" /> Removing...</> : 'Remove Dataset'}
+            {loading ? <><TesseractLoader /> Removing...</> : 'Remove Dataset'}
           </Button>
         </Modal.Footer>
       </Modal>

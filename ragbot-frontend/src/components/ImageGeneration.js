@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Container, Row, Col, Form, Button, Card, Tabs, Tab, Alert, Spinner } from 'react-bootstrap';
 import botService from '../services/botService';
+import TesseractLoader from './TesseractLoader';
 
 const ImageGeneration = () => {
   // State for generation
@@ -187,7 +188,7 @@ const ImageGeneration = () => {
                       >
                         {enhancingPrompt ? (
                           <>
-                            <Spinner as="span" size="sm" animation="border" className="me-1" />
+                            <TesseractLoader />
                             Enhancing...
                           </>
                         ) : 'Enhance Prompt'}
@@ -265,7 +266,7 @@ const ImageGeneration = () => {
                   >
                     {loading ? (
                       <>
-                        <Spinner as="span" size="sm" animation="border" className="me-2" />
+                        <TesseractLoader />
                         Generating...
                       </>
                     ) : 'Generate Image'}
@@ -279,7 +280,7 @@ const ImageGeneration = () => {
                 <Card.Body className="d-flex flex-column align-items-center justify-content-center">
                   {loading ? (
                     <div className="text-center">
-                      <Spinner animation="border" role="status" />
+                      <TesseractLoader />
                       <p className="mt-3">Generating your image...</p>
                     </div>
                   ) : generatedImage ? (
@@ -408,7 +409,7 @@ const ImageGeneration = () => {
                   >
                     {loading ? (
                       <>
-                        <Spinner as="span" size="sm" animation="border" className="me-2" />
+                        <TesseractLoader />
                         Editing...
                       </>
                     ) : 'Edit Image'}
@@ -422,7 +423,7 @@ const ImageGeneration = () => {
                 <Card.Body className="d-flex flex-column align-items-center justify-content-center">
                   {loading ? (
                     <div className="text-center">
-                      <Spinner animation="border" role="status" />
+                      <TesseractLoader />
                       <p className="mt-3">Editing your image...</p>
                     </div>
                   ) : editedImage ? (

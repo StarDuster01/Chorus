@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Row, Col, Form, Button, Card, Spinner, Alert, Dropdown, Modal, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, Card, Alert, Dropdown, Modal, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import botService from '../services/botService';
+import LoadingAnimation from './LoadingAnimation';
+import TesseractLoader from './TesseractLoader';
 import '../markdown-styles.css';
 import { FaRobot, FaBug, FaChevronLeft, FaCode, FaListAlt, FaTerminal, FaVoteYea, FaImage, FaTimes, FaMagic, FaEdit, FaUsers, FaCog, FaExchangeAlt, FaCheck, FaLightbulb, FaFileAlt, FaDatabase, FaPlus } from 'react-icons/fa';
 import { v4 as uuid } from 'uuid';
@@ -755,6 +757,9 @@ const ChatInterface = () => {
 
   return (
     <Container fluid className="h-100 d-flex flex-column p-0">
+      <div className="brand-container">
+        Viridity Technologies
+      </div>
       <div className="chat-header py-2 px-3 border-bottom d-flex justify-content-between align-items-center">
         <div className="d-flex align-items-center">
           <Button 
@@ -874,8 +879,7 @@ const ChatInterface = () => {
           
           {loadingConversations ? (
             <div className="text-center py-4">
-              <Spinner animation="border" size="sm" className="me-2" />
-              Loading conversations...
+              <LoadingAnimation />
             </div>
           ) : conversations.length === 0 ? (
             <div className="text-center py-4 text-muted">
@@ -1193,8 +1197,7 @@ const ChatInterface = () => {
                 {loading && (
                   <div className="bot-message">
                     <div className="message-content thinking-indicator">
-                      <Spinner animation="border" size="sm" className="me-2" /> 
-                      Thinking...
+                      <TesseractLoader />
                     </div>
                   </div>
                 )}
@@ -1331,7 +1334,7 @@ const ChatInterface = () => {
                         <Dropdown.Header>Add Dataset</Dropdown.Header>
                         {loadingDatasets ? (
                           <div className="text-center p-2">
-                            <Spinner animation="border" size="sm" />
+                            <LoadingAnimation />
                           </div>
                         ) : (
                           availableDatasets && availableDatasets
@@ -1391,7 +1394,7 @@ const ChatInterface = () => {
                         >
                           {enhancingPrompt ? (
                             <>
-                              <Spinner as="span" size="sm" animation="border" className="me-1" />
+                              <TesseractLoader />
                               Enhancing...
                             </>
                           ) : 'Enhance Prompt'}
@@ -1463,7 +1466,7 @@ const ChatInterface = () => {
                             disabled={!message.trim() || loading || enhancingPrompt}
                             title="Enhance Prompt"
                           >
-                            {enhancingPrompt ? <Spinner animation="border" size="sm" /> : <FaLightbulb />}
+                            {enhancingPrompt ? <TesseractLoader /> : <FaLightbulb />}
                           </Button>
                         </OverlayTrigger>
                         
@@ -1471,8 +1474,9 @@ const ChatInterface = () => {
                           variant="outline-secondary"
                           onClick={() => fileInputRef.current?.click()}
                           title="Attach Image"
+                          disabled={loading}
                         >
-                          <FaImage />
+                          {loading ? <TesseractLoader /> : <FaImage />}
                         </Button>
                         
                         <Form.Control
@@ -1494,7 +1498,7 @@ const ChatInterface = () => {
                     >
                       {loading || generatingImage ? (
                         <>
-                          <Spinner as="span" animation="border" size="sm" className="me-2" />
+                          <TesseractLoader />
                           {imageGenMode ? 'Generating...' : 'Sending...'}
                         </>
                       ) : (
@@ -1526,7 +1530,7 @@ const ChatInterface = () => {
         </div>
       ) : (
         <div className="text-center my-5">
-          {!error && <Spinner animation="border" variant="primary" />}
+          {!error && <TesseractLoader />}
         </div>
       )}
 

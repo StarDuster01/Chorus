@@ -14,31 +14,6 @@ ragbot-frontend/     # React frontend (Node/React)
 docker-compose.yml   # Multi-service orchestration
 ```
 
-## 3. Local Rebuild (Full Stack)
-
-### a. Rebuild and Start Everything
-
-```bash
-docker-compose down
-docker-compose up --build -d
-```
-- This will rebuild both backend and frontend images and start them in detached mode.
-- Backend: http://localhost:50505
-- Frontend: http://localhost
-
-### b. Rebuild Only the Frontend
-
-```bash
-cd ragbot-frontend
-docker build -t ragbot-frontend .
-```
-
-### c. Rebuild Only the Backend
-
-```bash
-cd ragbot-backend
-docker build -t ragbot-backend .
-```
 
 ## 4. Building the React Frontend for Production
 
@@ -51,6 +26,10 @@ npm run build
 # Copy the build to the backend's static folder:
 cp -r build/* ../ragbot-backend/frontend/
 ```
+on windows 
+
+xcopy /E /I /Y ragbot-frontend\build ragbot-backend\frontend
+
 - The backend Flask app is configured to serve static files from `ragbot-backend/frontend/`.
 
 ## 5. Deploying to Azure
@@ -127,7 +106,18 @@ az container create --resource-group <group> --name ragbot-frontend --image <you
 
 This method allows you to test the application locally in a way that mirrors a single-container deployment, where the Flask backend serves the React frontend. This does not interfere with Azure deployment steps.
 
-1.  **Build the React Frontend:**
+**Complete Rebuild Process (Exact Order of Operations):**
+
+1.  **Stop and Remove Existing Docker Container:**
+    ```bash
+    # Stop the existing container
+    docker stop ragbot-local-instance
+    
+    # Remove the stopped container
+    docker rm ragbot-local-instance
+    ```
+
+2.  **Rebuild the React Frontend:**
     ```bash
     cd ragbot-frontend
     npm install  # If you haven't already or dependencies changed
@@ -135,66 +125,60 @@ This method allows you to test the application locally in a way that mirrors a s
     cd ..
     ```
 
-2.  **Copy Frontend Build to Backend's Static Folder:**
+3.  **Delete Existing Frontend Files in Backend:**
     ```bash
-    # Ensure the target directory exists
-    mkdir -p ragbot-backend/frontend/
-    # Copy the build (use 'cp -r' for Linux/macOS, 'xcopy /E /I /Y' for Windows)
+    # For Windows:
+    rmdir /S /Q ragbot-backend\frontend
+    # For Linux/macOS:
+    # rm -rf ragbot-backend/frontend
+    ```
+
+4.  **Copy New Frontend Build to Backend:**
+    ```bash
+    # Create the target directory
+    mkdir ragbot-backend\frontend
+    
+    # Copy the build files
     # For Windows:
     xcopy ragbot-frontend\build ragbot-backend\frontend\ /E /I /Y
     # For Linux/macOS:
+    # mkdir -p ragbot-backend/frontend/
     # cp -r ragbot-frontend/build/* ragbot-backend/frontend/
     ```
-    *Note: The `README.md` previously had `cp -r build/*`, but to be more robust and handle the `build` directory itself, it's better to copy the entire directory or its contents depending on the OS.*
 
-3.  **Build the Backend Docker Image (which now includes the frontend):**
+5.  **Build the New Backend Docker Image:**
     ```bash
     cd ragbot-backend
     docker build -t ragbot-local-unified .
     cd ..
     ```
 
-4.  **Run the Unified Docker Container:**
+6.  **Run the New Unified Docker Container:**
     ```bash
     docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
     ```
     - Access the application at `http://localhost:50505`.
 
-5.  **Managing the Container:**
-    
-    **If you get a "container name already in use" error:**
-    ```bash
-    # Stop the existing container
-    docker stop ragbot-local-instance
-    
-    # Remove the stopped container
-    docker rm ragbot-local-instance
-    
-    # Now run the new container
-    docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
-    ```
-    
-    **To restart with a fresh container (removes all data):**
-    ```bash
-    docker stop ragbot-local-instance
-    docker rm ragbot-local-instance
-    docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
-    ```
-    
-    **To update the application with code changes:**
-    ```bash
-    # 1. Stop and remove the old container
-    docker stop ragbot-local-instance
-    docker rm ragbot-local-instance
-    
-    # 2. Rebuild the image with your changes
-    cd ragbot-backend
-    docker build -t ragbot-local-unified .
-    cd ..
-    
-    # 3. Run the new container
-    docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
-    ```
+**Quick Commands for Different Scenarios:**
+
+**If you get a "container name already in use" error (container management only):**
+```bash
+# Stop the existing container
+docker stop ragbot-local-instance
+
+# Remove the stopped container
+docker rm ragbot-local-instance
+
+# Now run the new container
+docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
+```
+
+**To restart with a fresh container (removes all data, no rebuild):**
+```bash
+docker stop ragbot-local-instance
+docker rm ragbot-local-instance
+docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
+```
 
 ---
 

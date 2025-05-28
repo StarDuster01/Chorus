@@ -1,19 +1,21 @@
 :root {
   --primary-color: #2E8B57; /* Sea Green */
-  --secondary-color: #4682B4; /* Steel Blue */
+  --primary-dark: #1a5e3a;
   --primary-light: #e6f7f0;
+  --primary-gradient: linear-gradient(135deg, #2E8B57, #3cb371);
+  --secondary-color: #4682B4; /* Steel Blue */
   --secondary-light: #e6f0f7;
   --accent-color: #FFD700; /* Gold for highlights */
   --text-color: #333333;
   --muted-text: #6c757d;
-  --light-bg: #f9fafb;
+  --light-bg: #f0f7f4;
   --border-color: #e1e4e8;
   --success-color: #28a745;
   --danger-color: #dc3545;
   --warning-color: #ffc107;
   --info-color: #17a2b8;
-  --card-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
-  --transition: all 0.3s ease;
+  --card-shadow: 0 4px 15px rgba(46, 139, 87, 0.1);
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {
@@ -55,6 +57,17 @@ a:hover {
 /* Navbar customization */
 .navbar {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  background: var(--primary-gradient);
+  animation: navbarSlideDown 0.5s ease-out;
+}
+
+@keyframes navbarSlideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
 
 .bg-custom-primary {
@@ -79,10 +92,11 @@ a:hover {
   border-radius: 0.75rem;
   box-shadow: var(--card-shadow);
   transition: var(--transition);
+  background: linear-gradient(135deg, #ffffff, var(--primary-light));
 }
 
 .card:hover {
-  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.07), 0 5px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 8px 25px rgba(46, 139, 87, 0.15);
 }
 
 .card-header {
@@ -96,13 +110,13 @@ a:hover {
 }
 
 .btn-primary {
-  background-color: var(--primary-color);
-  border-color: var(--primary-color);
+  background: var(--primary-gradient);
+  border: none;
+  transition: var(--transition);
 }
 
-.btn-primary:hover, .btn-primary:focus {
-  background-color: #267349;
-  border-color: #267349;
+.btn-primary:hover {
+  box-shadow: 0 4px 15px rgba(46, 139, 87, 0.3);
 }
 
 .btn-secondary {
@@ -125,9 +139,16 @@ a:hover {
   color: white;
 }
 
+.form-control {
+  border-radius: 0.5rem;
+  border: 2px solid transparent;
+  transition: var(--transition);
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
 .form-control:focus {
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 0.25rem rgba(46, 139, 87, 0.25);
+  box-shadow: 0 0 0 0.25rem rgba(46, 139, 87, 0.15);
 }
 
 /* Chat interface styles */
@@ -135,6 +156,9 @@ a:hover {
   box-shadow: var(--card-shadow);
   border: none;
   height: 80vh;
+  background: linear-gradient(135deg, #ffffff, var(--primary-light));
+  border-radius: 1rem;
+  box-shadow: var(--card-shadow);
 }
 
 .chat-wrapper {
@@ -169,6 +193,10 @@ a:hover {
   margin-bottom: 1.5rem;
   max-width: 80%;
   position: relative;
+  transition: var(--transition);
+}
+
+.message:hover {
 }
 
 .user-message {
@@ -189,13 +217,13 @@ a:hover {
 }
 
 .user-message .message-content {
-  background-color: var(--secondary-color);
-  color: white;
+  background: var(--primary-gradient);
+  animation: messageSlideIn 0.3s ease-out;
 }
 
 .bot-message .message-content {
-  background-color: var(--primary-light);
-  color: var(--text-color);
+  background: linear-gradient(135deg, var(--primary-light), #ffffff);
+  animation: messageSlideIn 0.3s ease-out;
 }
 
 .message-time {
@@ -267,11 +295,10 @@ a:hover {
 .list-group-item {
   transition: var(--transition);
   border-left: 3px solid transparent;
-  padding: 1rem 1.25rem;
 }
 
 .list-group-item:hover {
-  border-left-color: var(--primary-color);
+  border-left: 3px solid var(--primary-color);
   background-color: var(--primary-light);
 }
 
@@ -355,4 +382,15 @@ a:hover {
   border: 1px solid var(--border-color);
   background-color: #f8f9fa;
   padding: 5px;
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 } 
