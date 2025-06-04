@@ -3,6 +3,22 @@ FROM python:3.11-slim
 
 WORKDIR /code
 
+# Install system dependencies including Tesseract OCR
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libtesseract-dev \
+    libleptonica-dev \
+    pkg-config \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libglib2.0-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libwebp-dev \
+    poppler-utils \
+    imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
@@ -13,7 +29,8 @@ COPY . .
 # Expose the port Flask runs on
 EXPOSE 50505
 
-# Create  Directory
+# Create Directory
 RUN mkdir -p /code/uploads/images /code/uploads/documents
+
 # Start the Flask app
 CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

@@ -26,3 +26,5 @@ faiss-cpu
 pytesseract
 pdf2image
 pymupdf
+Wand
+cairosvg

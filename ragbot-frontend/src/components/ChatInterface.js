@@ -117,12 +117,6 @@ const ChatInterface = () => {
   const [imagePreview, setImagePreview] = useState(null);
   const [lastMessageContent, setLastMessageContent] = useState('');
   
-  // Add state for image generation mode
-  const [imageGenMode, setImageGenMode] = useState(false);
-  const [generatingImage, setGeneratingImage] = useState(false);
-  const [imageGenPrompt, setImageGenPrompt] = useState('');
-  const [, setGeneratedImage] = useState(null);
-  
   // Add state for model chorus
   const [useModelChorus, setUseModelChorus] = useState(false);
   const [availableChorus, setAvailableChorus] = useState([]);
@@ -544,105 +538,10 @@ const ChatInterface = () => {
     }
   };
 
-  // Add function to handle image generation
-  const handleGenerateImage = async () => {
-    if (!imageGenPrompt.trim() || generatingImage) return;
-    
-    setGeneratingImage(true);
-    
-    try {
-      // Add user prompt to chat
-      const newUserMessage = {
-        id: Date.now(),
-        sender: 'user',
-        content: `Generate image: ${imageGenPrompt}`,
-        timestamp: new Date()
-      };
-      
-      setMessages(prev => [...prev, newUserMessage]);
-      
-      // Call image generation API
-      const result = await botService.generateImage(imageGenPrompt, {
-        model: "gpt-image-1",
-        size: "1024x1024",
-        quality: "medium"
-      });
-      
-      if (result.image_url) {
-        const fullUrl = `${process.env.REACT_APP_API_URL || '/api'}${result.image_url}`;
-        setGeneratedImage(fullUrl);
-        
-        // Add bot response with the generated image
-        const botMessage = {
-          id: Date.now(),
-          sender: 'bot',
-          content: (
-            <div>
-              <p>Here's the generated image:</p>
-              <img 
-                src={fullUrl} 
-                alt="AI Generated" 
-                style={{ maxHeight: '300px', maxWidth: '100%', borderRadius: '8px' }} 
-              />
-              <div className="mt-2">
-                <a 
-                  href={fullUrl} 
-                  target="_blank" 
-                  rel="noreferrer" 
-                  className="btn btn-sm btn-outline-primary"
-                >
-                  Open Full Size
-                </a>
-                <Button 
-                  variant="outline-secondary" 
-                  size="sm" 
-                  className="ms-2"
-                  onClick={() => {
-                    // Clear prompt but stay in image gen mode
-                    setImageGenPrompt('');
-                  }}
-                >
-                  Generate Another
-                </Button>
-              </div>
-            </div>
-          ),
-          timestamp: new Date()
-        };
-        
-        setMessages(prev => [...prev, botMessage]);
-      }
-    } catch (err) {
-      console.error('Error generating image:', err);
-      
-      // Add error message
-      const errorMessage = {
-        id: Date.now(),
-        sender: 'bot',
-        content: `Sorry, I couldn't generate that image: ${err.message || 'Unknown error'}`,
-        timestamp: new Date()
-      };
-      
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setGeneratingImage(false);
-      setImageGenPrompt('');
-      scrollToBottom();
-    }
-  };
-  
-  // Toggle between chat and image generation mode
-  const toggleImageGenMode = () => {
-    setImageGenMode(!imageGenMode);
-    if (imageGenMode) {
-      setImageGenPrompt('');
-    }
-  };
-
   // Add function to handle enhance prompt
   const handleEnhancePrompt = async () => {
     // Check if we're in image generation mode or regular chat mode
-    const promptText = imageGenMode ? imageGenPrompt : message;
+    const promptText = message;
     
     if (!promptText.trim() || enhancingPrompt) return;
     
@@ -658,12 +557,7 @@ const ChatInterface = () => {
         console.log('Setting enhanced prompt:', result.enhanced_prompt);
         
         // Update the appropriate state variable based on the current mode
-        if (imageGenMode) {
-          console.log('Setting image gen prompt via enhance:', result.enhanced_prompt);
-          setImageGenPrompt(result.enhanced_prompt);
-        } else {
-          setMessage(result.enhanced_prompt);
-        }
+        setMessage(result.enhanced_prompt);
         
         // Add a temporary success message
         setError('Prompt enhanced successfully!');
@@ -1210,25 +1104,12 @@ const ChatInterface = () => {
                 <div className="mb-2 d-flex justify-content-between align-items-center">
                   <div>
                     <Button 
-                      variant={imageGenMode ? "outline-primary" : "primary"} 
+                      variant="primary" 
                       size="sm" 
                       className="me-2" 
-                      onClick={() => {
-                        setImageGenMode(false);
-                        removeImage();
-                      }}
                       title="Text Chat Mode"
                     >
                       <FaRobot className="me-1" /> Chat
-                    </Button>
-                    <Button 
-                      variant={imageGenMode ? "primary" : "outline-primary"} 
-                      size="sm" 
-                      className="me-2"
-                      onClick={toggleImageGenMode}
-                      title="Image Generation Mode"
-                    >
-                      <FaMagic className="me-1" /> Generate Images
                     </Button>
                     <Dropdown className="d-inline-block me-2 position-relative">
                       {useModelChorus && (
@@ -1368,148 +1249,111 @@ const ChatInterface = () => {
                 </div>
                 
                 <Form onSubmit={handleSendMessage}>
-                  {imageGenMode ? (
-                    <Form.Group className="mb-3">
-                      <Form.Label>Describe the image you want to generate</Form.Label>
-                      <Form.Control
-                        as="textarea"
-                        rows={3}
-                        value={imageGenPrompt}
-                        onChange={(e) => {
-                          console.log('Setting image gen prompt via input:', e.target.value);
-                          setImageGenPrompt(e.target.value);
-                        }}
-                        placeholder="Describe the image you want to create..."
-                        disabled={generatingImage}
+                  {imageAttachment && (
+                    <div className="mb-3 position-relative d-inline-block">
+                      <img 
+                        src={imagePreview} 
+                        alt="Preview" 
+                        style={{ 
+                          maxHeight: '100px', 
+                          maxWidth: '200px', 
+                          borderRadius: '8px',
+                          border: '1px solid #ddd' 
+                        }} 
                       />
-                      <div className="d-flex justify-content-end mt-1">
-                        <Button 
-                          variant="outline-primary"
-                          size="sm"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleEnhancePrompt();
-                          }}
-                          disabled={enhancingPrompt || !imageGenPrompt.trim()}
-                        >
-                          {enhancingPrompt ? (
-                            <>
-                              <TesseractLoader />
-                              Enhancing...
-                            </>
-                          ) : 'Enhance Prompt'}
-                        </Button>
-                      </div>
-                    </Form.Group>
-                  ) : (
-                    <>
-                      {imageAttachment && (
-                        <div className="mb-3 position-relative d-inline-block">
-                          <img 
-                            src={imagePreview} 
-                            alt="Preview" 
-                            style={{ 
-                              maxHeight: '100px', 
-                              maxWidth: '200px', 
-                              borderRadius: '8px',
-                              border: '1px solid #ddd' 
-                            }} 
-                          />
-                          <Button 
-                            variant="danger" 
-                            size="sm" 
-                            className="position-absolute top-0 end-0" 
-                            style={{ margin: '5px' }}
-                            onClick={removeImage}
-                          >
-                            <FaTimes />
-                          </Button>
-                        </div>
-                      )}
-                    
-                      <div className="d-flex gap-2">
-                        <Form.Control
-                          type="text"
-                          value={message}
-                          onChange={(e) => setMessage(e.target.value)}
-                          placeholder="Type your message..."
-                          disabled={loading || enhancingPrompt}
-                        />
-                        
-                        <OverlayTrigger
-                          placement="top"
-                          overlay={<Tooltip>Enhance your prompt with AI</Tooltip>}
-                        >
-                          <Button 
-                            variant="outline-primary"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              try {
-                                handleEnhancePrompt();
-                              } catch (err) {
-                                console.error('Error in enhance prompt button click:', err);
-                                setError('Failed to start prompt enhancement');
-                                setEnhancingPrompt(false);
-                              }
-                            }}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              if (debugMode) {
-                                // Display API details in console for debugging
-                                console.log('Debug info for enhance prompt:');
-                                console.log('Primary API URL:', `${process.env.REACT_APP_API_URL || '/api'}/api/bots/enhance-prompt`);
-                                console.log('Fallback API URL:', `${process.env.REACT_APP_API_URL || '/api'}/api/bots/[botId]/chat`);
-                                console.log('Current message:', message);
-                                alert('Check console for API debugging info');
-                              }
-                            }}
-                            disabled={!message.trim() || loading || enhancingPrompt}
-                            title="Enhance Prompt"
-                          >
-                            {enhancingPrompt ? <TesseractLoader /> : <FaLightbulb />}
-                          </Button>
-                        </OverlayTrigger>
-                        
-                        <Button 
-                          variant="outline-secondary"
-                          onClick={() => fileInputRef.current?.click()}
-                          title="Attach Image"
-                          disabled={loading}
-                        >
-                          {loading ? <TesseractLoader /> : <FaImage />}
-                        </Button>
-                        
-                        <Form.Control
-                          type="file"
-                          ref={fileInputRef}
-                          accept="image/*"
-                          className="d-none"
-                          onChange={handleImageSelect}
-                        />
-                      </div>
-                    </>
+                      <Button 
+                        variant="danger" 
+                        size="sm" 
+                        className="position-absolute top-0 end-0" 
+                        style={{ margin: '5px' }}
+                        onClick={removeImage}
+                      >
+                        <FaTimes />
+                      </Button>
+                    </div>
                   )}
+                
+                  <div className="d-flex gap-2">
+                    <Form.Control
+                      type="text"
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      placeholder="Type your message..."
+                      disabled={loading || enhancingPrompt}
+                    />
+                    
+                    <OverlayTrigger
+                      placement="top"
+                      overlay={<Tooltip>Enhance your prompt with AI</Tooltip>}
+                    >
+                      <Button 
+                        variant="outline-primary"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          try {
+                            handleEnhancePrompt();
+                          } catch (err) {
+                            console.error('Error in enhance prompt button click:', err);
+                            setError('Failed to start prompt enhancement');
+                            setEnhancingPrompt(false);
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          if (debugMode) {
+                            // Display API details in console for debugging
+                            console.log('Debug info for enhance prompt:');
+                            console.log('Primary API URL:', `${process.env.REACT_APP_API_URL || '/api'}/api/bots/enhance-prompt`);
+                            console.log('Fallback API URL:', `${process.env.REACT_APP_API_URL || '/api'}/api/bots/[botId]/chat`);
+                            console.log('Current message:', message);
+                            alert('Check console for API debugging info');
+                          }
+                        }}
+                        disabled={!message.trim() || loading || enhancingPrompt}
+                        title="Enhance Prompt"
+                      >
+                        {enhancingPrompt ? <TesseractLoader /> : <FaLightbulb />}
+                      </Button>
+                    </OverlayTrigger>
+                    
+                    <Button 
+                      variant="outline-secondary"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="Attach Image"
+                      disabled={loading}
+                    >
+                      {loading ? <TesseractLoader /> : <FaImage />}
+                    </Button>
+                    
+                    <Form.Control
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      className="d-none"
+                      onChange={handleImageSelect}
+                    />
+                  </div>
                   
                   <div className="mt-3 d-flex justify-content-end">
                     <Button 
                       variant="primary" 
                       type="submit" 
-                      disabled={loading || generatingImage || (imageGenMode && !imageGenPrompt.trim()) || (!imageGenMode && !message.trim() && !imageAttachment)}
+                      disabled={loading || (imageAttachment && !message.trim()) || (!imageAttachment && !message.trim())}
                     >
-                      {loading || generatingImage ? (
+                      {loading ? (
                         <>
                           <TesseractLoader />
-                          {imageGenMode ? 'Generating...' : 'Sending...'}
+                          Sending...
                         </>
                       ) : (
-                        imageGenMode ? 'Generate Image' : 'Send'
+                        imageAttachment ? 'Send' : 'Send'
                       )}
                     </Button>
                   </div>
                 </Form>
 
                 {/* Image Retrieval Instruction Card */}
-                {!imageGenMode && (
+                {!imageAttachment && (
                   <div className="mt-3 p-2 bg-light rounded border" style={{ fontSize: '0.85rem' }}>
                     <div className="d-flex align-items-center mb-1">
                       <FaLightbulb className="text-warning me-1" />

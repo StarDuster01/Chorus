@@ -33,7 +33,16 @@ def extract_text_from_image(img):
     try:
         if isinstance(img, str):
             # If img is a path
-            img = Image.open(img)
+            if img.lower().endswith('.wmf'):
+                # Convert WMF to PNG first
+                from dataset_handlers import convert_wmf_to_png
+                png_path = convert_wmf_to_png(img)
+                if png_path:
+                    img = Image.open(png_path)
+                else:
+                    raise Exception("Failed to convert WMF to PNG")
+            else:
+                img = Image.open(img)
         
         # Convert image to RGB if it's not
         if img.mode != 'RGB':
