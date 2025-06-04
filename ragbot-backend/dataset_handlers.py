@@ -930,43 +930,68 @@ def bulk_upload_handler(user_data, dataset_id):
     from app import image_processor
     from image_handlers import resize_image
     
+    print(f"Starting bulk upload for dataset {dataset_id}")
+    
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     if not os.path.exists(user_datasets_file):
+        print(f"Dataset file not found: {user_datasets_file}")
         return jsonify({"error": "Dataset not found"}), 404
+        
     with open(user_datasets_file, 'r') as f:
         datasets = json.load(f)
     dataset = next((d for d in datasets if d["id"] == dataset_id), None)
     if not dataset:
+        print(f"Dataset {dataset_id} not found in user's datasets")
         return jsonify({"error": "Dataset not found"}), 404
+        
     dataset_type = dataset.get("type", "mixed")
+    print(f"Dataset type: {dataset_type}")
+    
     # Only allow for mixed or text/image datasets
     if dataset_type not in ["mixed", "text", "image"]:
+        print(f"Invalid dataset type for bulk upload: {dataset_type}")
         return jsonify({"error": "Bulk upload only supported for mixed, text, or image datasets"}), 400
+        
     # Check for file in request
     if 'file' not in request.files:
+        print("No file part in request")
         return jsonify({"error": "No file part"}), 400
+        
     file = request.files['file']
     if file.filename == '':
+        print("No selected file")
         return jsonify({"error": "No selected file"}), 400
+        
     filename = secure_filename(file.filename)
     file_ext = os.path.splitext(filename)[1].lower()
     if file_ext != '.zip':
+        print(f"Invalid file extension: {file_ext}")
         return jsonify({"error": "Only zip files are supported for bulk upload"}), 400
+        
+    print(f"Processing zip file: {filename}")
+    
     # Save zip to temp dir
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, filename)
     file.save(zip_path)
+    print(f"Saved zip to: {zip_path}")
+    
     extract_dir = os.path.join(temp_dir, "extracted")
     os.makedirs(extract_dir, exist_ok=True)
+    
     # Extract zip
     try:
+        print("Extracting zip file...")
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(extract_dir)
+        print("Zip extraction complete")
     except Exception as e:
+        print(f"Failed to extract zip: {str(e)}")
         shutil.rmtree(temp_dir)
         return jsonify({"error": f"Failed to extract zip: {str(e)}"}), 400
+        
     # Walk extracted files
     successes = []
     errors = []
@@ -976,35 +1001,58 @@ def bulk_upload_handler(user_data, dataset_id):
     IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
     os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
     os.makedirs(IMAGE_FOLDER, exist_ok=True)
+    
+    print("Processing extracted files...")
+    total_files = 0
+    processed_files = 0
+    
+    # Count total files first
+    for root, dirs, files in os.walk(extract_dir):
+        total_files += len(files)
+    
+    print(f"Found {total_files} files to process")
+    
     for root, dirs, files in os.walk(extract_dir):
         for fname in files:
+            processed_files += 1
             fpath = os.path.join(root, fname)
             ext = os.path.splitext(fname)[1].lower()
+            print(f"Processing file {processed_files}/{total_files}: {fname}")
+            
             try:
                 if ext in text_exts and dataset_type in ["mixed", "text"]:
+                    print(f"Processing text document: {fname}")
                     # Copy to DOCUMENT_FOLDER
                     doc_id = str(uuid.uuid4())
                     dest_name = f"{doc_id}_{secure_filename(fname)}"
                     dest_path = os.path.join(DOCUMENT_FOLDER, dest_name)
                     shutil.copy2(fpath, dest_path)
-                    # Use existing logic for document upload
+                    
                     # Extract text
+                    print(f"Extracting text from {fname}")
                     if ext == '.pptx':
                         text, pptx_image_metadata = extract_text_from_pptx(dest_path)
                     else:
                         text = extract_text_from_file(dest_path)
                         pptx_image_metadata = []
+                        
                     if not text:
+                        print(f"Could not extract text from {fname}")
                         os.remove(dest_path)
                         errors.append({"file": fname, "error": "Could not extract text"})
                         continue
+                        
                     # Chunking
+                    print(f"Creating chunks for {fname}")
                     is_powerpoint = ext == '.pptx' or "## SLIDE " in text
                     max_chunk_size = 3000 if is_powerpoint else 1000
                     overlap = 500 if is_powerpoint else 200
                     chunks = create_semantic_chunks(text, max_chunk_size=max_chunk_size, overlap=overlap)
+                    print(f"Created {len(chunks)} chunks for {fname}")
+                    
                     # Add to ChromaDB
                     try:
+                        print(f"Adding {fname} to ChromaDB")
                         chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
                         chroma_client = chromadb.PersistentClient(path=chroma_db_path)
                         openai_ef = embedding_functions.OpenAIEmbeddingFunction(
@@ -1033,23 +1081,21 @@ def bulk_upload_handler(user_data, dataset_id):
                             documents=chunks,
                             metadatas=metadatas
                         )
+                        print(f"Successfully added {fname} to ChromaDB")
                         successes.append({"file": fname, "type": "document", "chunks": len(chunks)})
                     except Exception as e:
+                        print(f"ChromaDB error for {fname}: {str(e)}")
                         errors.append({"file": fname, "error": f"ChromaDB error: {str(e)}"})
                         continue
-                    # Add pptx images if any
-                    if pptx_image_metadata:
-                        # Skip saving PowerPoint slide images as separate files in bulk upload
-                        # The OCR text from slide images is already extracted and included in the document content
-                        # This avoids temp file path issues while preserving searchable text content
-                        print(f"Skipping saving {len(pptx_image_metadata)} slide images from {fname} as separate files")
-                        print("Note: OCR text from slide images is already included in the document content for searching")
+                        
                 elif ext in image_exts and dataset_type in ["mixed", "image"]:
+                    print(f"Processing image: {fname}")
                     # Copy to IMAGE_FOLDER
                     img_id = str(uuid.uuid4())
                     dest_name = f"{img_id}{ext}"
                     dest_path = os.path.join(IMAGE_FOLDER, dest_name)
                     shutil.copy2(fpath, dest_path)
+                    print(f"Resizing image: {fname}")
                     dest_path = resize_image(dest_path, max_dimension=1024)
                     meta = {
                         "id": img_id,
@@ -1062,19 +1108,25 @@ def bulk_upload_handler(user_data, dataset_id):
                         "user_id": user_data['id'],
                         "username": user_data['username']
                     }
+                    print(f"Adding image to dataset: {fname}")
                     image_processor.add_image_to_dataset(dataset_id, dest_path, meta)
                     successes.append({"file": fname, "type": "image"})
+                    print(f"Successfully processed image: {fname}")
                 else:
+                    print(f"Unsupported file type for this dataset: {fname}")
                     errors.append({"file": fname, "error": "Unsupported file type for this dataset"})
             except Exception as e:
+                print(f"Error processing {fname}: {str(e)}")
                 errors.append({"file": fname, "error": str(e)})
-    # Clean up temp dir
+                
+    print("Cleaning up temporary directory")
     shutil.rmtree(temp_dir)
     
     # Update metadata files for images that were successfully uploaded
     if successes:
         img_successes = [s for s in successes if s["type"] == "image"]
         if img_successes:
+            print("Updating image metadata files")
             # Update the metadata file for image previews
             indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
             os.makedirs(indices_dir, exist_ok=True)
@@ -1095,6 +1147,7 @@ def bulk_upload_handler(user_data, dataset_id):
     
     # Update dataset counts in the user's dataset file
     try:
+        print("Updating dataset counts")
         with open(user_datasets_file, 'r') as f:
             datasets = json.load(f)
         
@@ -1133,10 +1186,12 @@ def bulk_upload_handler(user_data, dataset_id):
             json.dump(datasets, f)
             f.flush()  # Ensure data is written to disk
             os.fsync(f.fileno())  # Force write to disk
+        print("Successfully updated dataset counts")
             
     except Exception as e:
         print(f"Error updating dataset counts: {str(e)}")
     
+    print(f"Bulk upload complete: {len(successes)} files added, {len(errors)} errors")
     return jsonify({
         "successes": successes,
         "errors": errors,

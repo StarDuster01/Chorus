@@ -13,7 +13,7 @@ workers = 2
 threads = 4
 
 # Increased timeouts for image processing operations
-timeout = 600
+timeout = 7200
 keepalive = 30
 
 # Memory optimization
