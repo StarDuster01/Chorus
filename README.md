@@ -188,6 +188,9 @@ az containerapp show --name chorusbotfull --resource-group viridity_tech
 # View Container App logs
 az containerapp logs show --name chorusbotfull --resource-group viridity_tech --follow
 
+# Watch real-time console output
+az containerapp logs show --name chorusbotfull --resource-group viridity_tech --follow --type console
+
 # Check revisions
 az containerapp revision list --name chorusbotfull --resource-group viridity_tech --output table
 

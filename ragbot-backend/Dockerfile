@@ -3,7 +3,7 @@ FROM python:3.11-slim
 
 WORKDIR /code
 
-# Install system dependencies including Tesseract OCR
+# Install system dependencies including Tesseract OCR and WMF support
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y \
     libwebp-dev \
     poppler-utils \
     imagemagick \
+    libwmf-dev \
+    libwmf0.2-7 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
@@ -32,5 +34,15 @@ EXPOSE 50505
 # Create Directory
 RUN mkdir -p /code/uploads/images /code/uploads/documents
 
+# Create startup script
+RUN echo '#!/bin/bash\n\
+# Clean up ChromaDB if it exists\n\
+if [ -d "/code/chroma_db" ]; then\n\
+    rm -rf /code/chroma_db/*\n\
+fi\n\
+# Start the Flask app\n\
+exec gunicorn -c gunicorn.conf.py app:app\n\
+' > /code/start.sh && chmod +x /code/start.sh
+
 # Start the Flask app
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]
+CMD ["/code/start.sh"]
