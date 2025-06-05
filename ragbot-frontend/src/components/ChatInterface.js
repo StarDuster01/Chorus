@@ -651,9 +651,6 @@ const ChatInterface = () => {
 
   return (
     <Container fluid className="h-100 d-flex flex-column p-0">
-      <div className="brand-container">
-        Viridity Technologies
-      </div>
       <div className="chat-header py-2 px-3 border-bottom d-flex justify-content-between align-items-center">
         <div className="d-flex align-items-center">
           <Button 
@@ -1353,21 +1350,7 @@ const ChatInterface = () => {
                 </Form>
 
                 {/* Image Retrieval Instruction Card */}
-                {!imageAttachment && (
-                  <div className="mt-3 p-2 bg-light rounded border" style={{ fontSize: '0.85rem' }}>
-                    <div className="d-flex align-items-center mb-1">
-                      <FaLightbulb className="text-warning me-1" />
-                      <strong>Image Search Tips:</strong>
-                    </div>
-                    <p className="mb-1">To retrieve images, include these phrases in your message:</p>
-                    <ul className="ps-3 mb-0">
-                      <li><em>"show me image"</em></li>
-                      <li><em>"find a picture of"</em></li>
-                      <li><em>"display the visual"</em></li>
-                      <li><em>"include the diagram"</em></li>
-                    </ul>
-                  </div>
-                )}
+
               </Card.Footer>
             </Card>
           </div>

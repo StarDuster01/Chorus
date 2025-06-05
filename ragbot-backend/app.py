@@ -94,6 +94,9 @@ from chorus_handlers import (
 # Import constants
 from constants import DEFAULT_LLM_MODEL
 from constants import IMAGE_GENERATION_MODEL
+
+# Import global model manager for pre-loading models
+from image_processor import global_model_manager
 # Load environment variables
 load_dotenv()
 
@@ -145,6 +148,14 @@ openai_ef = embedding_functions.OpenAIEmbeddingFunction(
     api_key=os.getenv("OPENAI_API_KEY"),
     model_name="text-embedding-ada-002"
 )
+
+# Pre-load AI models at startup for better performance
+print("[STARTUP] Pre-loading AI models...")
+try:
+    global_model_manager.load_models_once()
+except Exception as e:
+    print(f"[STARTUP] Warning: Failed to pre-load models: {str(e)}")
+    print("[STARTUP] Models will be loaded on-demand (slower performance)")
 
 # Initialize ImageProcessor for image RAG
 app_base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -500,8 +511,20 @@ def upload_document(user_data, dataset_id):
 
 @app.route('/health')
 def health():
-    """Health check endpoint for Kubernetes probes"""
+    """Simple health check for Kubernetes probes - independent of model loading"""
     return "OK", 200
+
+@app.route('/health/models')
+def model_health():
+    """Detailed health check including model status"""
+    try:
+        model_status = {
+            "models_loaded": global_model_manager._models_loaded,
+            "status": "healthy" if global_model_manager._models_loaded else "loading"
+        }
+        return jsonify(model_status), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "error"}), 500
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>', methods=['DELETE'])
 @require_auth_wrapper

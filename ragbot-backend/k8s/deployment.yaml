@@ -5,6 +5,8 @@ metadata:
   namespace: ragbot
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: ragbot
@@ -53,21 +55,23 @@ spec:
           mountPath: /code/bots
         - name: chorus
           mountPath: /code/chorus
+        - name: model-cache
+          mountPath: /code/model_cache
         livenessProbe:
           httpGet:
             path: /health
             port: 50505
-          initialDelaySeconds: 120
+          initialDelaySeconds: 60
           periodSeconds: 30
-          timeoutSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 50505
-          initialDelaySeconds: 90
+          initialDelaySeconds: 30
           periodSeconds: 15
-          timeoutSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 3
       volumes:
       - name: chroma-db
@@ -91,6 +95,9 @@ spec:
       - name: chorus
         persistentVolumeClaim:
           claimName: ragbot-chorus
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: ragbot-model-cache
 ---
 apiVersion: v1
 kind: Service

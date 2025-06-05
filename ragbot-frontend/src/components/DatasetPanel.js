@@ -86,8 +86,9 @@ const DatasetPanel = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const data = await botService.createDataset(newDataset);
-      setDatasets([...datasets, data]);
+      await botService.createDataset(newDataset);
+      const data = await botService.getDatasets();
+      setDatasets(data);
       setCreateMode(false);
       setNewDataset({
         name: '',

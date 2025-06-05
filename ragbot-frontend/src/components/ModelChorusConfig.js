@@ -75,10 +75,10 @@ const ModelChorusConfig = () => {
           setIsActive(false);
           setUseDiverseRag(false);
           setResponseModels([
-            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.7, weight: 1 }
+            { id: Math.random().toString(36).substr(2, 9), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.7, weight: 1 }
           ]);
           setEvaluatorModels([
-            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.2, weight: 1 }
+            { id: Math.random().toString(36).substr(2, 9), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.2, weight: 1 }
           ]);
         }
       } catch (err) {

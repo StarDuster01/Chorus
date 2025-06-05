@@ -53,7 +53,10 @@ function App() {
           <Container>
             <Navbar.Brand as={Link} to="/">
               <img src={logo} alt="Chorus Logo" />
-              Chorus <span style={{ fontSize: '0.7em', fontWeight: 'normal', opacity: 0.7 }}>Viridity Technologies</span>
+              <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                Chorus 
+                <span style={{ fontSize: '0.8em', fontWeight: 'normal', opacity: 0.8 }}>by Viridity Technologies</span>
+              </span>
             </Navbar.Brand>
             <Navbar.Toggle aria-controls="basic-navbar-nav" />
             <Navbar.Collapse id="basic-navbar-nav">

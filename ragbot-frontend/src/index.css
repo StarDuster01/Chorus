@@ -155,7 +155,7 @@ a:hover {
 .chat-container {
   box-shadow: var(--card-shadow);
   border: none;
-  height: 80vh;
+  height: 90vh;
   background: linear-gradient(135deg, #ffffff, var(--primary-light));
   border-radius: 1rem;
   box-shadow: var(--card-shadow);
