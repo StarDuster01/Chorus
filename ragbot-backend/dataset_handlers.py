@@ -13,6 +13,8 @@ import numpy as np
 import io
 import zipfile
 import shutil
+import threading
+import time
 
 from text_extractors import (
     extract_text_from_image,
@@ -921,14 +923,18 @@ def upload_image_handler(user_data, dataset_id, image_folder):
 
 def bulk_upload_handler(user_data, dataset_id):
     """Bulk upload a zip file of documents/images to a dataset
+    
     Args:
         user_data: User data from JWT token
         dataset_id: ID of the dataset to upload to
+        
     Returns:
         tuple: JSON response and status code
     """
-    from app import image_processor
+    from app import image_processor, app
     from image_handlers import resize_image
+    import threading
+    import time
     
     print(f"Starting bulk upload for dataset {dataset_id}")
     
@@ -973,229 +979,223 @@ def bulk_upload_handler(user_data, dataset_id):
     print(f"Processing zip file: {filename}")
     
     # Save zip to temp dir
-    temp_dir = tempfile.mkdtemp()
+    temp_dir = os.path.join(app.config['TEMP_FOLDER'], str(uuid.uuid4()))
+    os.makedirs(temp_dir, exist_ok=True)
     zip_path = os.path.join(temp_dir, filename)
     file.save(zip_path)
     print(f"Saved zip to: {zip_path}")
     
-    extract_dir = os.path.join(temp_dir, "extracted")
-    os.makedirs(extract_dir, exist_ok=True)
+    # Create a processing status file
+    status_file = os.path.join(temp_dir, "status.json")
+    initial_status = {
+        "status": "uploaded",
+        "message": "File uploaded successfully, starting processing...",
+        "total_files": 0,
+        "processed_files": 0,
+        "current_file": None,
+        "successes": [],
+        "errors": []
+    }
     
-    # Extract zip
-    try:
-        print("Extracting zip file...")
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_dir)
-        print("Zip extraction complete")
-    except Exception as e:
-        print(f"Failed to extract zip: {str(e)}")
-        shutil.rmtree(temp_dir)
-        return jsonify({"error": f"Failed to extract zip: {str(e)}"}), 400
-        
-    # Walk extracted files
-    successes = []
-    errors = []
-    text_exts = ['.pdf', '.docx', '.txt', '.pptx']
-    image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
-    DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
-    IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
-    os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
-    os.makedirs(IMAGE_FOLDER, exist_ok=True)
+    with open(status_file, 'w') as f:
+        json.dump(initial_status, f)
     
-    print("Processing extracted files...")
-    total_files = 0
-    processed_files = 0
-    
-    # Count total files first
-    for root, dirs, files in os.walk(extract_dir):
-        total_files += len(files)
-    
-    print(f"Found {total_files} files to process")
-    
-    for root, dirs, files in os.walk(extract_dir):
-        for fname in files:
-            processed_files += 1
-            fpath = os.path.join(root, fname)
-            ext = os.path.splitext(fname)[1].lower()
-            print(f"Processing file {processed_files}/{total_files}: {fname}")
+    # Start processing in a background thread
+    def process_files():
+        try:
+            extract_dir = os.path.join(temp_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
             
-            try:
-                if ext in text_exts and dataset_type in ["mixed", "text"]:
-                    print(f"Processing text document: {fname}")
-                    # Copy to DOCUMENT_FOLDER
-                    doc_id = str(uuid.uuid4())
-                    dest_name = f"{doc_id}_{secure_filename(fname)}"
-                    dest_path = os.path.join(DOCUMENT_FOLDER, dest_name)
-                    shutil.copy2(fpath, dest_path)
+            # Extract zip
+            print("Extracting zip file...")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            print("Zip extraction complete")
+            
+            # Count total files
+            total_files = 0
+            for root, dirs, files in os.walk(extract_dir):
+                total_files += len(files)
+            
+            # Update status with total files
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+            status["total_files"] = total_files
+            status["status"] = "processing"
+            with open(status_file, 'w') as f:
+                json.dump(status, f)
+            
+            # Process files
+            successes = []
+            errors = []
+            text_exts = ['.pdf', '.docx', '.txt', '.pptx']
+            image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
+            DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
+            IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
+            os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
+            os.makedirs(IMAGE_FOLDER, exist_ok=True)
+            
+            processed_files = 0
+            for root, dirs, files in os.walk(extract_dir):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    ext = os.path.splitext(fname)[1].lower()
                     
-                    # Extract text
-                    print(f"Extracting text from {fname}")
-                    if ext == '.pptx':
-                        text, pptx_image_metadata = extract_text_from_pptx(dest_path)
-                    else:
-                        text = extract_text_from_file(dest_path)
-                        pptx_image_metadata = []
-                        
-                    if not text:
-                        print(f"Could not extract text from {fname}")
-                        os.remove(dest_path)
-                        errors.append({"file": fname, "error": "Could not extract text"})
-                        continue
-                        
-                    # Chunking
-                    print(f"Creating chunks for {fname}")
-                    is_powerpoint = ext == '.pptx' or "## SLIDE " in text
-                    max_chunk_size = 3000 if is_powerpoint else 1000
-                    overlap = 500 if is_powerpoint else 200
-                    chunks = create_semantic_chunks(text, max_chunk_size=max_chunk_size, overlap=overlap)
-                    print(f"Created {len(chunks)} chunks for {fname}")
+                    # Update status with current file
+                    with open(status_file, 'r') as f:
+                        status = json.load(f)
+                    status["current_file"] = fname
+                    status["processed_files"] = processed_files
+                    with open(status_file, 'w') as f:
+                        json.dump(status, f)
                     
-                    # Add to ChromaDB
                     try:
-                        print(f"Adding {fname} to ChromaDB")
-                        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-                        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-                        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-                            api_key=os.getenv("OPENAI_API_KEY"),
-                            model_name="text-embedding-ada-002"
-                        )
-                        collection = chroma_client.get_or_create_collection(
-                            name=dataset_id,
-                            embedding_function=openai_ef
-                        )
-                        chunk_ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
-                        metadatas = [{
-                            "document_id": doc_id,
-                            "dataset_id": dataset_id,
-                            "filename": fname,
-                            "source": fname,
-                            "file_path": dest_path,
-                            "chunk": i,
-                            "total_chunks": len(chunks),
-                            "file_type": ext,
-                            "is_powerpoint": is_powerpoint,
-                            "created_at": datetime.datetime.now(UTC).isoformat(),
-                        } for i in range(len(chunks))]
-                        collection.add(
-                            ids=chunk_ids,
-                            documents=chunks,
-                            metadatas=metadatas
-                        )
-                        print(f"Successfully added {fname} to ChromaDB")
-                        successes.append({"file": fname, "type": "document", "chunks": len(chunks)})
-                    except Exception as e:
-                        print(f"ChromaDB error for {fname}: {str(e)}")
-                        errors.append({"file": fname, "error": f"ChromaDB error: {str(e)}"})
-                        continue
+                        if ext in text_exts and dataset_type in ["mixed", "text"]:
+                            # Process text document
+                            doc_id = str(uuid.uuid4())
+                            dest_name = f"{doc_id}{ext}"
+                            dest_path = os.path.join(DOCUMENT_FOLDER, dest_name)
+                            shutil.copy2(fpath, dest_path)
+                            
+                            # Extract text and create chunks
+                            if ext == '.pptx':
+                                text, pptx_image_metadata = extract_text_from_pptx(dest_path)
+                            else:
+                                text = extract_text_from_file(dest_path)
+                                pptx_image_metadata = []
+                                
+                            if not text:
+                                errors.append({"file": fname, "error": "Could not extract text from file"})
+                                continue
+                                
+                            chunks = create_text_chunks(text)
+                            
+                            # Add to ChromaDB
+                            try:
+                                add_document_to_chroma(dataset_id, chunks, doc_id, fname)
+                                successes.append({
+                                    "file": fname,
+                                    "type": "document",
+                                    "chunks": len(chunks)
+                                })
+                            except Exception as e:
+                                print(f"ChromaDB error for {fname}: {str(e)}")
+                                errors.append({"file": fname, "error": f"ChromaDB error: {str(e)}"})
+                                continue
+                                
+                        elif ext in image_exts and dataset_type in ["mixed", "image"]:
+                            # Process image
+                            img_id = str(uuid.uuid4())
+                            dest_name = f"{img_id}{ext}"
+                            dest_path = os.path.join(IMAGE_FOLDER, dest_name)
+                            shutil.copy2(fpath, dest_path)
+                            dest_path = resize_image(dest_path, max_dimension=1024)
+                            
+                            meta = {
+                                "id": img_id,
+                                "dataset_id": dataset_id,
+                                "original_filename": fname,
+                                "path": dest_path,
+                                "url": f"/api/images/{dest_name}",
+                                "type": "image",
+                                "created_at": datetime.datetime.now(UTC).isoformat(),
+                                "user_id": user_data['id'],
+                                "username": user_data['username']
+                            }
+                            
+                            image_processor.add_image_to_dataset(dataset_id, dest_path, meta)
+                            successes.append({"file": fname, "type": "image"})
+                        else:
+                            errors.append({"file": fname, "error": "Unsupported file type for this dataset"})
+                            
+                        processed_files += 1
                         
-                elif ext in image_exts and dataset_type in ["mixed", "image"]:
-                    print(f"Processing image: {fname}")
-                    # Copy to IMAGE_FOLDER
-                    img_id = str(uuid.uuid4())
-                    dest_name = f"{img_id}{ext}"
-                    dest_path = os.path.join(IMAGE_FOLDER, dest_name)
-                    shutil.copy2(fpath, dest_path)
-                    print(f"Resizing image: {fname}")
-                    dest_path = resize_image(dest_path, max_dimension=1024)
-                    meta = {
-                        "id": img_id,
-                        "dataset_id": dataset_id,
-                        "original_filename": fname,
-                        "path": dest_path,
-                        "url": f"/api/images/{dest_name}",
-                        "type": "image",
-                        "created_at": datetime.datetime.now(UTC).isoformat(),
-                        "user_id": user_data['id'],
-                        "username": user_data['username']
-                    }
-                    print(f"Adding image to dataset: {fname}")
-                    image_processor.add_image_to_dataset(dataset_id, dest_path, meta)
-                    successes.append({"file": fname, "type": "image"})
-                    print(f"Successfully processed image: {fname}")
-                else:
-                    print(f"Unsupported file type for this dataset: {fname}")
-                    errors.append({"file": fname, "error": "Unsupported file type for this dataset"})
-            except Exception as e:
-                print(f"Error processing {fname}: {str(e)}")
-                errors.append({"file": fname, "error": str(e)})
-                
-    print("Cleaning up temporary directory")
-    shutil.rmtree(temp_dir)
-    
-    # Update metadata files for images that were successfully uploaded
-    if successes:
-        img_successes = [s for s in successes if s["type"] == "image"]
-        if img_successes:
-            print("Updating image metadata files")
-            # Update the metadata file for image previews
-            indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
-            os.makedirs(indices_dir, exist_ok=True)
-            metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+                    except Exception as e:
+                        print(f"Error processing {fname}: {str(e)}")
+                        errors.append({"file": fname, "error": str(e)})
+                        processed_files += 1
             
-            # Get the current metadata from the image processor
+            # Update final status
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+            status["status"] = "completed"
+            status["message"] = f"Processing complete: {len(successes)} files added, {len(errors)} errors"
+            status["processed_files"] = processed_files
+            status["successes"] = successes
+            status["errors"] = errors
+            with open(status_file, 'w') as f:
+                json.dump(status, f)
+            
+            # Update dataset counts
             try:
-                if dataset_id in image_processor.image_metadata:
-                    current_metadata = image_processor.image_metadata[dataset_id]
-                    # Save/update the metadata file
-                    with open(metadata_file, 'w') as f:
-                        json.dump(current_metadata, f)
-                        f.flush()  # Ensure data is written to disk
-                        os.fsync(f.fileno())  # Force write to disk
-                    print(f"Updated metadata file for dataset {dataset_id} with {len(current_metadata)} images")
+                with open(user_datasets_file, 'r') as f:
+                    datasets = json.load(f)
+                
+                for idx, ds in enumerate(datasets):
+                    if ds["id"] == dataset_id:
+                        # Count successful documents and images
+                        doc_successes = [s for s in successes if s["type"] == "document"]
+                        img_successes = [s for s in successes if s["type"] == "image"]
+                        
+                        # Update document count
+                        if doc_successes:
+                            if "document_count" in ds:
+                                ds["document_count"] += len(doc_successes)
+                            else:
+                                ds["document_count"] = len(doc_successes)
+                        
+                        # Update chunk count
+                        total_chunks = sum(s.get("chunks", 0) for s in doc_successes)
+                        if total_chunks > 0:
+                            if "chunk_count" in ds:
+                                ds["chunk_count"] += total_chunks
+                            else:
+                                ds["chunk_count"] = total_chunks
+                        
+                        # Update image count
+                        if img_successes:
+                            if "image_count" in ds:
+                                ds["image_count"] += len(img_successes)
+                            else:
+                                ds["image_count"] = len(img_successes)
+                        break
+                
+                with open(user_datasets_file, 'w') as f:
+                    json.dump(datasets, f)
+                    
             except Exception as e:
-                print(f"Error updating image metadata file: {str(e)}")
-    
-    # Update dataset counts in the user's dataset file
-    try:
-        print("Updating dataset counts")
-        with open(user_datasets_file, 'r') as f:
-            datasets = json.load(f)
-        
-        # Find the dataset and update counts
-        for idx, ds in enumerate(datasets):
-            if ds["id"] == dataset_id:
-                # Count successful documents and images
-                doc_successes = [s for s in successes if s["type"] == "document"]
-                img_successes = [s for s in successes if s["type"] == "image"]
-                
-                # Update document count
-                if doc_successes:
-                    if "document_count" in ds:
-                        ds["document_count"] += len(doc_successes)
-                    else:
-                        ds["document_count"] = len(doc_successes)
-                
-                # Update chunk count
-                total_chunks = sum(s.get("chunks", 0) for s in doc_successes)
-                if total_chunks > 0:
-                    if "chunk_count" in ds:
-                        ds["chunk_count"] += total_chunks
-                    else:
-                        ds["chunk_count"] = total_chunks
-                
-                # Update image count
-                if img_successes:
-                    if "image_count" in ds:
-                        ds["image_count"] += len(img_successes)
-                    else:
-                        ds["image_count"] = len(img_successes)
-                break
-        
-        # Save updated dataset file
-        with open(user_datasets_file, 'w') as f:
-            json.dump(datasets, f)
-            f.flush()  # Ensure data is written to disk
-            os.fsync(f.fileno())  # Force write to disk
-        print("Successfully updated dataset counts")
+                print(f"Error updating dataset counts: {str(e)}")
             
-    except Exception as e:
-        print(f"Error updating dataset counts: {str(e)}")
+        except Exception as e:
+            print(f"Error in processing thread: {str(e)}")
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+            status["status"] = "error"
+            status["message"] = f"Processing failed: {str(e)}"
+            with open(status_file, 'w') as f:
+                json.dump(status, f)
+        finally:
+            # Clean up temp directory after 1 hour
+            def cleanup():
+                time.sleep(3600)  # Wait 1 hour
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
+            
+            cleanup_thread = threading.Thread(target=cleanup)
+            cleanup_thread.daemon = True
+            cleanup_thread.start()
     
-    print(f"Bulk upload complete: {len(successes)} files added, {len(errors)} errors")
+    # Start processing thread
+    process_thread = threading.Thread(target=process_files)
+    process_thread.daemon = True
+    process_thread.start()
+    
+    # Return initial response with status file path
     return jsonify({
-        "successes": successes,
-        "errors": errors,
-        "message": f"Bulk upload complete: {len(successes)} files added, {len(errors)} errors."
-    }), 200
+        "message": "File uploaded successfully, processing started",
+        "status_file": f"/api/datasets/{dataset_id}/upload-status/{os.path.basename(temp_dir)}"
+    }), 202
 
 # More handlers can be added here for specific dataset operations 

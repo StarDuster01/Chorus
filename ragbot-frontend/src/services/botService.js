@@ -651,6 +651,21 @@ const setBotDatasets = async (botId, datasetIds) => {
   }
 };
 
+const checkUploadStatus = async (datasetId, statusId) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/datasets/${datasetId}/upload-status/${statusId}`,
+      {
+        headers: getAuthHeader()
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error checking upload status:', error);
+    throw error;
+  }
+};
+
 const botService = {
   getDatasets,
   createDataset,
@@ -688,7 +703,8 @@ const botService = {
   getBotDatasets,
   addDatasetToBot,
   removeDatasetFromBot,
-  setBotDatasets
+  setBotDatasets,
+  checkUploadStatus
 };
 
 export default botService; 

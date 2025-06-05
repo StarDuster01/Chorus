@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal } from 'react-bootstrap';
+import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal, ProgressBar } from 'react-bootstrap';
 import botService from '../services/botService';
 import TesseractLoader from './TesseractLoader';
 import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle, FaImage, FaChartBar } from 'react-icons/fa';
@@ -35,6 +35,8 @@ const DatasetPanel = () => {
   const [bulkUploadMode, setBulkUploadMode] = useState(false);
   const [bulkZipFile, setBulkZipFile] = useState(null);
   const [bulkResult, setBulkResult] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState(null);
+  const [statusCheckInterval, setStatusCheckInterval] = useState(null);
 
   useEffect(() => {
     loadDatasets();
@@ -69,6 +71,14 @@ const DatasetPanel = () => {
       setFileTypeDescription(getFileTypeDescription());
     }
   }, [selectedDataset]);
+
+  useEffect(() => {
+    return () => {
+      if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+      }
+    };
+  }, [statusCheckInterval]);
 
   const loadDatasets = async () => {
     setLoading(true);
@@ -152,6 +162,8 @@ const DatasetPanel = () => {
     }
     setLoading(true);
     setBulkResult(null);
+    setUploadStatus(null);
+    
     try {
       const formData = new FormData();
       formData.append('file', bulkZipFile);
@@ -168,13 +180,35 @@ const DatasetPanel = () => {
         setLoading(false);
         return;
       }
-      setBulkResult(result);
-      setSuccess('Bulk upload completed');
-      setTimeout(() => setSuccess(null), 3000);
-      setLoading(false);
-      // Refresh datasets
-      loadDatasets();
-      setBulkZipFile(null);
+      
+      const statusId = result.status_file.split('/').pop();
+      const checkStatus = async () => {
+        try {
+          const status = await botService.checkUploadStatus(selectedDataset.id, statusId);
+          setUploadStatus(status);
+          
+          if (status.status === 'completed' || status.status === 'error') {
+            clearInterval(statusCheckInterval);
+            setStatusCheckInterval(null);
+            setLoading(false);
+            if (status.status === 'completed') {
+              setSuccess('Bulk upload completed');
+              setTimeout(() => setSuccess(null), 3000);
+              loadDatasets();
+              setBulkZipFile(null);
+            } else {
+              setError(status.message || 'Bulk upload failed');
+            }
+          }
+        } catch (err) {
+          console.error('Error checking status:', err);
+        }
+      };
+      
+      checkStatus();
+      const interval = setInterval(checkStatus, 2000);
+      setStatusCheckInterval(interval);
+      
     } catch (err) {
       setError('Bulk upload failed');
       setLoading(false);
@@ -513,23 +547,43 @@ const DatasetPanel = () => {
                     onChange={handleBulkZipChange}
                     required
                     className="rounded-pill"
+                    disabled={loading}
                   />
                   <Form.Text className="text-muted">
                     Upload a .zip file containing documents and images. Supported: PDF, DOCX, TXT, PPTX, JPG, PNG, etc.
                   </Form.Text>
                 </Form.Group>
+                
+                {uploadStatus && (
+                  <div className="mb-4">
+                    <ProgressBar 
+                      now={uploadStatus.total_files ? (uploadStatus.processed_files / uploadStatus.total_files) * 100 : 0} 
+                      label={`${Math.round((uploadStatus.processed_files / uploadStatus.total_files) * 100)}%`}
+                      className="mb-2"
+                    />
+                    <div className="text-muted">
+                      <small>
+                        Status: {uploadStatus.status}<br />
+                        {uploadStatus.current_file && `Processing: ${uploadStatus.current_file}`}<br />
+                        {uploadStatus.message}
+                      </small>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="d-flex">
                   <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                    {loading ? <><TesseractLoader /> Uploading...</> : 'Bulk Upload'}
+                    {loading ? <><TesseractLoader /> Uploading...</> : 'Upload'}
                   </Button>
                   <Button 
                     variant="outline-secondary" 
                     onClick={() => {
                       setUploadMode(false);
                       setSelectedDataset(null);
-                      setBulkUploadMode(false);
-                      setBulkZipFile(null);
-                      setBulkResult(null);
+                      if (statusCheckInterval) {
+                        clearInterval(statusCheckInterval);
+                        setStatusCheckInterval(null);
+                      }
                     }} 
                     disabled={loading}
                     className="rounded-pill"

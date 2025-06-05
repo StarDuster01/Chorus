@@ -114,7 +114,11 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='frontend', static_url_path='')
-app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024 * 1024  # 20 GB upload limit
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024 * 20  # 20GB max file size
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+app.config['TEMP_FOLDER'] = os.path.join(app.config['UPLOAD_FOLDER'], "temp")
+app.config['PROCESSING_TIMEOUT'] = 3600  # 1 hour timeout for processing
+
 CORS(app)
 
 # Configure OpenAI
@@ -3548,6 +3552,30 @@ def bulk_upload(user_data, dataset_id):
     """Bulk upload a zip file of documents/images to a dataset"""
     from dataset_handlers import bulk_upload_handler
     return bulk_upload_handler(user_data, dataset_id)
+
+@app.route('/api/datasets/<dataset_id>/upload-status/<status_id>', methods=['GET'])
+@require_auth_wrapper
+def get_upload_status(user_data, dataset_id, status_id):
+    """Get the status of a bulk upload
+    
+    Args:
+        user_data: User data from JWT token
+        dataset_id: ID of the dataset
+        status_id: ID of the upload status to check
+        
+    Returns:
+        tuple: JSON response and status code
+    """
+    status_file = os.path.join(app.config['TEMP_FOLDER'], status_id, "status.json")
+    if not os.path.exists(status_file):
+        return jsonify({"error": "Upload status not found"}), 404
+        
+    try:
+        with open(status_file, 'r') as f:
+            status = json.load(f)
+        return jsonify(status), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to read status: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=50505, debug=True)
