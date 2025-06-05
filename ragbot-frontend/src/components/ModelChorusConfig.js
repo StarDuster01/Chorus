@@ -93,7 +93,7 @@ const ModelChorusConfig = () => {
   
   const handleAddModel = () => {
     const newModel = {
-      id: crypto.randomUUID(),
+      id: Math.random().toString(36).substr(2, 9),
       provider: newModelProvider,
       model: newModelName,
       temperature: parseFloat(newModelTemperature),

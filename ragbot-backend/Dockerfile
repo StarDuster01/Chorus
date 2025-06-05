@@ -36,10 +36,6 @@ RUN mkdir -p /code/uploads/images /code/uploads/documents
 
 # Create startup script
 RUN echo '#!/bin/bash\n\
-# Clean up ChromaDB if it exists\n\
-if [ -d "/code/chroma_db" ]; then\n\
-    rm -rf /code/chroma_db/*\n\
-fi\n\
 # Start the Flask app\n\
 exec gunicorn -c gunicorn.conf.py app:app\n\
 ' > /code/start.sh && chmod +x /code/start.sh

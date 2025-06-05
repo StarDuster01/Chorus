@@ -111,7 +111,7 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='frontend', static_url_path='')
-app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024  # 1000 MB upload limit
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024 * 1024  # 20 GB upload limit
 CORS(app)
 
 # Configure OpenAI
@@ -497,6 +497,11 @@ def upload_document(user_data, dataset_id):
                 image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
     else:
         return jsonify({"error": "Unsupported file type"}), 400
+
+@app.route('/health')
+def health():
+    """Health check endpoint for Kubernetes probes"""
+    return "OK", 200
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>', methods=['DELETE'])
 @require_auth_wrapper

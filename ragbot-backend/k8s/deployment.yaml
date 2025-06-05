@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ragbot
+  namespace: ragbot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ragbot
+  template:
+    metadata:
+      labels:
+        app: ragbot
+    spec:
+      imagePullSecrets:
+      - name: acr-auth
+      containers:
+      - name: ragbot
+        image: chorusproduction.azurecr.io/ragbot:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 50505
+        env:
+        - name: FLASK_ENV
+          value: "production"
+        - name: FLASK_APP
+          value: "app.py"
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ragbot-secrets
+              key: secret-key
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "2000m"
+          limits:
+            memory: "16Gi"
+            cpu: "4000m"
+        volumeMounts:
+        - name: chroma-db
+          mountPath: /code/chroma_db
+        - name: uploads
+          mountPath: /code/uploads
+        - name: conversations
+          mountPath: /code/conversations
+        - name: datasets
+          mountPath: /code/datasets
+        - name: image-indices
+          mountPath: /code/image_indices
+        - name: bots
+          mountPath: /code/bots
+        - name: chorus
+          mountPath: /code/chorus
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 50505
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 50505
+          initialDelaySeconds: 90
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: chroma-db
+        persistentVolumeClaim:
+          claimName: ragbot-chroma-db
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: ragbot-uploads
+      - name: conversations
+        persistentVolumeClaim:
+          claimName: ragbot-conversations
+      - name: datasets
+        persistentVolumeClaim:
+          claimName: ragbot-datasets
+      - name: image-indices
+        persistentVolumeClaim:
+          claimName: ragbot-image-indices
+      - name: bots
+        persistentVolumeClaim:
+          claimName: ragbot-bots
+      - name: chorus
+        persistentVolumeClaim:
+          claimName: ragbot-chorus
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ragbot
+  namespace: ragbot
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 50505
+    protocol: TCP
+  selector:
+    app: ragbot 
