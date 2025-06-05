@@ -96,7 +96,10 @@ const DatasetPanel = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      await botService.createDataset(newDataset);
+      const response = await botService.createDataset(newDataset);
+      // Wait for the dataset to be fully created
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Reload datasets
       const data = await botService.getDatasets();
       setDatasets(data);
       setCreateMode(false);
@@ -109,6 +112,7 @@ const DatasetPanel = () => {
       setTimeout(() => setSuccess(null), 3000);
       setLoading(false);
     } catch (err) {
+      console.error('Error creating dataset:', err);
       setError('Failed to create dataset');
       setLoading(false);
     }
