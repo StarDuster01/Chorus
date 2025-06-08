@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL;
+const API_URL = process.env.REACT_APP_API_URL || '/api';
+// Cache busting comment v2.2
 
 // Helper function to get auth header
 const getAuthHeader = () => {
@@ -17,7 +18,17 @@ const getDatasets = async () => {
     const response = await axios.get(`${API_URL}/datasets`, {
       headers: getAuthHeader()
     });
-    return response.data;
+    
+    // Handle the new enhanced response format with fallback to old format
+    if (response.data && response.data.datasets && Array.isArray(response.data.datasets)) {
+      return response.data; // Return full response with status info
+    } else if (Array.isArray(response.data)) {
+      return response.data; // Return direct array for old format
+    } else {
+      // Fallback: return empty array if response format is unexpected
+      console.warn('Unexpected response format from /api/datasets:', response.data);
+      return [];
+    }
   } catch (error) {
     console.error('Error fetching datasets:', error);
     throw error;

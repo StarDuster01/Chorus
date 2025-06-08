@@ -3,10 +3,12 @@ import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinn
 import botService from '../services/botService';
 import TesseractLoader from './TesseractLoader';
 import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle, FaImage, FaChartBar } from 'react-icons/fa';
+import axios from 'axios';
 
 const DatasetPanel = () => {
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [createMode, setCreateMode] = useState(false);
@@ -82,39 +84,133 @@ const DatasetPanel = () => {
 
   const loadDatasets = async () => {
     setLoading(true);
+    setLoadingMessage("Loading datasets..."); // v2.3 - Safe fallback
+    
     try {
-      const data = await botService.getDatasets();
-      setDatasets(data);
-      setLoading(false);
-    } catch (err) {
-      setError('Failed to load datasets');
-      setLoading(false);
+      const response = await botService.getDatasets();
+      
+      // Safety check: ensure datasets is always an array
+      let datasetsArray = [];
+      
+      // Handle the enhanced response format
+      if (response && response.datasets && response.status) {
+        datasetsArray = Array.isArray(response.datasets) ? response.datasets : [];
+        
+        // Show detailed status message
+        const status = response.status;
+        if (status.cache_hit) {
+          setLoadingMessage("Retrieved datasets from cache");
+        } else {
+          setLoadingMessage(status.message);
+          
+          // Show additional details if available
+          if (status.details) {
+            const details = status.details;
+            const detailMessage = `Found ${details.total_datasets} datasets with ${details.total_documents} documents and ${details.total_images} images`;
+            setTimeout(() => setLoadingMessage(detailMessage), 500);
+          }
+        }
+        
+        // Keep the status message visible for a moment
+        setTimeout(() => {
+          setLoading(false);
+          setLoadingMessage("");
+        }, 1500);
+      } else {
+        // Fallback for old response format (response is direct array)
+        datasetsArray = Array.isArray(response) ? response : [];
+        setLoadingMessage("Datasets loaded successfully");
+        setTimeout(() => {
+          setLoading(false);
+          setLoadingMessage("");
+        }, 1000);
+      }
+      
+      setDatasets(datasetsArray);
+    } catch (error) {
+      console.error('Error fetching datasets:', error);
+      setDatasets([]); // Ensure datasets is always an array
+      setLoadingMessage("Error loading datasets");
+      setTimeout(() => {
+        setLoading(false);
+        setLoadingMessage("");
+      }, 2000);
     }
   };
 
   const handleCreateDataset = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setLoadingMessage('Preparing to create dataset...');
+    
     try {
+      // Show initial progress
+      setLoadingMessage('Setting up dataset structure...');
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      setLoadingMessage('Creating vector database collection...');
       const response = await botService.createDataset(newDataset);
-      // Wait for the dataset to be fully created
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      // Reload datasets
-      const data = await botService.getDatasets();
-      setDatasets(data);
-      setCreateMode(false);
-      setNewDataset({
-        name: '',
-        description: '',
-        type: 'mixed'
-      });
-      setSuccess('Dataset created successfully');
-      setTimeout(() => setSuccess(null), 3000);
-      setLoading(false);
+      
+      // Handle enhanced response format with detailed status
+      if (response.dataset && response.status) {
+        const status = response.status;
+        
+        // Show the detailed creation message
+        setLoadingMessage(status.message);
+        
+        // Show additional details if available
+        if (status.details && status.details.ready_for_uploads) {
+          setTimeout(() => {
+            setLoadingMessage("Dataset ready for file uploads!");
+          }, 800);
+        }
+        
+        // Keep status visible then refresh
+        setTimeout(async () => {
+          setLoadingMessage('Refreshing dataset list...');
+          const data = await botService.getDatasets();
+          setDatasets(data.datasets || data);
+          
+          setCreateMode(false);
+          setNewDataset({
+            name: '',
+            description: '',
+            type: 'mixed'
+          });
+          setSuccess(`Dataset '${newDataset.name}' created successfully!`);
+          setTimeout(() => setSuccess(null), 3000);
+          setLoading(false);
+          setLoadingMessage('');
+        }, 1500);
+      } else {
+        // Fallback for old response format
+        setLoadingMessage('Refreshing dataset list...');
+        const data = await botService.getDatasets();
+        setDatasets(data.datasets || data);
+        setCreateMode(false);
+        setNewDataset({
+          name: '',
+          description: '',
+          type: 'mixed'
+        });
+        setSuccess('Dataset created successfully');
+        setTimeout(() => setSuccess(null), 3000);
+        setLoading(false);
+        setLoadingMessage('');
+      }
     } catch (err) {
       console.error('Error creating dataset:', err);
-      setError('Failed to create dataset');
-      setLoading(false);
+      setError(err.response?.data?.error || 'Failed to create dataset');
+      if (err.response?.data?.details) {
+        setLoadingMessage(`Error: ${err.response.data.details}`);
+        setTimeout(() => {
+          setLoading(false);
+          setLoadingMessage('');
+        }, 3000);
+      } else {
+        setLoading(false);
+        setLoadingMessage('');
+      }
     }
   };
 
@@ -134,27 +230,46 @@ const DatasetPanel = () => {
     }
 
     setLoading(true);
+    const fileExtension = file.name.split('.').pop().toLowerCase();
+    const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(fileExtension);
+    
+    setLoadingMessage(isImage ? `Processing image: ${file.name}...` : `Processing document: ${file.name}...`);
+    
     try {
-      const fileExtension = file.name.split('.').pop().toLowerCase();
-      const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(fileExtension);
-      
       if (isImage) {
+        setLoadingMessage('Generating image embeddings...');
         await botService.uploadImage(selectedDataset.id, file);
       } else {
+        setLoadingMessage('Extracting text and creating chunks...');
         await botService.uploadDocument(selectedDataset.id, file);
       }
       
+      setLoadingMessage('Updating dataset...');
       const data = await botService.getDatasets();
-      setDatasets(data);
+      
+      // Handle both response formats safely
+      let datasetsArray = [];
+      if (data && data.datasets && Array.isArray(data.datasets)) {
+        datasetsArray = data.datasets;
+      } else if (Array.isArray(data)) {
+        datasetsArray = data;
+      } else {
+        console.warn('Unexpected datasets response format:', data);
+        datasetsArray = [];
+      }
+      
+      setDatasets(datasetsArray);
       setUploadMode(false);
       setSelectedDataset(null);
       setFile(null);
       setSuccess(isImage ? 'Image uploaded successfully' : 'Document uploaded successfully');
       setTimeout(() => setSuccess(null), 3000);
       setLoading(false);
+      setLoadingMessage('');
     } catch (err) {
       setError(`Failed to upload ${file.name}`);
       setLoading(false);
+      setLoadingMessage('');
     }
   };
 
@@ -165,12 +280,15 @@ const DatasetPanel = () => {
       return;
     }
     setLoading(true);
+    setLoadingMessage('Uploading zip file...');
     setBulkResult(null);
     setUploadStatus(null);
     
     try {
       const formData = new FormData();
       formData.append('file', bulkZipFile);
+      
+      setLoadingMessage('Starting bulk upload process...');
       const response = await fetch(`/api/datasets/${selectedDataset.id}/bulk-upload`, {
         method: 'POST',
         headers: {
@@ -182,9 +300,11 @@ const DatasetPanel = () => {
       if (!response.ok) {
         setError(result.error || 'Bulk upload failed');
         setLoading(false);
+        setLoadingMessage('');
         return;
       }
       
+      setLoadingMessage('Processing files in background...');
       const statusId = result.status_file.split('/').pop();
       const checkStatus = async () => {
         try {
@@ -195,6 +315,7 @@ const DatasetPanel = () => {
             clearInterval(statusCheckInterval);
             setStatusCheckInterval(null);
             setLoading(false);
+            setLoadingMessage('');
             if (status.status === 'completed') {
               setSuccess('Bulk upload completed');
               setTimeout(() => setSuccess(null), 3000);
@@ -216,6 +337,7 @@ const DatasetPanel = () => {
     } catch (err) {
       setError('Bulk upload failed');
       setLoading(false);
+      setLoadingMessage('');
     }
   };
 
@@ -274,83 +396,9 @@ const DatasetPanel = () => {
     setShowConfirmDelete(true);
   };
 
-  const handleRemoveDocument = async () => {
-    if (!documentToDelete || !selectedDataset) return;
-    
-    setLoading(true);
-    try {
-      await botService.removeDocument(selectedDataset.id, documentToDelete.id);
-      
-      setDocuments(documents.filter(doc => doc.id !== documentToDelete.id));
-      
-      const data = await botService.getDatasets();
-      setDatasets(data);
-      
-      setSuccess('Document removed successfully');
-      setTimeout(() => setSuccess(null), 3000);
-      setShowConfirmDelete(false);
-      setDocumentToDelete(null);
-      setLoading(false);
-    } catch (err) {
-      setError('Failed to remove document');
-      setShowConfirmDelete(false);
-      setLoading(false);
-    }
-  };
-
   const confirmRemoveImage = (image) => {
     setImageToDelete(image);
     setShowConfirmImageDelete(true);
-  };
-
-  const handleRemoveImage = async () => {
-    if (!imageToDelete || !selectedDataset) return;
-    
-    setLoading(true);
-    try {
-      await botService.removeImage(selectedDataset.id, imageToDelete.id);
-      
-      setImages(images.filter(img => img.id !== imageToDelete.id));
-      
-      const data = await botService.getDatasets();
-      setDatasets(data);
-      
-      setSuccess('Image removed successfully');
-      setTimeout(() => setSuccess(null), 3000);
-      setShowConfirmImageDelete(false);
-      setImageToDelete(null);
-      setLoading(false);
-    } catch (err) {
-      setError('Failed to remove image');
-      setShowConfirmImageDelete(false);
-      setLoading(false);
-    }
-  };
-
-  const getFileIcon = (fileName) => {
-    if (!fileName) return <FaFile />;
-    const extension = fileName.split('.').pop().toLowerCase();
-    switch(extension) {
-      case 'pdf':
-        return <FaFileAlt style={{color: '#e74c3c'}} />;
-      case 'docx':
-      case 'doc':
-        return <FaFileAlt style={{color: '#3498db'}} />;
-      case 'pptx':
-      case 'ppt':
-        return <FaFileAlt style={{color: '#e67e22'}} />;
-      case 'txt':
-        return <FaFileAlt style={{color: '#7f8c8d'}} />;
-      case 'jpg':
-      case 'jpeg':
-      case 'png':
-      case 'gif':
-      case 'webp':
-      case 'bmp':
-        return <FaImage style={{color: '#9b59b6'}} />;
-      default:
-        return <FaFile />;
-    }
   };
 
   const confirmRemoveDataset = (dataset) => {
@@ -358,51 +406,176 @@ const DatasetPanel = () => {
     setShowConfirmDatasetDelete(true);
   };
 
+  const handleRemoveDocument = async () => {
+    if (!documentToDelete) return;
+    
+    setLoading(true);
+    setLoadingMessage(`Removing document: ${documentToDelete.filename}...`);
+    
+    try {
+      await botService.removeDocument(selectedDataset.id, documentToDelete.id);
+      
+      setLoadingMessage('Updating document list...');
+      const data = await botService.getDatasetDocuments(selectedDataset.id);
+      setDocuments(data.documents || []);
+      
+      setLoadingMessage('Refreshing datasets...');
+      const datasets = await botService.getDatasets();
+      
+      // Handle both response formats safely
+      let datasetsArray = [];
+      if (datasets && datasets.datasets && Array.isArray(datasets.datasets)) {
+        datasetsArray = datasets.datasets;
+      } else if (Array.isArray(datasets)) {
+        datasetsArray = datasets;
+      } else {
+        console.warn('Unexpected datasets response format:', datasets);
+        datasetsArray = [];
+      }
+      
+      setDatasets(datasetsArray);
+      
+      setShowConfirmDelete(false);
+      setDocumentToDelete(null);
+      setSuccess('Document removed successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setLoading(false);
+      setLoadingMessage('');
+    } catch (err) {
+      setError('Failed to remove document');
+      setLoading(false);
+      setLoadingMessage('');
+    }
+  };
+
+  const handleRemoveImage = async () => {
+    if (!imageToDelete) return;
+    
+    setLoading(true);
+    setLoadingMessage(`Removing image...`);
+    
+    try {
+      await botService.removeImage(selectedDataset.id, imageToDelete.id);
+      
+      setLoadingMessage('Updating image list...');
+      const data = await botService.getDatasetImages(selectedDataset.id);
+      setImages(data.images || []);
+      
+      setLoadingMessage('Refreshing datasets...');
+      const datasets = await botService.getDatasets();
+      
+      // Handle both response formats safely
+      let datasetsArray = [];
+      if (datasets && datasets.datasets && Array.isArray(datasets.datasets)) {
+        datasetsArray = datasets.datasets;
+      } else if (Array.isArray(datasets)) {
+        datasetsArray = datasets;
+      } else {
+        console.warn('Unexpected datasets response format:', datasets);
+        datasetsArray = [];
+      }
+      
+      setDatasets(datasetsArray);
+      
+      setShowConfirmImageDelete(false);
+      setImageToDelete(null);
+      setSuccess('Image removed successfully');
+      setTimeout(() => setSuccess(null), 3000);
+      setLoading(false);
+      setLoadingMessage('');
+    } catch (err) {
+      setError('Failed to remove image');
+      setLoading(false);
+      setLoadingMessage('');
+    }
+  };
+
   const handleRemoveDataset = async () => {
     if (!datasetToDelete) return;
     
     setLoading(true);
+    setLoadingMessage(`Removing dataset: ${datasetToDelete.name}...`);
+    
     try {
-      await botService.deleteDataset(datasetToDelete.id);
+      setLoadingMessage('Deleting all files and embeddings...');
+      await botService.removeDataset(datasetToDelete.id);
       
-      setDatasets(datasets.filter(ds => ds.id !== datasetToDelete.id));
+      setLoadingMessage('Updating dataset list...');
+      const data = await botService.getDatasets();
       
-      setSuccess('Dataset removed successfully');
-      setTimeout(() => setSuccess(null), 3000);
+      // Handle both response formats safely
+      let datasetsArray = [];
+      if (data && data.datasets && Array.isArray(data.datasets)) {
+        datasetsArray = data.datasets;
+      } else if (Array.isArray(data)) {
+        datasetsArray = data;
+      } else {
+        console.warn('Unexpected datasets response format:', data);
+        datasetsArray = [];
+      }
+      
+      setDatasets(datasetsArray);
+      
       setShowConfirmDatasetDelete(false);
       setDatasetToDelete(null);
+      setSuccess('Dataset removed successfully');
+      setTimeout(() => setSuccess(null), 3000);
       setLoading(false);
+      setLoadingMessage('');
     } catch (err) {
       setError('Failed to remove dataset');
-      setShowConfirmDatasetDelete(false);
       setLoading(false);
+      setLoadingMessage('');
     }
   };
 
+  const getFileIcon = (filename) => {
+    const extension = filename.split('.').pop().toLowerCase();
+    const color = '#6c757d';
+    
+    if (['pdf'].includes(extension)) {
+      return <FaFileAlt className="me-2" style={{ color: '#dc3545' }} />;
+    } else if (['docx', 'doc'].includes(extension)) {
+      return <FaFileAlt className="me-2" style={{ color: '#0d6efd' }} />;
+    } else if (['txt'].includes(extension)) {
+      return <FaFile className="me-2" style={{ color: color }} />;
+    } else if (['pptx', 'ppt'].includes(extension)) {
+      return <FaFileAlt className="me-2" style={{ color: '#fd7e14' }} />;
+    } else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(extension)) {
+      return <FaImage className="me-2" style={{ color: '#198754' }} />;
+    }
+    
+    return <FaFile className="me-2" style={{ color: color }} />;
+  };
+
   return (
-    <Container className="my-5">
+    <Container className="mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2><FaDatabase className="me-2" />Your Datasets</h2>
-        <Button 
-          variant={createMode ? "outline-secondary" : "primary"} 
-          onClick={() => {
-            setCreateMode(!createMode);
-            setUploadMode(false);
-            setSelectedDataset(null);
-          }}
-          className="rounded-pill"
-        >
-          {createMode ? <><FaTimes className="me-1" /> Cancel</> : <><FaPlus className="me-1" /> Create New Dataset</>}
-        </Button>
+        <h1 className="mb-0">
+          <FaDatabase className="me-2" />
+          Dataset Management
+        </h1>
+        {!createMode && !uploadMode && !viewDocumentsMode && !viewImagesMode && (
+          <Button 
+            variant="primary" 
+            onClick={() => setCreateMode(true)}
+            className="rounded-pill"
+          >
+            <FaPlus className="me-1" /> Create Dataset
+          </Button>
+        )}
       </div>
-      
-      {error && <Alert variant="danger" onClose={() => setError(null)} dismissible>{error}</Alert>}
-      {success && <Alert variant="success" onClose={() => setSuccess(null)} dismissible>{success}</Alert>}
+
+      {error && <Alert variant="danger">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {createMode && (
         <Card className="mb-4 border-0 shadow-sm">
           <Card.Body>
-            <Card.Title className="mb-3">Create a New Dataset</Card.Title>
+            <Card.Title className="mb-3">
+              <FaPlus className="me-2" />
+              Create New Dataset
+            </Card.Title>
             <Form onSubmit={handleCreateDataset}>
               <Row>
                 <Col md={6}>
@@ -413,22 +586,21 @@ const DatasetPanel = () => {
                       name="name"
                       value={newDataset.name}
                       onChange={handleInputChange}
+                      placeholder="Enter dataset name"
                       required
-                      placeholder="Give your dataset a name"
                       className="rounded-pill"
                     />
                   </Form.Group>
                 </Col>
-                
                 <Col md={6}>
                   <Form.Group className="mb-3">
-                    <Form.Label>Description</Form.Label>
+                    <Form.Label>Description (Optional)</Form.Label>
                     <Form.Control
                       type="text"
                       name="description"
                       value={newDataset.description}
                       onChange={handleInputChange}
-                      placeholder="What kind of documents will this dataset contain?"
+                      placeholder="Brief description"
                       className="rounded-pill"
                     />
                   </Form.Group>
@@ -458,7 +630,12 @@ const DatasetPanel = () => {
 
               <div className="d-flex justify-content-end">
                 <Button variant="success" type="submit" disabled={loading} className="px-4 rounded-pill">
-                  {loading ? <><TesseractLoader /> Creating...</> : 'Create Dataset'}
+                  {loading ? (
+                    <>
+                      <TesseractLoader size={20} /> 
+                      <span className="ms-2">{loadingMessage || 'Creating...'}</span>
+                    </>
+                  ) : 'Create Dataset'}
                 </Button>
               </div>
             </Form>
@@ -526,7 +703,12 @@ const DatasetPanel = () => {
                 </Form.Group>
                 <div className="d-flex">
                   <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                    {loading ? <><TesseractLoader /> Uploading...</> : 'Upload'}
+                    {loading ? (
+                      <>
+                        <TesseractLoader size={20} /> 
+                        <span className="ms-2">{loadingMessage || 'Uploading...'}</span>
+                      </>
+                    ) : 'Upload'}
                   </Button>
                   <Button 
                     variant="outline-secondary" 
@@ -577,7 +759,12 @@ const DatasetPanel = () => {
                 
                 <div className="d-flex">
                   <Button variant="primary" type="submit" disabled={loading} className="me-2 rounded-pill">
-                    {loading ? <><TesseractLoader /> Uploading...</> : 'Upload'}
+                    {loading ? (
+                      <>
+                        <TesseractLoader size={20} /> 
+                        <span className="ms-2">{loadingMessage || 'Uploading...'}</span>
+                      </>
+                    ) : 'Upload'}
                   </Button>
                   <Button 
                     variant="outline-secondary" 
@@ -778,8 +965,8 @@ const DatasetPanel = () => {
 
       {loading && !createMode && !uploadMode && !viewDocumentsMode && !viewImagesMode ? (
         <div className="text-center my-5">
-          <TesseractLoader />
-          <p className="mt-2 text-muted">Loading your datasets...</p>
+          <TesseractLoader size={80} />
+          <p className="mt-3 text-muted font-weight-bold">{loadingMessage || 'Loading your datasets...'}</p>
         </div>
       ) : (
         <Row className="mt-4">
@@ -925,7 +1112,12 @@ const DatasetPanel = () => {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleRemoveDocument} disabled={loading}>
-            {loading ? <><TesseractLoader /> Removing...</> : 'Remove Document'}
+            {loading ? (
+              <>
+                <TesseractLoader size={20} /> 
+                <span className="ms-2">{loadingMessage || 'Removing...'}</span>
+              </>
+            ) : 'Remove Document'}
           </Button>
         </Modal.Footer>
       </Modal>
@@ -962,7 +1154,12 @@ const DatasetPanel = () => {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleRemoveImage} disabled={loading}>
-            {loading ? <><TesseractLoader /> Removing...</> : 'Remove Image'}
+            {loading ? (
+              <>
+                <TesseractLoader size={20} /> 
+                <span className="ms-2">{loadingMessage || 'Removing...'}</span>
+              </>
+            ) : 'Remove Image'}
           </Button>
         </Modal.Footer>
       </Modal>
@@ -996,7 +1193,12 @@ const DatasetPanel = () => {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleRemoveDataset} disabled={loading}>
-            {loading ? <><TesseractLoader /> Removing...</> : 'Remove Dataset'}
+            {loading ? (
+              <>
+                <TesseractLoader size={20} /> 
+                <span className="ms-2">{loadingMessage || 'Removing...'}</span>
+              </>
+            ) : 'Remove Dataset'}
           </Button>
         </Modal.Footer>
       </Modal>

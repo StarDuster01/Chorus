@@ -144,14 +144,10 @@ IMAGE_FOLDER = os.path.join(UPLOAD_FOLDER, "images")
 os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-# Initialize ChromaDB
-chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-os.makedirs(chroma_db_path, exist_ok=True)
-chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    model_name="text-embedding-ada-002"
-)
+# Initialize ChromaDB via connection pool
+from connection_pool import chroma_pool
+chroma_client = chroma_pool.get_client()
+openai_ef = chroma_pool.get_embedding_function()
 
 # Pre-load AI models at startup for better performance
 print("[STARTUP] Pre-loading AI models...")

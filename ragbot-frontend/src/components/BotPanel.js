@@ -59,9 +59,25 @@ const BotPanel = () => {
   const loadDatasets = async () => {
     try {
       const data = await botService.getDatasets();
-      setDatasets(data);
+      
+      // Handle both response formats safely
+      let datasetsArray = [];
+      if (data && data.datasets && Array.isArray(data.datasets)) {
+        // New format with enhanced response
+        datasetsArray = data.datasets;
+      } else if (Array.isArray(data)) {
+        // Old format (direct array) or new format fallback
+        datasetsArray = data;
+      } else {
+        console.warn('Unexpected datasets response format:', data);
+        datasetsArray = [];
+      }
+      
+      setDatasets(datasetsArray);
     } catch (err) {
+      console.error('Error loading datasets:', err);
       setError('Failed to load datasets');
+      setDatasets([]); // Ensure datasets is always an array
     }
   };
 

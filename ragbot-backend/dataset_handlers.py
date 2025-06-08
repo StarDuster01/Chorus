@@ -23,8 +23,43 @@ from text_extractors import (
     extract_text_from_pptx,
     extract_text_from_file,
     create_semantic_chunks,
-    chunk_powerpoint_content
+    chunk_powerpoint_content,
+    resize_image
 )
+
+def add_document_to_chroma(dataset_id, chunks, document_id, filename):
+    """Add document chunks to ChromaDB
+    
+    Args:
+        dataset_id: The dataset ID
+        chunks: List of text chunks
+        document_id: The document ID
+        filename: Original filename
+    """
+    import datetime
+    from datetime import UTC
+    from connection_pool import chroma_pool
+    
+    # Use connection pool instead of creating new client
+    chroma_collection = chroma_pool.get_collection(dataset_id)
+    
+    # Create chunk IDs and metadata
+    chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
+    metadatas = [{
+        "document_id": document_id,
+        "filename": filename,
+        "chunk": i,
+        "total_chunks": len(chunks),
+        "file_type": os.path.splitext(filename)[1].lower(),
+        "created_at": datetime.datetime.now(UTC).isoformat(),
+    } for i in range(len(chunks))]
+    
+    # Add chunks to vector store
+    chroma_collection.add(
+        ids=chunk_ids,
+        documents=chunks,
+        metadatas=metadatas
+    )
 
 # Helper functions for dataset operations
 def find_dataset_by_id(dataset_id):
@@ -146,124 +181,106 @@ def get_datasets_handler(user_data):
     Returns:
         tuple: JSON response and status code
     """
+    from dataset_cache import dataset_cache
+    from connection_pool import chroma_pool
+    
+    # Try cache first
+    cached_datasets = dataset_cache.get_datasets(user_data['id'])
+    if cached_datasets is not None:
+        return jsonify({
+            "datasets": cached_datasets,
+            "status": {
+                "message": "Retrieved datasets from cache",
+                "cache_hit": True
+            }
+        }), 200
+    
+    # Cache miss - load from file
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     if not os.path.exists(user_datasets_file):
-        return jsonify([]), 200
+        dataset_cache.set_datasets(user_data['id'], [])
+        return jsonify({
+            "datasets": [],
+            "status": {
+                "message": "No datasets found - ready to create your first dataset",
+                "cache_hit": False
+            }
+        }), 200
         
     with open(user_datasets_file, 'r') as f:
         datasets = json.load(f)
     
-    # Import the ImageProcessor here to avoid circular imports
-    from image_processor import ImageProcessor
+    print(f"[Dataset Loading] Processing {len(datasets)} datasets for user {user_data['id']}")
     
-    # Initialize ImageProcessor
-    image_processor = ImageProcessor(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
-    
-    # Process each dataset to update counts and previews
-    updated_datasets = []
-    for dataset in datasets:
-        # Update the dataset with document counts
+    # Process datasets efficiently - skip expensive operations for empty datasets
+    for i, dataset in enumerate(datasets):
+        print(f"[Dataset Loading] Processing dataset {i+1}/{len(datasets)}: {dataset.get('name', 'Unknown')}")
+        
+        # Ensure basic fields exist
         dataset["document_count"] = dataset.get("document_count", 0)
+        dataset["chunk_count"] = dataset.get("chunk_count", 0)
+        dataset["image_count"] = dataset.get("image_count", 0)
+        dataset["image_previews"] = dataset.get("image_previews", [])
         
-        # Update image counts and add image previews from ImageProcessor
-        dataset_id = dataset["id"]
-        image_count = 0
-        image_previews = []
-        
-        # First check if this dataset has a metadata file
-        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
-        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
-        
-        # If metadata file exists, load and validate it
-        if os.path.exists(metadata_file):
-            try:
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                
-                # Filter to ensure we only count images that still exist on disk
-                valid_metadata = []
-                for img_meta in metadata:
-                    # Ensure dataset_id is correct
-                    if not img_meta.get('dataset_id'):
-                        img_meta['dataset_id'] = dataset_id
-                    
-                    # Only include images for this dataset where the file still exists
-                    if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
-                        if os.path.exists(img_meta['path']):
-                            valid_metadata.append(img_meta)
-                
-                # Update processor's metadata to remove any non-existent images
-                image_processor.image_metadata[dataset_id] = valid_metadata
-                image_count = len(valid_metadata)
-                
-                # Add image previews (up to 4 images)
-                preview_count = 0
-                for img_meta in valid_metadata:
-                    if preview_count >= 4:  # Limit to 4 preview images
-                        break
-                    
-                    if 'path' in img_meta and os.path.exists(img_meta['path']):
-                        # Extract just the filename from the path
-                        filename = os.path.basename(img_meta["path"])
-                        # Create preview info with URL
-                        preview_info = {
-                            "id": img_meta.get("id", ""),
-                            "url": f"/api/images/{filename}",
-                            "caption": img_meta.get("caption", "")
-                        }
-                        image_previews.append(preview_info)
-                        preview_count += 1
-                
-                # Save the updated metadata back to disk
+        # Only do expensive operations if the dataset might have content
+        if dataset.get("document_count", 0) > 0 or dataset.get("image_count", 0) > 0:
+            print(f"[Dataset Loading] Updating metadata for dataset with content: {dataset.get('name')}")
+            
+            # Update image info quickly by reading metadata file directly (only if needed)
+            dataset_id = dataset["id"]
+            indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+            metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+            
+            if os.path.exists(metadata_file):
                 try:
-                    with open(metadata_file, 'w') as f:
-                        json.dump(valid_metadata, f)
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    # Count valid images and create previews (first 4 only)
+                    valid_count = 0
+                    previews = []
+                    for img_meta in metadata:
+                        if img_meta.get('dataset_id') == dataset_id:
+                            if os.path.exists(img_meta['path']):
+                                valid_count += 1
+                                if len(previews) < 4:  # Only get first 4 for previews
+                                    filename = os.path.basename(img_meta["path"])
+                                    previews.append({
+                                        "id": img_meta.get("id", ""),
+                                        "url": f"/api/images/{filename}",
+                                        "caption": img_meta.get("caption", "")
+                                    })
+                    
+                    dataset["image_count"] = valid_count
+                    dataset["image_previews"] = previews
                 except Exception as e:
-                    print(f"Error saving updated metadata for dataset {dataset_id}: {str(e)}")
-                    
-            except Exception as e:
-                print(f"Error processing metadata for dataset {dataset_id}: {str(e)}")
-                # Fall back to in-memory metadata if available
-                if dataset_id in image_processor.image_metadata:
-                    valid_metadata = []
-                    for img_meta in image_processor.image_metadata[dataset_id]:
-                        if 'path' in img_meta and os.path.exists(img_meta['path']):
-                            valid_metadata.append(img_meta)
-                    
-                    image_processor.image_metadata[dataset_id] = valid_metadata
-                    image_count = len(valid_metadata)
-                    
-                    # Add image previews (up to 4 images)
-                    preview_count = 0
-                    for img_meta in valid_metadata:
-                        if preview_count >= 4:
-                            break
-                        
-                        if 'path' in img_meta:
-                            filename = os.path.basename(img_meta["path"])
-                            preview_info = {
-                                "id": img_meta.get("id", ""),
-                                "url": f"/api/images/{filename}",
-                                "caption": img_meta.get("caption", "")
-                            }
-                            image_previews.append(preview_info)
-                            preview_count += 1
-        
-        # Update dataset with accurate image count and previews
-        dataset["image_count"] = image_count
-        dataset["image_previews"] = image_previews
-        updated_datasets.append(dataset)
+                    print(f"[Dataset Loading] Error reading metadata for dataset {dataset_id}: {str(e)}")
+                    dataset["image_count"] = dataset.get("image_count", 0)
+                    dataset["image_previews"] = dataset.get("image_previews", [])
+        else:
+            print(f"[Dataset Loading] Skipping metadata update for empty dataset: {dataset.get('name')}")
     
-    # Save updated datasets back to file
-    with open(user_datasets_file, 'w') as f:
-        json.dump(updated_datasets, f)
-        f.flush()  # Ensure data is written to disk
-        os.fsync(f.fileno())  # Force write to disk
+    print(f"[Dataset Loading] Completed processing all datasets for user {user_data['id']}")
     
-    return jsonify(updated_datasets), 200
+    # Cache the processed datasets
+    dataset_cache.set_datasets(user_data['id'], datasets)
+    
+    return jsonify({
+        "datasets": datasets,
+        "status": {
+            "message": f"Loaded {len(datasets)} datasets successfully",
+            "cache_hit": False,
+            "details": {
+                "total_datasets": len(datasets),
+                "total_documents": sum(d.get("document_count", 0) for d in datasets),
+                "total_chunks": sum(d.get("chunk_count", 0) for d in datasets),
+                "total_images": sum(d.get("image_count", 0) for d in datasets)
+            }
+        }
+    }), 200
 
 def create_dataset_handler(user_data):
     """Create a new dataset
@@ -276,6 +293,8 @@ def create_dataset_handler(user_data):
     """
     data = request.json
     
+    print(f"[Dataset Creation] Starting dataset creation for user {user_data['id']}")
+    
     if not data or not data.get('name'):
         return jsonify({"error": "Dataset name is required"}), 400
         
@@ -284,6 +303,8 @@ def create_dataset_handler(user_data):
     if dataset_type not in ['text', 'image']:
         return jsonify({"error": "Invalid dataset type. Must be 'text' or 'image'"}), 400
         
+    print(f"[Dataset Creation] Creating {dataset_type} dataset: {data.get('name')}")
+    
     # Create a new dataset
     dataset_id = str(uuid.uuid4())
     new_dataset = {
@@ -293,8 +314,13 @@ def create_dataset_handler(user_data):
         "type": dataset_type,
         "documents": [],
         "images": [],
+        "document_count": 0,
+        "chunk_count": 0,
+        "image_count": 0,
         "created_at": datetime.datetime.now(UTC).isoformat()
     }
+    
+    print(f"[Dataset Creation] Generated dataset ID: {dataset_id}")
     
     # Save the dataset
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
@@ -302,6 +328,8 @@ def create_dataset_handler(user_data):
     
     # Check if user already has datasets
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    
+    print(f"[Dataset Creation] Saving dataset to file system...")
     
     if os.path.exists(user_datasets_file):
         with open(user_datasets_file, 'r') as f:
@@ -315,22 +343,40 @@ def create_dataset_handler(user_data):
         f.flush()  # Ensure data is written to disk
         os.fsync(f.fileno())  # Force write to disk
     
-    # Create a ChromaDB collection for this dataset
-    try:
-        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            model_name="text-embedding-ada-002"
-        )
-        
-        # Use get_or_create_collection which handles the "already exists" case
-        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
-        print(f"Collection for dataset {dataset_id} ensured.")
-    except Exception as e:
-        print(f"Error ensuring ChromaDB collection: {str(e)}")
+    print(f"[Dataset Creation] Dataset saved to file system successfully")
     
-    return jsonify(new_dataset), 201
+    # Create a ChromaDB collection for this dataset using connection pool
+    print(f"[Dataset Creation] Creating vector database collection...")
+    try:
+        from connection_pool import chroma_pool
+        chroma_pool.get_collection(dataset_id)
+        print(f"[Dataset Creation] Vector database collection created successfully")
+    except Exception as e:
+        print(f"[Dataset Creation] Error creating vector database collection: {str(e)}")
+        return jsonify({
+            "error": "Failed to initialize vector database",
+            "details": str(e)
+        }), 500
+    
+    # Invalidate cache when dataset is created
+    print(f"[Dataset Creation] Invalidating cache...")
+    from dataset_cache import dataset_cache
+    dataset_cache.invalidate_user(user_data['id'])
+    
+    print(f"[Dataset Creation] Dataset creation completed successfully: {data.get('name')}")
+    
+    return jsonify({
+        "dataset": new_dataset,
+        "status": {
+            "message": f"Successfully created {dataset_type} dataset '{data.get('name')}'",
+            "details": {
+                "dataset_id": dataset_id,
+                "type": dataset_type,
+                "created_at": new_dataset["created_at"],
+                "ready_for_uploads": True
+            }
+        }
+    }), 201
 
 def delete_dataset_handler(user_data, dataset_id):
     """Delete a dataset
@@ -1025,6 +1071,10 @@ def bulk_upload_handler(user_data, dataset_id):
             with open(status_file, 'w') as f:
                 json.dump(status, f)
             
+            # Initialize image processor for bulk upload
+            from image_processor import ImageProcessor
+            image_processor = ImageProcessor(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
+            
             # Process files
             successes = []
             errors = []
@@ -1035,83 +1085,117 @@ def bulk_upload_handler(user_data, dataset_id):
             os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
             os.makedirs(IMAGE_FOLDER, exist_ok=True)
             
-            processed_files = 0
+            # Collect files by type for batch processing
+            text_files = []
+            image_files = []
+            
+            # First pass: collect files by type
             for root, dirs, files in os.walk(extract_dir):
                 for fname in files:
                     fpath = os.path.join(root, fname)
                     ext = os.path.splitext(fname)[1].lower()
                     
-                    # Update status with current file
-                    with open(status_file, 'r') as f:
-                        status = json.load(f)
-                    status["current_file"] = fname
-                    status["processed_files"] = processed_files
-                    with open(status_file, 'w') as f:
-                        json.dump(status, f)
+                    if ext in text_exts and dataset_type in ["mixed", "text"]:
+                        text_files.append((fpath, fname, ext))
+                    elif ext in image_exts and dataset_type in ["mixed", "image"]:
+                        image_files.append((fpath, fname, ext))
+            
+                        print(f"Batch processing: {len(text_files)} text files, {len(image_files)} image files")
+            
+            processed_files = 0
+            
+            # Process text files sequentially (they're typically smaller)
+            for fpath, fname, ext in text_files:
+                # Update status with current file
+                with open(status_file, 'r') as f:
+                    status = json.load(f)
+                status["current_file"] = fname
+                status["processed_files"] = processed_files
+                with open(status_file, 'w') as f:
+                    json.dump(status, f)
+                
+                try:
+                    # Process text document
+                    doc_id = str(uuid.uuid4())
+                    dest_name = f"{doc_id}{ext}"
+                    dest_path = os.path.join(DOCUMENT_FOLDER, dest_name)
+                    shutil.copy2(fpath, dest_path)
                     
+                    # Extract text and create chunks
+                    if ext == '.pptx':
+                        text, pptx_image_metadata = extract_text_from_pptx(dest_path)
+                    else:
+                        text = extract_text_from_file(dest_path)
+                        pptx_image_metadata = []
+                        
+                    if not text:
+                        errors.append({"file": fname, "error": "Could not extract text from file"})
+                        processed_files += 1
+                        continue
+                        
+                    chunks = create_semantic_chunks(text)
+                    
+                    # Add to ChromaDB
                     try:
-                        if ext in text_exts and dataset_type in ["mixed", "text"]:
-                            # Process text document
-                            doc_id = str(uuid.uuid4())
-                            dest_name = f"{doc_id}{ext}"
-                            dest_path = os.path.join(DOCUMENT_FOLDER, dest_name)
-                            shutil.copy2(fpath, dest_path)
-                            
-                            # Extract text and create chunks
-                            if ext == '.pptx':
-                                text, pptx_image_metadata = extract_text_from_pptx(dest_path)
-                            else:
-                                text = extract_text_from_file(dest_path)
-                                pptx_image_metadata = []
-                                
-                            if not text:
-                                errors.append({"file": fname, "error": "Could not extract text from file"})
-                                continue
-                                
-                            chunks = create_text_chunks(text)
-                            
-                            # Add to ChromaDB
-                            try:
-                                add_document_to_chroma(dataset_id, chunks, doc_id, fname)
-                                successes.append({
-                                    "file": fname,
-                                    "type": "document",
-                                    "chunks": len(chunks)
-                                })
-                            except Exception as e:
-                                print(f"ChromaDB error for {fname}: {str(e)}")
-                                errors.append({"file": fname, "error": f"ChromaDB error: {str(e)}"})
-                                continue
-                                
-                        elif ext in image_exts and dataset_type in ["mixed", "image"]:
-                            # Process image
-                            img_id = str(uuid.uuid4())
-                            dest_name = f"{img_id}{ext}"
-                            dest_path = os.path.join(IMAGE_FOLDER, dest_name)
-                            shutil.copy2(fpath, dest_path)
-                            dest_path = resize_image(dest_path, max_dimension=1024)
-                            
-                            meta = {
-                                "id": img_id,
-                                "dataset_id": dataset_id,
-                                "original_filename": fname,
-                                "path": dest_path,
-                                "url": f"/api/images/{dest_name}",
-                                "type": "image",
-                                "created_at": datetime.datetime.now(UTC).isoformat(),
-                                "user_id": user_data['id'],
-                                "username": user_data['username']
-                            }
-                            
-                            image_processor.add_image_to_dataset(dataset_id, dest_path, meta)
-                            successes.append({"file": fname, "type": "image"})
-                        else:
-                            errors.append({"file": fname, "error": "Unsupported file type for this dataset"})
-                            
+                        add_document_to_chroma(dataset_id, chunks, doc_id, fname)
+                        successes.append({
+                            "file": fname,
+                            "type": "document",
+                            "chunks": len(chunks)
+                        })
+                    except Exception as e:
+                        print(f"ChromaDB error for {fname}: {str(e)}")
+                        errors.append({"file": fname, "error": f"ChromaDB error: {str(e)}"})
+                        
+                    processed_files += 1
+                    
+                except Exception as e:
+                    print(f"Error processing text file {fname}: {str(e)}")
+                    errors.append({"file": fname, "error": str(e)})
+                    processed_files += 1
+            
+            # Process images in batches for better GPU utilization
+            BATCH_SIZE = 8  # Process 8 images at a time
+            for i in range(0, len(image_files), BATCH_SIZE):
+                batch = image_files[i:i+BATCH_SIZE]
+                
+                # Update status for batch
+                batch_filenames = [fname for _, fname, _ in batch]
+                with open(status_file, 'r') as f:
+                    status = json.load(f)
+                status["current_file"] = f"Processing batch: {', '.join(batch_filenames[:3])}{'...' if len(batch_filenames) > 3 else ''}"
+                status["processed_files"] = processed_files
+                with open(status_file, 'w') as f:
+                    json.dump(status, f)
+                
+                # Process batch
+                for fpath, fname, ext in batch:
+                    try:
+                        # Process image
+                        img_id = str(uuid.uuid4())
+                        dest_name = f"{img_id}{ext}"
+                        dest_path = os.path.join(IMAGE_FOLDER, dest_name)
+                        shutil.copy2(fpath, dest_path)
+                        dest_path = resize_image(dest_path, max_dimension=1024)
+                        
+                        meta = {
+                            "id": img_id,
+                            "dataset_id": dataset_id,
+                            "original_filename": fname,
+                            "path": dest_path,
+                            "url": f"/api/images/{dest_name}",
+                            "type": "image",
+                            "created_at": datetime.datetime.now(UTC).isoformat(),
+                            "user_id": user_data['id'],
+                            "username": user_data['username']
+                        }
+                        
+                        image_processor.add_image_to_dataset(dataset_id, dest_path, meta)
+                        successes.append({"file": fname, "type": "image"})
                         processed_files += 1
                         
                     except Exception as e:
-                        print(f"Error processing {fname}: {str(e)}")
+                        print(f"Error processing image {fname}: {str(e)}")
                         errors.append({"file": fname, "error": str(e)})
                         processed_files += 1
             

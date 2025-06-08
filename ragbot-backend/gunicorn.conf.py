@@ -4,11 +4,11 @@ import multiprocessing
 # Number of worker processes
 workers = 2  # Reduced to prevent OOM with heavy ML models
 
-# Worker class
-worker_class = 'gthread'  # Using gthread for better async support
+# Worker class - use sync for CUDA compatibility
+worker_class = 'sync'  # Required for CUDA multiprocessing compatibility
 
-# Number of threads per worker
-threads = 4
+# Number of workers (single worker for CUDA)
+workers = 1
 
 # Maximum number of simultaneous clients
 worker_connections = 1000
@@ -44,17 +44,6 @@ graceful_timeout = 120
 # Preload app for faster worker startup
 preload_app = True
 
-# Reduced workers to prevent OOM with heavy ML models
-workers = 2
-threads = 4
-
-# Increased timeouts for image processing operations
-timeout = 7200
-keepalive = 30
-
-# Memory optimization
-worker_class = "sync"
-worker_connections = 100
-max_worker_connections = 1000
+# Memory optimization - use gthread for better async support with ML models
 
 # NOTE: Port 50505 is used for production in Azure Container Apps. Make sure this matches the exposed port in your Azure configuration. 

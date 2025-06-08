@@ -15,11 +15,22 @@ spec:
       labels:
         app: ragbot
     spec:
+      # Target GPU node pool
+      nodeSelector:
+        kubernetes.azure.com/accelerator: nvidia
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      - key: sku
+        operator: Equal
+        value: gpu
+        effect: NoSchedule
       imagePullSecrets:
       - name: acr-auth
       containers:
       - name: ragbot
-        image: chorusproduction.azurecr.io/ragbot:latest
+        image: chorusproduction.azurecr.io/ragbot:gpu
         imagePullPolicy: Always
         ports:
         - containerPort: 50505
@@ -33,13 +44,32 @@ spec:
             secretKeyRef:
               name: ragbot-secrets
               key: secret-key
+        # Enable GPU optimizations for Tesla T4
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+        # Use faster GPU-optimized settings
+        - name: MODEL_CACHE_DIR
+          value: "/code/model_cache"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "max_split_size_mb:512,garbage_collection_threshold:0.6"
+        # Tesla T4 specific optimizations
+        - name: CUDA_LAUNCH_BLOCKING
+          value: "0"
+        - name: TORCH_CUDA_ARCH_LIST
+          value: "7.5"  # Tesla T4 compute capability
         resources:
           requests:
-            memory: "8Gi"
+            memory: "12Gi"
             cpu: "2000m"
+            nvidia.com/gpu: 1
           limits:
-            memory: "16Gi"
-            cpu: "4000m"
+            memory: "20Gi"  # Tesla T4 has 16GB VRAM + system memory
+            cpu: "3000m"    # NC4as_T4_v3 has 4 vCPUs
+            nvidia.com/gpu: 1
         volumeMounts:
         - name: chroma-db
           mountPath: /code/chroma_db
@@ -61,18 +91,18 @@ spec:
           httpGet:
             path: /health
             port: 50505
-          initialDelaySeconds: 60
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
+          initialDelaySeconds: 300   # 5 minutes for initial GPU model loading
+          periodSeconds: 60          # Check every minute instead of 30s
+          timeoutSeconds: 120        # 2 minutes timeout (was 10s!)
+          failureThreshold: 10       # Allow 10 failures (10+ minutes of issues)
         readinessProbe:
           httpGet:
             path: /health
             port: 50505
-          initialDelaySeconds: 30
-          periodSeconds: 15
-          timeoutSeconds: 5
-          failureThreshold: 3
+          initialDelaySeconds: 180   # 3 minutes for GPU model loading
+          periodSeconds: 30          # Check every 30s  
+          timeoutSeconds: 60         # 1 minute timeout (was 10s!)
+          failureThreshold: 8        # Allow 8 failures (4+ minutes of issues)
       volumes:
       - name: chroma-db
         persistentVolumeClaim:

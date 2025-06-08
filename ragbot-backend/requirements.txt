@@ -14,7 +14,7 @@ PyJWT
 werkzeug
 requests
 Pillow
-torch
+# torch, torchvision, torchaudio will be installed with CUDA support in Dockerfile
 tesseract
 transformers
 open_clip_torch
@@ -22,9 +22,12 @@ ftfy
 regex
 tqdm
 scipy
-faiss-cpu
+# faiss-gpu will be installed in Dockerfile
 pytesseract
 pdf2image
 pymupdf
 Wand
 cairosvg
+accelerate
+# GPU optimization packages
+nvidia-ml-py3

@@ -12,6 +12,19 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 import numpy as np
 import faiss
 
+# Check for GPU FAISS availability
+try:
+    # Try to import GPU FAISS
+    import faiss
+    GPU_FAISS_AVAILABLE = hasattr(faiss, 'StandardGpuResources')
+    if GPU_FAISS_AVAILABLE:
+        print("[GPU] FAISS-GPU is available!")
+    else:
+        print("[GPU] FAISS-GPU not available, using CPU FAISS")
+except ImportError:
+    GPU_FAISS_AVAILABLE = False
+    print("[GPU] FAISS-GPU not available, using CPU FAISS")
+
 # Configurations
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_CLIP_MODEL = "ViT-B/32"
@@ -19,8 +32,20 @@ DEFAULT_CLIP_PRETRAINED = "openai"
 DEFAULT_BLIP_MODEL = "Salesforce/blip-image-captioning-base"
 VECTOR_DIMENSION = 512  # Dimension for ViT-B/32
 
+# GPU optimization settings
+USE_GPU_FAISS = GPU_FAISS_AVAILABLE and torch.cuda.is_available()
+BATCH_SIZE = 32 if torch.cuda.is_available() else 8  # Larger batches on GPU
+
 # Model cache directory for persistence
 MODEL_CACHE_DIR = os.environ.get("MODEL_CACHE_DIR", "/code/model_cache")
+
+print(f"[GPU] Device: {DEVICE}")
+print(f"[GPU] CUDA Available: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"[GPU] GPU Count: {torch.cuda.device_count()}")
+    print(f"[GPU] GPU Name: {torch.cuda.get_device_name(0)}")
+    print(f"[GPU] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+print(f"[GPU] Using GPU FAISS: {USE_GPU_FAISS}")
 
 # Global model manager to avoid reloading models
 class GlobalModelManager:
@@ -34,6 +59,7 @@ class GlobalModelManager:
             cls._instance.clip_preprocess = None
             cls._instance.blip_model = None
             cls._instance.blip_processor = None
+            cls._instance.gpu_resources = None
         return cls._instance
     
     def load_models_once(self):
@@ -54,6 +80,10 @@ class GlobalModelManager:
             )
             self.clip_model.eval()
             
+            # Enable mixed precision for faster inference on GPU
+            if torch.cuda.is_available():
+                self.clip_model = self.clip_model.half()  # Use FP16 for faster inference
+            
             print(f"[STARTUP] Loading BLIP model on {DEVICE} (cache: {MODEL_CACHE_DIR})...")
             # Set cache directories for HuggingFace models
             blip_cache_dir = os.path.join(MODEL_CACHE_DIR, "blip")
@@ -67,8 +97,22 @@ class GlobalModelManager:
             self.blip_model = BlipForConditionalGeneration.from_pretrained(
                 DEFAULT_BLIP_MODEL,
                 torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                cache_dir=blip_cache_dir
+                cache_dir=blip_cache_dir,
+                trust_remote_code=False,  # Security: don't execute remote code
+                use_safetensors=True  # Use safetensors when available
             ).to(DEVICE)
+            
+            # Initialize GPU resources for FAISS if available
+            if USE_GPU_FAISS:
+                try:
+                    print(f"[STARTUP] Initializing FAISS GPU resources...")
+                    self.gpu_resources = faiss.StandardGpuResources()
+                    # Set temporary memory limit (1GB)
+                    self.gpu_resources.setTempMemory(1024 * 1024 * 1024)
+                    print(f"[STARTUP] ✅ FAISS GPU resources initialized!")
+                except Exception as e:
+                    print(f"[STARTUP] ⚠️  FAISS GPU initialization failed: {str(e)}, falling back to CPU")
+                    self.gpu_resources = None
             
             # Clear GPU cache after loading
             if torch.cuda.is_available():
@@ -76,6 +120,7 @@ class GlobalModelManager:
                 
             self._models_loaded = True
             print(f"[STARTUP] ✅ All image processing models loaded successfully! (cached in {MODEL_CACHE_DIR})")
+            print(f"[STARTUP] 🚀 GPU optimizations: FP16={torch.cuda.is_available()}, GPU-FAISS={USE_GPU_FAISS}")
             
         except Exception as e:
             print(f"[STARTUP] ❌ Error loading models: {str(e)}")
@@ -146,9 +191,23 @@ class ImageProcessor:
                     
                     # Try to load index if it exists
                     if os.path.exists(index_path):
-                        index = faiss.read_index(index_path)
-                        self.image_indices[dataset_id] = index
-                        print(f"Loaded image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                        cpu_index = faiss.read_index(index_path)
+                        
+                        # Move to GPU if available
+                        if USE_GPU_FAISS and global_model_manager.gpu_resources:
+                            try:
+                                gpu_index = faiss.index_cpu_to_gpu(
+                                    global_model_manager.gpu_resources, 0, cpu_index
+                                )
+                                self.image_indices[dataset_id] = gpu_index
+                                print(f"Loaded GPU image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                            except Exception as e:
+                                print(f"Failed to load GPU index, using CPU: {str(e)}")
+                                self.image_indices[dataset_id] = cpu_index
+                                print(f"Loaded CPU image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                        else:
+                            self.image_indices[dataset_id] = cpu_index
+                            print(f"Loaded CPU image index for dataset {dataset_id} with {len(valid_metadata)} images")
                     else:
                         print(f"Warning: Metadata found for dataset {dataset_id} but no index file")
                         
@@ -259,9 +318,19 @@ class ImageProcessor:
             image = Image.open(image_path).convert('RGB')
             image_tensor = clip_preprocess(image).unsqueeze(0).to(DEVICE)
             
+            # Use mixed precision for faster inference on GPU
+            if torch.cuda.is_available():
+                image_tensor = image_tensor.half()
+            
             # Compute embedding
             with torch.no_grad():
-                embedding = clip_model.encode_image(image_tensor).cpu().numpy()
+                if torch.cuda.is_available():
+                    with torch.cuda.amp.autocast():
+                        embedding = clip_model.encode_image(image_tensor)
+                else:
+                    embedding = clip_model.encode_image(image_tensor)
+                    
+                embedding = embedding.cpu().float().numpy()
                 
             # Normalize the embedding
             embedding = embedding / np.linalg.norm(embedding)
@@ -296,7 +365,14 @@ class ImageProcessor:
             # Tokenize and encode text
             with torch.no_grad():
                 text_tokens = open_clip.tokenize([text]).to(DEVICE)
-                embedding = clip_model.encode_text(text_tokens).cpu().numpy()
+                
+                if torch.cuda.is_available():
+                    with torch.cuda.amp.autocast():
+                        embedding = clip_model.encode_text(text_tokens)
+                else:
+                    embedding = clip_model.encode_text(text_tokens)
+                    
+                embedding = embedding.cpu().float().numpy()
                 
             # Normalize the embedding
             embedding = embedding / np.linalg.norm(embedding)
@@ -329,7 +405,19 @@ class ImageProcessor:
         # Initialize the dataset's index and metadata if needed
         if dataset_id not in self.image_indices:
             print(f"Creating new index for dataset {dataset_id}")
-            self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
+            if USE_GPU_FAISS and global_model_manager.gpu_resources:
+                try:
+                    # Create GPU index
+                    cpu_index = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                    self.image_indices[dataset_id] = faiss.index_cpu_to_gpu(
+                        global_model_manager.gpu_resources, 0, cpu_index
+                    )
+                    print(f"Created GPU FAISS index for dataset {dataset_id}")
+                except Exception as e:
+                    print(f"Failed to create GPU index, falling back to CPU: {str(e)}")
+                    self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
+            else:
+                self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
             self.image_metadata[dataset_id] = []
         
         # Ensure image path exists
@@ -528,7 +616,18 @@ class ImageProcessor:
         """
         # Save FAISS index
         index_path = os.path.join(self.indices_dir, f"{dataset_id}_index.faiss")
-        faiss.write_index(self.image_indices[dataset_id], index_path)
+        
+        # If it's a GPU index, copy to CPU before saving
+        index_to_save = self.image_indices[dataset_id]
+        if USE_GPU_FAISS and hasattr(index_to_save, 'index'):
+            # This is a GPU index, copy to CPU
+            try:
+                index_to_save = faiss.index_gpu_to_cpu(index_to_save)
+                print(f"Copied GPU index to CPU for saving: {dataset_id}")
+            except Exception as e:
+                print(f"Warning: Could not copy GPU index to CPU: {str(e)}")
+        
+        faiss.write_index(index_to_save, index_path)
         
         # Save metadata
         metadata_path = os.path.join(self.indices_dir, f"{dataset_id}_metadata.json")
