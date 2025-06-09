@@ -6,9 +6,9 @@ set -e
 echo "🚀 Building RagBot with GPU-based embeddings..."
 
 # Version info
-BUILD_VERSION="1.1.1"
+BUILD_VERSION="1.1.3"
 BUILD_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-VCS_REF="gpu-embeddings-sentence-transformers"
+VCS_REF="small-model-blocking-startup"
 
 echo "📦 Version: $BUILD_VERSION"
 echo "📅 Build Date: $BUILD_DATE"
@@ -41,11 +41,11 @@ echo "🚀 Starting containers..."
 docker-compose up -d
 
 echo "📋 Checking container status..."
-sleep 5
+sleep 10
 docker-compose ps
 
 echo "📄 Viewing recent logs..."
-docker logs ragbot_backend_1 --tail 30
+docker logs ragbot_backend_1 --tail 40
 
 echo "🎉 RagBot v$BUILD_VERSION is ready!"
 echo "🌐 Frontend: http://localhost:50505"

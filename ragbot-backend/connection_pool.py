@@ -5,7 +5,6 @@ import threading
 from typing import Optional
 import logging
 import re
-import torch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -72,13 +71,17 @@ class ChromaDBConnectionPool:
         self._initialized = True
         logger.info("[ChromaDB Pool] Connection pool initialized")
         
-        # Pre-load embedding function during initialization to avoid blocking during dataset creation
-        logger.info("[ChromaDB Pool] Pre-loading embedding function...")
+        # MANDATORY: Pre-load embedding function during initialization to avoid blocking during dataset creation
+        # App will not start until this completes successfully
+        logger.info("[ChromaDB Pool] 🔄 Pre-loading embedding function (REQUIRED FOR STARTUP)...")
         try:
             self._initialize_embedding_function()
+            if self._embedding_function is None:
+                raise Exception("Failed to initialize embedding function")
         except Exception as e:
-            logger.warning(f"[ChromaDB Pool] Failed to pre-load embedding function: {str(e)}")
-            logger.info("[ChromaDB Pool] Embedding function will be loaded on-demand")
+            logger.error(f"[ChromaDB Pool] ❌ CRITICAL: Failed to pre-load embedding function: {str(e)}")
+            logger.error(f"[ChromaDB Pool] ❌ APP CANNOT START WITHOUT EMBEDDING FUNCTION")
+            raise RuntimeError(f"Failed to initialize embedding function: {str(e)}")
     
     def _initialize_embedding_function(self):
         """Initialize the embedding function (called during startup)"""
@@ -91,16 +94,34 @@ class ChromaDBConnectionPool:
                 logger.info(f"[ChromaDB Pool] GPU: {torch.cuda.get_device_name(0)}")
                 logger.info(f"[ChromaDB Pool] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
             
-            # Use a high-quality sentence transformer model that works well on GPU
-            # all-MiniLM-L6-v2 is fast and good quality, works well on GPU
-            model_name = "all-MiniLM-L6-v2"
+            # Use a very small model for 4GB GPU - all-MiniLM-L12-v2 is smaller than L6
+            # Or use paraphrase-MiniLM-L3-v2 which is even smaller (~17MB)
+            model_name = "paraphrase-MiniLM-L3-v2"  # Much smaller model
             logger.info(f"[ChromaDB Pool] Loading SentenceTransformer model: {model_name}")
+            logger.info(f"[ChromaDB Pool] Model size: ~17MB, optimized for limited GPU memory")
+            logger.info(f"[ChromaDB Pool] ⚠️  APP WILL NOT START UNTIL MODEL IS LOADED ⚠️")
             
-            self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=model_name,
-                device=device
-            )
-            logger.info(f"[ChromaDB Pool] Successfully loaded SentenceTransformer embedding function on {device}")
+            try:
+                import time
+                
+                logger.info(f"[ChromaDB Pool] Starting model download/load...")
+                start_time = time.time()
+                
+                self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=model_name,
+                    device=device
+                )
+                
+                load_time = time.time() - start_time
+                logger.info(f"[ChromaDB Pool] ✅ Successfully loaded SentenceTransformer embedding function on {device} in {load_time:.2f} seconds")
+                logger.info(f"[ChromaDB Pool] 🚀 Embedding function ready - app can now start!")
+                
+            except Exception as e:
+                logger.error(f"[ChromaDB Pool] ❌ Failed to load SentenceTransformer: {str(e)}")
+                logger.info(f"[ChromaDB Pool] Falling back to default embedding function")
+                self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                logger.info(f"[ChromaDB Pool] ✅ Successfully created fallback embedding function")
+                logger.info(f"[ChromaDB Pool] 🚀 Fallback embedding ready - app can now start!")
     
     def get_client(self):
         """Get the ChromaDB client (creates if doesn't exist)"""
