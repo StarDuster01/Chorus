@@ -4,6 +4,7 @@ import uuid
 import datetime
 from datetime import UTC
 import tempfile
+import logging
 from werkzeug.utils import secure_filename
 from flask import request, jsonify, send_file
 import chromadb
@@ -15,6 +16,15 @@ import zipfile
 import shutil
 import threading
 import time
+
+# Setup logger for dataset operations
+logger = logging.getLogger('dataset_operations')
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 from text_extractors import (
     extract_text_from_image,
@@ -184,9 +194,15 @@ def get_datasets_handler(user_data):
     from dataset_cache import dataset_cache
     from connection_pool import chroma_pool
     
+    user_id = user_data['id']
+    username = user_data.get('username', 'unknown')
+    
+    logger.info(f"[DATASETS] Loading datasets for user {username} (ID: {user_id})")
+    
     # Try cache first
-    cached_datasets = dataset_cache.get_datasets(user_data['id'])
+    cached_datasets = dataset_cache.get_datasets(user_id)
     if cached_datasets is not None:
+        logger.info(f"[DATASETS] Retrieved {len(cached_datasets)} datasets from cache for user {username}")
         return jsonify({
             "datasets": cached_datasets,
             "status": {
@@ -196,12 +212,14 @@ def get_datasets_handler(user_data):
         }), 200
     
     # Cache miss - load from file
+    logger.info(f"[DATASETS] Cache miss for user {username}, loading from file system")
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_id}_datasets.json")
     
     if not os.path.exists(user_datasets_file):
-        dataset_cache.set_datasets(user_data['id'], [])
+        logger.info(f"[DATASETS] No dataset file found for user {username}, returning empty list")
+        dataset_cache.set_datasets(user_id, [])
         return jsonify({
             "datasets": [],
             "status": {
@@ -210,14 +228,26 @@ def get_datasets_handler(user_data):
             }
         }), 200
         
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
+    try:
+        with open(user_datasets_file, 'r') as f:
+            datasets = json.load(f)
+        logger.info(f"[DATASETS] Loaded {len(datasets)} datasets from file for user {username}")
+    except Exception as e:
+        logger.error(f"[DATASETS] Error reading dataset file for user {username}: {str(e)}")
+        return jsonify({
+            "datasets": [],
+            "status": {
+                "message": f"Error reading datasets: {str(e)}",
+                "cache_hit": False
+            }
+        }), 500
     
-    print(f"[Dataset Loading] Processing {len(datasets)} datasets for user {user_data['id']}")
+    logger.info(f"[DATASETS] Processing {len(datasets)} datasets for user {username}")
     
     # Process datasets efficiently - skip expensive operations for empty datasets
     for i, dataset in enumerate(datasets):
-        print(f"[Dataset Loading] Processing dataset {i+1}/{len(datasets)}: {dataset.get('name', 'Unknown')}")
+        dataset_name = dataset.get('name', 'Unknown')
+        logger.debug(f"[DATASETS] Processing dataset {i+1}/{len(datasets)}: {dataset_name}")
         
         # Ensure basic fields exist
         dataset["document_count"] = dataset.get("document_count", 0)
@@ -227,7 +257,7 @@ def get_datasets_handler(user_data):
         
         # Only do expensive operations if the dataset might have content
         if dataset.get("document_count", 0) > 0 or dataset.get("image_count", 0) > 0:
-            print(f"[Dataset Loading] Updating metadata for dataset with content: {dataset.get('name')}")
+            logger.debug(f"[DATASETS] Updating metadata for dataset with content: {dataset_name}")
             
             # Update image info quickly by reading metadata file directly (only if needed)
             dataset_id = dataset["id"]
@@ -256,17 +286,18 @@ def get_datasets_handler(user_data):
                     
                     dataset["image_count"] = valid_count
                     dataset["image_previews"] = previews
+                    logger.debug(f"[DATASETS] Updated {dataset_name} with {valid_count} images")
                 except Exception as e:
-                    print(f"[Dataset Loading] Error reading metadata for dataset {dataset_id}: {str(e)}")
+                    logger.warning(f"[DATASETS] Error reading metadata for dataset {dataset_id}: {str(e)}")
                     dataset["image_count"] = dataset.get("image_count", 0)
                     dataset["image_previews"] = dataset.get("image_previews", [])
         else:
-            print(f"[Dataset Loading] Skipping metadata update for empty dataset: {dataset.get('name')}")
+            logger.debug(f"[DATASETS] Skipping metadata update for empty dataset: {dataset_name}")
     
-    print(f"[Dataset Loading] Completed processing all datasets for user {user_data['id']}")
+    logger.info(f"[DATASETS] Completed processing all datasets for user {username}")
     
     # Cache the processed datasets
-    dataset_cache.set_datasets(user_data['id'], datasets)
+    dataset_cache.set_datasets(user_id, datasets)
     
     return jsonify({
         "datasets": datasets,
@@ -293,25 +324,32 @@ def create_dataset_handler(user_data):
     """
     data = request.json
     
-    print(f"[Dataset Creation] Starting dataset creation for user {user_data['id']}")
+    user_id = user_data['id']
+    username = user_data.get('username', 'unknown')
+    
+    logger.info(f"[DATASET_CREATE] Starting dataset creation for user {username} (ID: {user_id})")
     
     if not data or not data.get('name'):
+        logger.warning(f"[DATASET_CREATE] Dataset name missing for user {username}")
         return jsonify({"error": "Dataset name is required"}), 400
         
     # Get dataset type, default to "text"
     dataset_type = data.get('type', 'text')
-    if dataset_type not in ['text', 'image']:
-        return jsonify({"error": "Invalid dataset type. Must be 'text' or 'image'"}), 400
+    if dataset_type not in ['text', 'image', 'mixed']:
+        logger.warning(f"[DATASET_CREATE] Invalid dataset type '{dataset_type}' for user {username}")
+        return jsonify({"error": "Invalid dataset type. Must be 'text', 'image', or 'mixed'"}), 400
         
-    print(f"[Dataset Creation] Creating {dataset_type} dataset: {data.get('name')}")
+    dataset_name = data.get('name')
+    logger.info(f"[DATASET_CREATE] Creating {dataset_type} dataset '{dataset_name}' for user {username}")
     
     # Create a new dataset
     dataset_id = str(uuid.uuid4())
     new_dataset = {
         "id": dataset_id,
-        "name": data.get('name'),
+        "name": dataset_name,
         "description": data.get('description', ''),
         "type": dataset_type,
+        "user_id": user_id,
         "documents": [],
         "images": [],
         "document_count": 0,
@@ -320,55 +358,66 @@ def create_dataset_handler(user_data):
         "created_at": datetime.datetime.now(UTC).isoformat()
     }
     
-    print(f"[Dataset Creation] Generated dataset ID: {dataset_id}")
+    logger.info(f"[DATASET_CREATE] Generated dataset ID: {dataset_id}")
     
     # Save the dataset
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
     
     # Check if user already has datasets
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_id}_datasets.json")
     
-    print(f"[Dataset Creation] Saving dataset to file system...")
+    logger.info(f"[DATASET_CREATE] Saving dataset to file system...")
     
-    if os.path.exists(user_datasets_file):
-        with open(user_datasets_file, 'r') as f:
-            datasets = json.load(f)
-        datasets.append(new_dataset)
-    else:
-        datasets = [new_dataset]
-    
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
-        f.flush()  # Ensure data is written to disk
-        os.fsync(f.fileno())  # Force write to disk
-    
-    print(f"[Dataset Creation] Dataset saved to file system successfully")
+    try:
+        if os.path.exists(user_datasets_file):
+            with open(user_datasets_file, 'r') as f:
+                datasets = json.load(f)
+            datasets.append(new_dataset)
+        else:
+            datasets = [new_dataset]
+        
+        with open(user_datasets_file, 'w') as f:
+            json.dump(datasets, f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
+            
+        logger.info(f"[DATASET_CREATE] Dataset saved to file system successfully")
+    except Exception as e:
+        logger.error(f"[DATASET_CREATE] Error saving dataset to file system: {str(e)}")
+        return jsonify({
+            "error": "Failed to save dataset",
+            "details": str(e)
+        }), 500
     
     # Create a ChromaDB collection for this dataset using connection pool
-    print(f"[Dataset Creation] Creating vector database collection...")
+    logger.info(f"[DATASET_CREATE] Creating vector database collection...")
     try:
         from connection_pool import chroma_pool
         chroma_pool.get_collection(dataset_id)
-        print(f"[Dataset Creation] Vector database collection created successfully")
+        logger.info(f"[DATASET_CREATE] Vector database collection created successfully")
     except Exception as e:
-        print(f"[Dataset Creation] Error creating vector database collection: {str(e)}")
+        logger.error(f"[DATASET_CREATE] Error creating vector database collection: {str(e)}")
         return jsonify({
             "error": "Failed to initialize vector database",
             "details": str(e)
         }), 500
     
     # Invalidate cache when dataset is created
-    print(f"[Dataset Creation] Invalidating cache...")
-    from dataset_cache import dataset_cache
-    dataset_cache.invalidate_user(user_data['id'])
+    logger.info(f"[DATASET_CREATE] Invalidating cache...")
+    try:
+        from dataset_cache import dataset_cache
+        dataset_cache.invalidate_user(user_id)
+        logger.info(f"[DATASET_CREATE] Cache invalidated successfully")
+    except Exception as e:
+        logger.warning(f"[DATASET_CREATE] Error invalidating cache: {str(e)}")
     
-    print(f"[Dataset Creation] Dataset creation completed successfully: {data.get('name')}")
+    logger.info(f"[DATASET_CREATE] Dataset creation completed successfully: '{dataset_name}' for user {username}")
     
     return jsonify({
         "dataset": new_dataset,
         "status": {
-            "message": f"Successfully created {dataset_type} dataset '{data.get('name')}'",
+            "message": f"Successfully created {dataset_type} dataset '{dataset_name}'",
             "details": {
                 "dataset_id": dataset_id,
                 "type": dataset_type,

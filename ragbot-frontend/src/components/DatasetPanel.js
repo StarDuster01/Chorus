@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal, ProgressBar } from 'react-bootstrap';
+import { Container, Card, Button, Form, Row, Col, ListGroup, Badge, Alert, Spinner, Modal, ProgressBar, Toast, ToastContainer } from 'react-bootstrap';
 import botService from '../services/botService';
 import TesseractLoader from './TesseractLoader';
-import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle, FaImage, FaChartBar } from 'react-icons/fa';
+import { FaDatabase, FaPlus, FaFileUpload, FaFile, FaTimes, FaFileAlt, FaTrash, FaList, FaExclamationTriangle, FaImage, FaChartBar, FaInfo, FaCheckCircle, FaExclamationCircle } from 'react-icons/fa';
 import axios from 'axios';
 
 const DatasetPanel = () => {
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [detailedStatus, setDetailedStatus] = useState('');
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [createMode, setCreateMode] = useState(false);
@@ -39,9 +40,55 @@ const DatasetPanel = () => {
   const [bulkResult, setBulkResult] = useState(null);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [statusCheckInterval, setStatusCheckInterval] = useState(null);
+  const [operationLogs, setOperationLogs] = useState([]);
+  const [showSystemHealth, setShowSystemHealth] = useState(false);
+  const [systemHealth, setSystemHealth] = useState(null);
+
+  // Enhanced logging function
+  const addOperationLog = (message, type = 'info', details = null) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = {
+      id: Date.now() + Math.random(),
+      timestamp,
+      message,
+      type, // 'info', 'success', 'warning', 'error'
+      details
+    };
+    
+    setOperationLogs(prev => [logEntry, ...prev].slice(0, 50)); // Keep last 50 logs
+    console.log(`[Dataset Panel ${type.toUpperCase()}] ${message}`, details || '');
+    
+    // Auto-clear success/info logs after 5 seconds
+    if (type === 'success' || type === 'info') {
+      setTimeout(() => {
+        setOperationLogs(prev => prev.filter(log => log.id !== logEntry.id));
+      }, 5000);
+    }
+  };
+
+  // System health check
+  const checkSystemHealth = async () => {
+    try {
+      addOperationLog('Checking system health...', 'info');
+      const healthResponse = await fetch('/health/models');
+      const healthData = await healthResponse.json();
+      setSystemHealth(healthData);
+      
+      if (healthData.status === 'healthy') {
+        addOperationLog('✅ System is healthy and ready', 'success');
+      } else if (healthData.status === 'loading') {
+        addOperationLog('⏳ System is still loading AI models, performance may be slower', 'warning');
+      } else {
+        addOperationLog('⚠️ System health check failed', 'error', healthData.error);
+      }
+    } catch (error) {
+      addOperationLog('❌ Could not check system health', 'error', error.message);
+    }
+  };
 
   useEffect(() => {
     loadDatasets();
+    checkSystemHealth();
   }, []);
 
   useEffect(() => {
@@ -84,10 +131,25 @@ const DatasetPanel = () => {
 
   const loadDatasets = async () => {
     setLoading(true);
-    setLoadingMessage("Loading datasets..."); // v2.3 - Safe fallback
+    setLoadingMessage("Initializing dataset loading...");
+    setDetailedStatus("Checking authentication...");
+    addOperationLog('Starting dataset loading process', 'info');
     
     try {
+      // Check if we have a valid token
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('No authentication token found. Please log in again.');
+      }
+      
+      setDetailedStatus("Contacting server...");
+      addOperationLog('Authentication verified, contacting server', 'info');
+      
+      const startTime = Date.now();
       const response = await botService.getDatasets();
+      const loadTime = Date.now() - startTime;
+      
+      addOperationLog(`Server responded in ${loadTime}ms`, loadTime > 3000 ? 'warning' : 'success');
       
       // Safety check: ensure datasets is always an array
       let datasetsArray = [];
@@ -99,15 +161,23 @@ const DatasetPanel = () => {
         // Show detailed status message
         const status = response.status;
         if (status.cache_hit) {
-          setLoadingMessage("Retrieved datasets from cache");
+          setLoadingMessage("✅ Retrieved datasets from cache");
+          setDetailedStatus("Using cached data for faster loading");
+          addOperationLog('Datasets loaded from cache', 'success');
         } else {
           setLoadingMessage(status.message);
+          setDetailedStatus("Processing fresh dataset information");
+          addOperationLog(`Loaded ${datasetsArray.length} datasets from database`, 'success');
           
           // Show additional details if available
           if (status.details) {
             const details = status.details;
             const detailMessage = `Found ${details.total_datasets} datasets with ${details.total_documents} documents and ${details.total_images} images`;
-            setTimeout(() => setLoadingMessage(detailMessage), 500);
+            setTimeout(() => {
+              setLoadingMessage(detailMessage);
+              setDetailedStatus("Dataset summary computed");
+              addOperationLog(detailMessage, 'info');
+            }, 500);
           }
         }
         
@@ -115,14 +185,20 @@ const DatasetPanel = () => {
         setTimeout(() => {
           setLoading(false);
           setLoadingMessage("");
+          setDetailedStatus("");
+          addOperationLog(`Dataset loading completed - ${datasetsArray.length} datasets available`, 'success');
         }, 1500);
       } else {
         // Fallback for old response format (response is direct array)
         datasetsArray = Array.isArray(response) ? response : [];
-        setLoadingMessage("Datasets loaded successfully");
+        setLoadingMessage("✅ Datasets loaded successfully");
+        setDetailedStatus("Using fallback response format");
+        addOperationLog(`Loaded ${datasetsArray.length} datasets (legacy format)`, 'success');
+        
         setTimeout(() => {
           setLoading(false);
           setLoadingMessage("");
+          setDetailedStatus("");
         }, 1000);
       }
       
@@ -130,44 +206,77 @@ const DatasetPanel = () => {
     } catch (error) {
       console.error('Error fetching datasets:', error);
       setDatasets([]); // Ensure datasets is always an array
-      setLoadingMessage("Error loading datasets");
+      setLoadingMessage("❌ Error loading datasets");
+      setDetailedStatus(`Error: ${error.message}`);
+      addOperationLog('Failed to load datasets', 'error', error.message);
+      
+      // Handle specific error types
+      if (error.message.includes('authentication') || error.message.includes('401')) {
+        addOperationLog('Authentication failed - please log in again', 'error');
+        setError('Authentication failed. Please refresh the page and log in again.');
+      } else if (error.message.includes('Network Error') || error.message.includes('ERR_NETWORK')) {
+        addOperationLog('Network connection failed', 'error');
+        setError('Cannot connect to server. Please check your internet connection.');
+      } else {
+        setError(`Failed to load datasets: ${error.message}`);
+      }
+      
       setTimeout(() => {
         setLoading(false);
         setLoadingMessage("");
-      }, 2000);
+        setDetailedStatus("");
+      }, 3000);
     }
   };
 
   const handleCreateDataset = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setLoadingMessage('Preparing to create dataset...');
+    setLoadingMessage('🔧 Preparing to create dataset...');
+    setDetailedStatus('Validating dataset configuration...');
+    addOperationLog(`Creating new ${newDataset.type} dataset: ${newDataset.name}`, 'info');
     
     try {
       // Show initial progress
-      setLoadingMessage('Setting up dataset structure...');
+      setLoadingMessage('📝 Validating dataset parameters...');
+      setDetailedStatus(`Type: ${newDataset.type}, Name: ${newDataset.name}`);
+      addOperationLog('Dataset parameters validated', 'info');
       await new Promise(resolve => setTimeout(resolve, 300));
       
-      setLoadingMessage('Creating vector database collection...');
+      setLoadingMessage('🗄️ Creating vector database collection...');
+      setDetailedStatus('Initializing ChromaDB collection for embeddings...');
+      addOperationLog('Initializing vector database collection', 'info');
+      
+      const startTime = Date.now();
       const response = await botService.createDataset(newDataset);
+      const createTime = Date.now() - startTime;
+      
+      addOperationLog(`Dataset created in ${createTime}ms`, 'success');
       
       // Handle enhanced response format with detailed status
       if (response.dataset && response.status) {
         const status = response.status;
         
         // Show the detailed creation message
-        setLoadingMessage(status.message);
+        setLoadingMessage(`✅ ${status.message}`);
+        setDetailedStatus(`Dataset ID: ${response.dataset.id}`);
+        addOperationLog(status.message, 'success', response.dataset);
         
         // Show additional details if available
         if (status.details && status.details.ready_for_uploads) {
           setTimeout(() => {
-            setLoadingMessage("Dataset ready for file uploads!");
+            setLoadingMessage("🚀 Dataset ready for file uploads!");
+            setDetailedStatus('Vector database initialized and ready');
+            addOperationLog('Dataset is ready for file uploads', 'success');
           }, 800);
         }
         
         // Keep status visible then refresh
         setTimeout(async () => {
-          setLoadingMessage('Refreshing dataset list...');
+          setLoadingMessage('🔄 Refreshing dataset list...');
+          setDetailedStatus('Updating interface...');
+          addOperationLog('Refreshing dataset list', 'info');
+          
           const data = await botService.getDatasets();
           setDatasets(data.datasets || data);
           
@@ -181,10 +290,13 @@ const DatasetPanel = () => {
           setTimeout(() => setSuccess(null), 3000);
           setLoading(false);
           setLoadingMessage('');
+          setDetailedStatus('');
+          addOperationLog(`Dataset creation process completed successfully`, 'success');
         }, 1500);
       } else {
         // Fallback for old response format
-        setLoadingMessage('Refreshing dataset list...');
+        setLoadingMessage('🔄 Refreshing dataset list...');
+        setDetailedStatus('Using legacy response format');
         const data = await botService.getDatasets();
         setDatasets(data.datasets || data);
         setCreateMode(false);
@@ -197,35 +309,50 @@ const DatasetPanel = () => {
         setTimeout(() => setSuccess(null), 3000);
         setLoading(false);
         setLoadingMessage('');
+        setDetailedStatus('');
+        addOperationLog('Dataset created (legacy format)', 'success');
       }
     } catch (err) {
       console.error('Error creating dataset:', err);
+      addOperationLog('Dataset creation failed', 'error', err.message);
       setError(err.response?.data?.error || 'Failed to create dataset');
       if (err.response?.data?.details) {
-        setLoadingMessage(`Error: ${err.response.data.details}`);
+        setLoadingMessage(`❌ Error: ${err.response.data.details}`);
+        setDetailedStatus('Creation failed - see details above');
         setTimeout(() => {
           setLoading(false);
           setLoadingMessage('');
+          setDetailedStatus('');
         }, 3000);
       } else {
         setLoading(false);
         setLoadingMessage('');
+        setDetailedStatus('');
       }
     }
   };
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
+    const selectedFile = e.target.files[0];
+    setFile(selectedFile);
+    if (selectedFile) {
+      addOperationLog(`File selected: ${selectedFile.name} (${(selectedFile.size / 1024).toFixed(2)} KB)`, 'info');
+    }
   };
 
   const handleBulkZipChange = (e) => {
-    setBulkZipFile(e.target.files[0]);
+    const selectedFile = e.target.files[0];
+    setBulkZipFile(selectedFile);
+    if (selectedFile) {
+      addOperationLog(`Zip file selected: ${selectedFile.name} (${(selectedFile.size / 1024 / 1024).toFixed(2)} MB)`, 'info');
+    }
   };
 
   const handleUploadDocument = async (e) => {
     e.preventDefault();
     if (!file) {
       setError('Please select a file to upload');
+      addOperationLog('Upload failed: No file selected', 'error');
       return;
     }
 
@@ -233,18 +360,29 @@ const DatasetPanel = () => {
     const fileExtension = file.name.split('.').pop().toLowerCase();
     const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(fileExtension);
     
-    setLoadingMessage(isImage ? `Processing image: ${file.name}...` : `Processing document: ${file.name}...`);
+    setLoadingMessage(isImage ? `📸 Processing image: ${file.name}...` : `📄 Processing document: ${file.name}...`);
+    setDetailedStatus(`File type: ${fileExtension.toUpperCase()}, Size: ${(file.size / 1024).toFixed(2)} KB`);
+    addOperationLog(`Starting upload: ${file.name} (${isImage ? 'image' : 'document'})`, 'info');
     
     try {
       if (isImage) {
-        setLoadingMessage('Generating image embeddings...');
+        setLoadingMessage('🧠 Generating image embeddings with CLIP...');
+        setDetailedStatus('Computing visual features and generating caption...');
+        addOperationLog('Processing image with AI models (CLIP + BLIP)', 'info');
         await botService.uploadImage(selectedDataset.id, file);
+        addOperationLog('Image processed and added to vector database', 'success');
       } else {
-        setLoadingMessage('Extracting text and creating chunks...');
+        setLoadingMessage('📝 Extracting text and creating semantic chunks...');
+        setDetailedStatus('Parsing document content and splitting into chunks...');
+        addOperationLog('Extracting text and creating embeddings', 'info');
         await botService.uploadDocument(selectedDataset.id, file);
+        addOperationLog('Document processed and chunked into vector database', 'success');
       }
       
-      setLoadingMessage('Updating dataset...');
+      setLoadingMessage('🔄 Updating dataset information...');
+      setDetailedStatus('Refreshing dataset metadata...');
+      addOperationLog('Refreshing dataset list', 'info');
+      
       const data = await botService.getDatasets();
       
       // Handle both response formats safely
@@ -256,6 +394,7 @@ const DatasetPanel = () => {
       } else {
         console.warn('Unexpected datasets response format:', data);
         datasetsArray = [];
+        addOperationLog('Warning: Unexpected response format from server', 'warning');
       }
       
       setDatasets(datasetsArray);
@@ -266,10 +405,14 @@ const DatasetPanel = () => {
       setTimeout(() => setSuccess(null), 3000);
       setLoading(false);
       setLoadingMessage('');
+      setDetailedStatus('');
+      addOperationLog(`Upload completed successfully: ${file.name}`, 'success');
     } catch (err) {
+      addOperationLog(`Upload failed: ${file.name}`, 'error', err.message);
       setError(`Failed to upload ${file.name}`);
       setLoading(false);
       setLoadingMessage('');
+      setDetailedStatus('');
     }
   };
 
@@ -277,18 +420,24 @@ const DatasetPanel = () => {
     e.preventDefault();
     if (!bulkZipFile) {
       setError('Please select a zip file to upload');
+      addOperationLog('Bulk upload failed: No zip file selected', 'error');
       return;
     }
     setLoading(true);
-    setLoadingMessage('Uploading zip file...');
+    setLoadingMessage('📦 Uploading zip file...');
+    setDetailedStatus(`Processing ${bulkZipFile.name} (${(bulkZipFile.size / 1024 / 1024).toFixed(2)} MB)`);
     setBulkResult(null);
     setUploadStatus(null);
+    addOperationLog(`Starting bulk upload: ${bulkZipFile.name}`, 'info');
     
     try {
       const formData = new FormData();
       formData.append('file', bulkZipFile);
       
-      setLoadingMessage('Starting bulk upload process...');
+      setLoadingMessage('🚀 Starting bulk upload process...');
+      setDetailedStatus('Transferring file to server...');
+      addOperationLog('Transferring zip file to server', 'info');
+      
       const response = await fetch(`/api/datasets/${selectedDataset.id}/bulk-upload`, {
         method: 'POST',
         headers: {
@@ -298,35 +447,63 @@ const DatasetPanel = () => {
       });
       const result = await response.json();
       if (!response.ok) {
+        addOperationLog('Bulk upload failed', 'error', result.error);
         setError(result.error || 'Bulk upload failed');
         setLoading(false);
         setLoadingMessage('');
+        setDetailedStatus('');
         return;
       }
       
-      setLoadingMessage('Processing files in background...');
+      setLoadingMessage('⚙️ Processing files in background...');
+      setDetailedStatus('Server is extracting and processing files...');
+      addOperationLog('Bulk processing started on server', 'info');
+      
       const statusId = result.status_file.split('/').pop();
+      let statusCheckCount = 0;
+      
       const checkStatus = async () => {
         try {
+          statusCheckCount++;
           const status = await botService.checkUploadStatus(selectedDataset.id, statusId);
           setUploadStatus(status);
+          
+          if (status.current_file) {
+            setDetailedStatus(`Processing: ${status.current_file}`);
+            addOperationLog(`Processing file ${status.processed_files}/${status.total_files}: ${status.current_file}`, 'info');
+          } else if (status.message) {
+            setDetailedStatus(status.message);
+          }
           
           if (status.status === 'completed' || status.status === 'error') {
             clearInterval(statusCheckInterval);
             setStatusCheckInterval(null);
             setLoading(false);
             setLoadingMessage('');
+            setDetailedStatus('');
+            
             if (status.status === 'completed') {
+              addOperationLog(`Bulk upload completed: ${status.successes?.length || 0} files processed`, 'success');
               setSuccess('Bulk upload completed');
               setTimeout(() => setSuccess(null), 3000);
               loadDatasets();
               setBulkZipFile(null);
             } else {
+              addOperationLog('Bulk upload failed', 'error', status.message);
               setError(status.message || 'Bulk upload failed');
             }
+          } else if (statusCheckCount > 300) { // 10 minutes timeout
+            clearInterval(statusCheckInterval);
+            setStatusCheckInterval(null);
+            setLoading(false);
+            setLoadingMessage('');
+            setDetailedStatus('');
+            addOperationLog('Bulk upload timed out', 'error');
+            setError('Upload timed out. Please try again with smaller files.');
           }
         } catch (err) {
           console.error('Error checking status:', err);
+          addOperationLog('Error checking upload status', 'error', err.message);
         }
       };
       
@@ -335,9 +512,11 @@ const DatasetPanel = () => {
       setStatusCheckInterval(interval);
       
     } catch (err) {
+      addOperationLog('Bulk upload failed', 'error', err.message);
       setError('Bulk upload failed');
       setLoading(false);
       setLoadingMessage('');
+      setDetailedStatus('');
     }
   };
 
@@ -353,6 +532,7 @@ const DatasetPanel = () => {
     setSelectedDataset(dataset);
     setUploadMode(true);
     setCreateMode(false);
+    addOperationLog(`Starting upload to dataset: ${dataset.name}`, 'info');
   };
 
   const startViewDocuments = async (dataset) => {
@@ -550,6 +730,71 @@ const DatasetPanel = () => {
 
   return (
     <Container className="mt-4">
+      {/* System Health and Operation Logs Panel */}
+      {(operationLogs.length > 0 || systemHealth) && (
+        <Card className="mb-4 border-0 shadow-sm">
+          <Card.Body>
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h6 className="mb-0">
+                <FaInfo className="me-2" />
+                System Status & Activity Log
+              </h6>
+              <Button 
+                variant="outline-secondary" 
+                size="sm" 
+                onClick={() => setShowSystemHealth(!showSystemHealth)}
+                className="rounded-pill"
+              >
+                {showSystemHealth ? 'Hide Details' : 'Show Details'}
+              </Button>
+            </div>
+            
+            {systemHealth && (
+              <div className="mb-3">
+                <Badge 
+                  bg={systemHealth.status === 'healthy' ? 'success' : systemHealth.status === 'loading' ? 'warning' : 'danger'} 
+                  className="me-2"
+                >
+                  AI Models: {systemHealth.status === 'healthy' ? '✅ Ready' : systemHealth.status === 'loading' ? '⏳ Loading' : '❌ Error'}
+                </Badge>
+                {systemHealth.models_loaded && (
+                  <Badge bg="info" className="me-2">
+                    🧠 CLIP + BLIP Models Loaded
+                  </Badge>
+                )}
+              </div>
+            )}
+            
+            {showSystemHealth && operationLogs.length > 0 && (
+              <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                {operationLogs.slice(0, 10).map(log => (
+                  <div key={log.id} className={`d-flex align-items-start mb-2 p-2 rounded ${
+                    log.type === 'error' ? 'bg-danger bg-opacity-10' :
+                    log.type === 'warning' ? 'bg-warning bg-opacity-10' :
+                    log.type === 'success' ? 'bg-success bg-opacity-10' :
+                    'bg-light'
+                  }`}>
+                    <div className="me-2">
+                      {log.type === 'error' ? <FaExclamationCircle className="text-danger" /> :
+                       log.type === 'warning' ? <FaExclamationTriangle className="text-warning" /> :
+                       log.type === 'success' ? <FaCheckCircle className="text-success" /> :
+                       <FaInfo className="text-info" />}
+                    </div>
+                    <div>
+                      <div className="small text-muted">{log.timestamp}</div>
+                      <div className="small">{log.message}</div>
+                      {log.details && (
+                        <div className="small text-muted">{JSON.stringify(log.details)}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card.Body>
+        </Card>
+      )}
+
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h1 className="mb-0">
           <FaDatabase className="me-2" />
@@ -967,6 +1212,9 @@ const DatasetPanel = () => {
         <div className="text-center my-5">
           <TesseractLoader size={80} />
           <p className="mt-3 text-muted font-weight-bold">{loadingMessage || 'Loading your datasets...'}</p>
+          {detailedStatus && (
+            <p className="mt-2 text-muted small">{detailedStatus}</p>
+          )}
         </div>
       ) : (
         <Row className="mt-4">

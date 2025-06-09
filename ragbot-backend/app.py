@@ -9,10 +9,34 @@ import tempfile
 import bcrypt
 import jwt
 import re
+import logging  # Add logging import
 from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+# Configure comprehensive logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('/code/logs/ragbot.log', mode='a') if os.path.exists('/code/logs') else logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Ensure logs directory exists
+os.makedirs('/code/logs', exist_ok=True)
+
+# Add dataset operation logger
+dataset_logger = logging.getLogger('dataset_operations')
+dataset_handler = logging.FileHandler('/code/logs/dataset_operations.log', mode='a')
+dataset_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+dataset_logger.addHandler(dataset_handler)
+dataset_logger.setLevel(logging.INFO)
+
+logger.info("[STARTUP] Starting RagBot backend with enhanced logging...")
 import openai
 import anthropic
 import requests  # For Groq API
@@ -170,9 +194,48 @@ os.makedirs(CONVERSATIONS_FOLDER, exist_ok=True)
 # Run the sync on app startup
 sync_datasets_with_collections(chroma_client, openai_ef)
 
-# Update the authentication decorator to use the imported module
+# Enhanced authentication decorator with comprehensive logging
 def require_auth_wrapper(f):
-    return require_auth(app.config['JWT_SECRET_KEY'])(f)
+    def wrapper(*args, **kwargs):
+        # Log the request
+        logger.info(f"[AUTH] Request to {request.endpoint} from {request.remote_addr}")
+        
+        # Check for authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            logger.warning(f"[AUTH] Missing authorization header for {request.endpoint}")
+            return jsonify({"error": "Authorization header missing"}), 401
+            
+        if not auth_header.startswith('Bearer '):
+            logger.warning(f"[AUTH] Invalid authorization header format for {request.endpoint}")
+            return jsonify({"error": "Invalid authorization header format"}), 401
+            
+        token = auth_header.split(' ')[1]
+        
+        try:
+            # Verify the token
+            payload = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            user_data = {
+                'id': payload.get('user_id'),
+                'username': payload.get('username'),
+                'isAdmin': payload.get('isAdmin', False)
+            }
+            
+            logger.info(f"[AUTH] Authenticated user {user_data['username']} for {request.endpoint}")
+            return f(user_data, *args, **kwargs)
+            
+        except jwt.ExpiredSignatureError:
+            logger.warning(f"[AUTH] Expired token for {request.endpoint}")
+            return jsonify({"error": "Token has expired"}), 401
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"[AUTH] Invalid token for {request.endpoint}: {str(e)}")
+            return jsonify({"error": "Invalid token"}), 401
+        except Exception as e:
+            logger.error(f"[AUTH] Authentication error for {request.endpoint}: {str(e)}")
+            return jsonify({"error": "Authentication failed"}), 401
+            
+    wrapper.__name__ = f.__name__
+    return wrapper
 
 
 
@@ -512,18 +575,55 @@ def upload_document(user_data, dataset_id):
 @app.route('/health')
 def health():
     """Simple health check for Kubernetes probes - independent of model loading"""
+    logger.info("[HEALTH] Basic health check requested")
     return "OK", 200
 
 @app.route('/health/models')
 def model_health():
     """Detailed health check including model status"""
     try:
+        logger.info("[HEALTH] Model health check requested")
+        
+        # Check model loading status
+        models_loaded = global_model_manager._models_loaded
+        
+        # Check GPU availability
+        gpu_available = torch.cuda.is_available() if 'torch' in globals() else False
+        gpu_count = torch.cuda.device_count() if gpu_available else 0
+        
+        # Check ChromaDB connection
+        chroma_status = "unknown"
+        try:
+            from connection_pool import chroma_pool
+            test_client = chroma_pool.get_client()
+            collections = test_client.list_collections()
+            chroma_status = "connected"
+            logger.info(f"[HEALTH] ChromaDB connected with {len(collections)} collections")
+        except Exception as e:
+            chroma_status = f"error: {str(e)}"
+            logger.error(f"[HEALTH] ChromaDB connection failed: {str(e)}")
+        
+        # Determine overall status
+        if models_loaded and chroma_status == "connected":
+            status = "healthy"
+        elif not models_loaded:
+            status = "loading"
+        else:
+            status = "degraded"
+            
         model_status = {
-            "models_loaded": global_model_manager._models_loaded,
-            "status": "healthy" if global_model_manager._models_loaded else "loading"
+            "models_loaded": models_loaded,
+            "status": status,
+            "gpu_available": gpu_available,
+            "gpu_count": gpu_count,
+            "chroma_status": chroma_status,
+            "timestamp": datetime.datetime.now(UTC).isoformat()
         }
+        
+        logger.info(f"[HEALTH] Model health status: {status}")
         return jsonify(model_status), 200
     except Exception as e:
+        logger.error(f"[HEALTH] Model health check failed: {str(e)}")
         return jsonify({"error": str(e), "status": "error"}), 500
 
 @app.route('/api/datasets/<dataset_id>/documents/<document_id>', methods=['DELETE'])
