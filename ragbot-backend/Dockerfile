@@ -54,7 +54,7 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 WORKDIR /code
 
 # Install dependencies
-COPY requirements.txt ./
+COPY ragbot-backend/requirements.txt ./
 RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
 
 # Install PyTorch with CUDA support first
@@ -67,7 +67,7 @@ RUN python3.11 -m pip install safetensors
 RUN python3.11 -m pip install faiss-cpu
 
 # Copy backend code
-COPY . .
+COPY ragbot-backend/ .
 
 # Copy frontend build from the frontend-build stage
 COPY --from=frontend-build /app/build /code/frontend/build
