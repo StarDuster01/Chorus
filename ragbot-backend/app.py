@@ -883,9 +883,14 @@ def chat_with_bot(user_data, bot_id):
                     # Debug: log retrieved contexts
                     if results["documents"][0]:
                         print(f"CONTEXT DEBUG: Retrieved {len(results['documents'][0])} chunks from dataset {dataset_id}")
-                        for i, chunk in enumerate(results["documents"][0][:2]):  # Show first 2 chunks
-                            preview = chunk[:200] + "..." if len(chunk) > 200 else chunk
+                        for i, chunk in enumerate(results["documents"][0][:10]):  # Show first 5 chunks for better debugging
+                            preview = chunk[:300] + "..." if len(chunk) > 300 else chunk
                             print(f"CONTEXT DEBUG: Chunk {i+1}: {preview}")
+                            # Check for key terms
+                            if "private selection" in chunk.lower():
+                                print(f"CONTEXT DEBUG: ✅ Chunk {i+1} contains Private Selection data")
+                            if "simple truth" in chunk.lower():
+                                print(f"CONTEXT DEBUG: ✅ Chunk {i+1} contains Simple Truth data")
                     else:
                         print(f"CONTEXT DEBUG: No chunks retrieved from dataset {dataset_id}")
                     

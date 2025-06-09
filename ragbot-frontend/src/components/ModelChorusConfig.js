@@ -174,7 +174,9 @@ const ModelChorusConfig = () => {
   const openAddModelModal = (type) => {
     setModelType(type);
     setNewModelProvider('OpenAI');
-    setNewModelName('gpt-4.1-nano-2025-04-14');
+    // Set the first model of OpenAI as default (which includes both nano and o3)
+    const openAIModels = MODEL_OPTIONS.find(p => p.provider === 'OpenAI')?.models || [];
+    setNewModelName(openAIModels.length > 0 ? openAIModels[0] : 'gpt-4.1-nano-2025-04-14');
     setNewModelTemperature(type === 'response' ? 0.7 : 0.2);
     setNewModelWeight(1);
     setShowAddModal(true);

@@ -48,6 +48,7 @@ def add_document_to_chroma(dataset_id, chunks, document_id, filename):
     metadatas = [{
         "document_id": document_id,
         "filename": filename,
+        "source": filename,  # Add source field for documents endpoint compatibility
         "chunk": i,
         "total_chunks": len(chunks),
         "file_type": os.path.splitext(filename)[1].lower(),
