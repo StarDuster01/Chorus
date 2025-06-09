@@ -1053,7 +1053,7 @@ def chat_with_bot(user_data, bot_id):
             for img in image_results:
                 dsid = img["dataset_id"]
                 if dsid not in dataset_id_to_name:
-                    ds = find_dataset_by_id(dsid)
+                    ds, _ = find_dataset_by_id(user_data, dsid)
                     if ds and ds.get("name"):
                         dataset_id_to_name[dsid] = ds["name"]
                     else:

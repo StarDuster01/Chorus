@@ -8,25 +8,20 @@ bind = "0.0.0.0:50505"  # Changed to 0.0.0.0 to allow external access
 backlog = 2048
 
 # Worker processes
-workers = min(multiprocessing.cpu_count(), 4)  # Limit workers due to GPU memory constraints
+workers = 1  # Single worker for GPU applications
 worker_class = "sync"
 worker_connections = 1000
-timeout = 300  # 5 minutes for large file uploads
+timeout = 300
 keepalive = 2
-max_requests = 1000
-max_requests_jitter = 50
-
-# Restart workers after processing this many requests to prevent memory leaks
-preload_app = True
 
 # Logging
-accesslog = "/code/logs/gunicorn_access.log"
-errorlog = "/code/logs/gunicorn_error.log"
+accesslog = "-"  # Log to stdout
+errorlog = "-"   # Log to stdout
 loglevel = "info"
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
 
 # Process naming
-proc_name = 'ragbot-gunicorn'
+proc_name = "ragbot"
 
 # Security
 limit_request_line = 4094
@@ -36,24 +31,20 @@ limit_request_field_size = 8190
 # Performance tuning for large file uploads
 worker_tmp_dir = '/dev/shm'  # Use shared memory for better performance
 
-# Startup/shutdown
+# Server hooks
 def on_starting(server):
-    server.log.info("Starting RagBot server")
+    print("\n=== RagBot Server Starting ===")
+    print(f"Workers: {workers}")
+    print(f"Worker Class: {worker_class}")
+    print(f"Timeout: {timeout}")
+    print(f"Log Level: {loglevel}")
+    print("=============================\n")
 
-def on_reload(server):
-    server.log.info("Reloading RagBot server")
+def on_exit(server):
+    print("\n=== RagBot Server Shutting Down ===\n")
 
-def worker_int(worker):
-    worker.log.info("Worker received INT or QUIT signal")
-
-def pre_fork(server, worker):
-    server.log.info("Worker spawned (pid: %s)", worker.pid)
-
-def post_fork(server, worker):
-    server.log.info("Worker spawned (pid: %s)", worker.pid)
-
-def worker_abort(worker):
-    worker.log.info("Worker received SIGABRT signal")
+# Ensure all output is unbuffered
+os.environ["PYTHONUNBUFFERED"] = "1"
 
 # SSL (uncomment and configure if using HTTPS)
 # keyfile = '/path/to/keyfile'

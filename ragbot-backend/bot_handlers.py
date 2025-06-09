@@ -197,7 +197,9 @@ def get_bot_datasets_handler(user_data, bot_id):
             continue
             
         # If not found in user's datasets, search all dataset files
-        dataset = find_dataset_by_id(dataset_id)
+        # Note: This is a cross-user search which may not be desired for security
+        # For now, we'll skip this and mark as missing
+        dataset = None
         if dataset:
             dataset_details.append(dataset)
         else:

@@ -562,34 +562,4 @@ def chunk_powerpoint_content(text, max_chunk_size=3000, overlap=500):
     
     return chunks
 
-def resize_image(image_path, max_dimension=2048):
-    """Resize image if it's too large while maintaining aspect ratio"""
-    try:
-        img = Image.open(image_path)
-        
-        # Check if resize is needed
-        width, height = img.size
-        if width <= max_dimension and height <= max_dimension:
-            return image_path  # No resize needed
-            
-        # Calculate new dimensions
-        if width > height:
-            new_width = max_dimension
-            new_height = int(height * (max_dimension / width))
-        else:
-            new_height = max_dimension
-            new_width = int(width * (max_dimension / height))
-            
-        # Resize and save
-        img = img.resize((new_width, new_height), Image.LANCZOS)
-        
-        # Create new filename for resized image
-        filename, ext = os.path.splitext(image_path)
-        resized_path = f"{filename}_resized{ext}"
-        
-        # Save resized image
-        img.save(resized_path)
-        return resized_path
-    except Exception as e:
-        print(f"Error resizing image: {str(e)}")
-        return image_path  # Return original path if resizing fails 
+# resize_image function moved to image_handlers.py to avoid duplication 

@@ -24,9 +24,9 @@ from text_extractors import (
     extract_text_from_pptx,
     extract_text_from_file,
     create_semantic_chunks,
-    chunk_powerpoint_content,
-    resize_image
+    chunk_powerpoint_content
 )
+from image_handlers import resize_image
 
 def add_document_to_chroma(dataset_id, chunks, document_id, filename):
     """Add document chunks to ChromaDB
