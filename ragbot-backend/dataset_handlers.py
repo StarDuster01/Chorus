@@ -15,6 +15,7 @@ import zipfile
 import shutil
 import threading
 import time
+from image_processor import ImageProcessor
 
 from text_extractors import (
     extract_text_from_image,
@@ -977,7 +978,6 @@ def bulk_upload_handler(user_data, dataset_id):
     Returns:
         tuple: JSON response and status code
     """
-    from app import image_processor, app
     from image_handlers import resize_image
     import threading
     import time
@@ -1025,7 +1025,7 @@ def bulk_upload_handler(user_data, dataset_id):
     print(f"Processing zip file: {filename}")
     
     # Save zip to temp dir
-    temp_dir = os.path.join(app.config['TEMP_FOLDER'], str(uuid.uuid4()))
+    temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
     os.makedirs(temp_dir, exist_ok=True)
     zip_path = os.path.join(temp_dir, filename)
     file.save(zip_path)
@@ -1072,7 +1072,6 @@ def bulk_upload_handler(user_data, dataset_id):
                 json.dump(status, f)
             
             # Initialize image processor for bulk upload
-            from image_processor import ImageProcessor
             image_processor = ImageProcessor(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
             
             # Process files

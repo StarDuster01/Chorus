@@ -19,7 +19,7 @@ import requests  # For Groq API
 import chromadb
 from chromadb.utils import embedding_functions
 from PIL import Image  # Add this import for image processing
-from .image_processor import ImageProcessor
+from image_processor import ImageProcessor
 import faiss
 import io
 import numpy as np
