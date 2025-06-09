@@ -41,10 +41,7 @@ WORKDIR /code
 COPY ragbot-backend/requirements.txt .
 
 # Install Python dependencies
-RUN python3.11 -m pip install -r requirements.txt && \
-    python3.11 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 && \
-    python3.11 -m pip install safetensors && \
-    python3.11 -m pip install faiss-cpu
+RUN python3.11 -m pip install -r requirements.txt
 
 # Create necessary directories
 RUN mkdir -p /code/uploads/images /code/uploads/documents /code/logs

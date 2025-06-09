@@ -15,7 +15,10 @@ werkzeug
 requests
 Pillow
 safetensors
-# torch, torchvision, torchaudio will be installed with CUDA support in Dockerfile
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
 tesseract
 transformers
 open_clip_torch
@@ -23,7 +26,7 @@ ftfy
 regex
 tqdm
 scipy
-# faiss-gpu will be installed in Dockerfile
+faiss-gpu==1.7.4
 pytesseract
 pdf2image
 pymupdf
