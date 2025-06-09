@@ -626,6 +626,14 @@ def delete_dataset_handler(user_data, dataset_id):
                 except Exception as e:
                     print(f"[Dataset Deletion] Error updating bots file {filename}: {str(e)}")
     
+    # Invalidate cache so frontend sees dataset is deleted
+    try:
+        from dataset_cache import dataset_cache
+        dataset_cache.invalidate_user(user_data['id'])
+        print(f"🔄 Cache invalidated for user {user_data['id']} after dataset deletion")
+    except Exception as cache_e:
+        print(f"Warning: Could not invalidate cache: {cache_e}")
+    
     print(f"[Dataset Deletion] Successfully deleted dataset {dataset_id} with {document_files_deleted} document files")
     return jsonify({"message": "Dataset deleted successfully"}), 200
 
@@ -981,6 +989,13 @@ def upload_image_handler(user_data, dataset_id, image_folder):
                 f.flush()  # Ensure data is written to disk
                 os.fsync(f.fileno())  # Force write to disk
         
+        # Invalidate cache so frontend sees updated counts
+        try:
+            dataset_cache.invalidate_user(user_data['id'])
+            print(f"🔄 Cache invalidated for user {user_data['id']} after image upload")
+        except Exception as cache_e:
+            print(f"Warning: Could not invalidate cache: {cache_e}")
+        
         return jsonify({
             "message": "Image uploaded and processed successfully",
             "image": {
@@ -1139,7 +1154,7 @@ def bulk_upload_handler(user_data, dataset_id):
                     elif ext in image_exts and dataset_type in ["mixed", "image"]:
                         image_files.append((fpath, fname, ext))
             
-                        print(f"Batch processing: {len(text_files)} text files, {len(image_files)} image files")
+            print(f"Batch processing: {len(text_files)} text files, {len(image_files)} image files")
             
             processed_files = 0
             
@@ -1285,6 +1300,13 @@ def bulk_upload_handler(user_data, dataset_id):
                 
                 with open(user_datasets_file, 'w') as f:
                     json.dump(datasets, f)
+                    
+                # Invalidate cache so frontend sees updated counts
+                try:
+                    dataset_cache.invalidate_user(user_data['id'])
+                    print(f"🔄 Cache invalidated for user {user_data['id']} after bulk upload")
+                except Exception as cache_e:
+                    print(f"Warning: Could not invalidate cache: {cache_e}")
                     
             except Exception as e:
                 print(f"Error updating dataset counts: {str(e)}")

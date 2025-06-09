@@ -290,6 +290,14 @@ def upload_document(user_data, dataset_id):
                 
                 with open(user_datasets_file, 'w') as f:
                     json.dump(datasets, f)
+                    
+                # Invalidate cache so frontend sees updated counts
+                try:
+                    from dataset_cache import dataset_cache
+                    dataset_cache.invalidate_user(user_data['id'])
+                    print(f"🔄 Cache invalidated for user {user_data['id']} after image upload")
+                except Exception as cache_e:
+                    print(f"Warning: Could not invalidate cache: {cache_e}")
             
             # Return success
             return jsonify({
@@ -356,12 +364,12 @@ def upload_document(user_data, dataset_id):
         # Set chunking parameters based on file type
         if is_powerpoint:
             # For PowerPoint files, use large chunks to keep multiple slides together
-            max_chunk_size = 3000
-            overlap = 500
+            max_chunk_size = 6000
+            overlap = 1000
         else:
-            # Default chunking parameters for other document types
-            max_chunk_size = 1000  
-            overlap = 200
+            # Default chunking parameters for other document types - increased for better context
+            max_chunk_size = 6000
+            overlap = 1000
         
         print(f"📝 Creating semantic chunks (max_size: {max_chunk_size}, overlap: {overlap})...")
         # Create chunks from text using the semantic chunking algorithm
@@ -434,6 +442,14 @@ def upload_document(user_data, dataset_id):
                 
                 with open(user_datasets_file, 'w') as f:
                     json.dump(datasets, f)
+                    
+                # Invalidate cache so frontend sees updated counts
+                try:
+                    from dataset_cache import dataset_cache
+                    dataset_cache.invalidate_user(user_data['id'])
+                    print(f"🔄 Cache invalidated for user {user_data['id']}")
+                except Exception as cache_e:
+                    print(f"Warning: Could not invalidate cache: {cache_e}")
             
             print(f"✅ Document upload completed successfully!")
             print("=== Document Upload Completed ===\n")
@@ -841,7 +857,7 @@ def chat_with_bot(user_data, bot_id):
                 collection_count = collection.count()
                 if collection_count > 0:
                     # Determine how many results to request based on collection size
-                    n_results = min(5, collection_count)  # Default to 5 results
+                    n_results = min(25, collection_count)  # Default to 5 results
                     
                     # First get a sample to check if we're dealing with PowerPoint content
                     sample_results = collection.query(

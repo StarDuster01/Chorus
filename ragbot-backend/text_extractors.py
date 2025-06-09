@@ -337,7 +337,7 @@ def extract_text_from_file(file_path):
     else:
         return ""
 
-def create_semantic_chunks(text, max_chunk_size=1000, overlap=200):
+def create_semantic_chunks(text, max_chunk_size=2500, overlap=600):
     """Create semantically coherent chunks from text, respecting document structure
     
     Args:
@@ -353,8 +353,8 @@ def create_semantic_chunks(text, max_chunk_size=1000, overlap=200):
     
     # Use larger chunks for PowerPoint content
     if is_powerpoint:
-        max_chunk_size = 3000  # Much larger to contain multiple slides
-        overlap = 500  # More overlap to maintain context between chunks
+        max_chunk_size = 5000  # Much larger to contain multiple slides
+        overlap = 1000  # More overlap to maintain context between chunks
     
     # If text is empty or too short, return as is
     if not text or len(text) <= max_chunk_size:
@@ -461,7 +461,8 @@ def create_semantic_chunks(text, max_chunk_size=1000, overlap=200):
     
     for chunk in chunks:
         # If chunk is very small, combine with previous unless it's a special section
-        if len(chunk) < max_chunk_size / 4 and not any(re.search(pattern, chunk) for pattern in section_patterns):
+        # Increased minimum size to ensure chunks have enough context
+        if len(chunk) < max_chunk_size / 3 and not any(re.search(pattern, chunk) for pattern in section_patterns):
             if current_chunk and len(current_chunk) + len(chunk) <= max_chunk_size:
                 current_chunk += "\n\n" + chunk
             else:
@@ -479,7 +480,7 @@ def create_semantic_chunks(text, max_chunk_size=1000, overlap=200):
     
     return final_chunks
 
-def chunk_powerpoint_content(text, max_chunk_size=3000, overlap=500):
+def chunk_powerpoint_content(text, max_chunk_size=5000, overlap=1000):
     """Special chunking function for PowerPoint content that keeps slides together
     
     Args:
