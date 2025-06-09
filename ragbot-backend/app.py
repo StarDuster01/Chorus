@@ -4,7 +4,7 @@ import base64
 import uuid
 import datetime
 import sys  # Add sys import
-from datetime import UTC  # Import UTC for timezone-aware datetime objects
+from datetime import UTC, timezone  # Import UTC for timezone-aware datetime objects and timezone for timezone-aware datetime objects
 import tempfile
 import bcrypt
 import jwt
@@ -19,7 +19,7 @@ import requests  # For Groq API
 import chromadb
 from chromadb.utils import embedding_functions
 from PIL import Image  # Add this import for image processing
-from image_processor import ImageProcessor
+from .image_processor import ImageProcessor
 import faiss
 import io
 import numpy as np
