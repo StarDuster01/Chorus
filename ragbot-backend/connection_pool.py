@@ -71,6 +71,36 @@ class ChromaDBConnectionPool:
         self._embedding_function = None
         self._initialized = True
         logger.info("[ChromaDB Pool] Connection pool initialized")
+        
+        # Pre-load embedding function during initialization to avoid blocking during dataset creation
+        logger.info("[ChromaDB Pool] Pre-loading embedding function...")
+        try:
+            self._initialize_embedding_function()
+        except Exception as e:
+            logger.warning(f"[ChromaDB Pool] Failed to pre-load embedding function: {str(e)}")
+            logger.info("[ChromaDB Pool] Embedding function will be loaded on-demand")
+    
+    def _initialize_embedding_function(self):
+        """Initialize the embedding function (called during startup)"""
+        if self._embedding_function is None:
+            # Check if CUDA is available
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"[ChromaDB Pool] Using device: {device}")
+            
+            if torch.cuda.is_available():
+                logger.info(f"[ChromaDB Pool] GPU: {torch.cuda.get_device_name(0)}")
+                logger.info(f"[ChromaDB Pool] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+            
+            # Use a high-quality sentence transformer model that works well on GPU
+            # all-MiniLM-L6-v2 is fast and good quality, works well on GPU
+            model_name = "all-MiniLM-L6-v2"
+            logger.info(f"[ChromaDB Pool] Loading SentenceTransformer model: {model_name}")
+            
+            self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=model_name,
+                device=device
+            )
+            logger.info(f"[ChromaDB Pool] Successfully loaded SentenceTransformer embedding function on {device}")
     
     def get_client(self):
         """Get the ChromaDB client (creates if doesn't exist)"""
@@ -98,25 +128,8 @@ class ChromaDBConnectionPool:
         """Get the GPU-based sentence transformer embedding function (creates if doesn't exist)"""
         if self._embedding_function is None:
             try:
-                # Check if CUDA is available
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"[ChromaDB Pool] Using device: {device}")
-                
-                if torch.cuda.is_available():
-                    logger.info(f"[ChromaDB Pool] GPU: {torch.cuda.get_device_name(0)}")
-                    logger.info(f"[ChromaDB Pool] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-                
-                # Use a high-quality sentence transformer model that works well on GPU
-                # all-MiniLM-L6-v2 is fast and good quality, works well on GPU
-                model_name = "all-MiniLM-L6-v2"
-                logger.info(f"[ChromaDB Pool] Creating SentenceTransformer embedding function with model: {model_name}")
-                
-                self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=model_name,
-                    device=device
-                )
-                logger.info(f"[ChromaDB Pool] Successfully created SentenceTransformer embedding function on {device}")
-                
+                logger.info("[ChromaDB Pool] Embedding function not pre-loaded, loading now...")
+                self._initialize_embedding_function()
             except Exception as e:
                 logger.error(f"[ChromaDB Pool] Error creating embedding function: {str(e)}")
                 # Fall back to default embedding function if sentence transformers fail
