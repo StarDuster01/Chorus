@@ -1,3 +1,22 @@
+# Frontend build stage
+FROM node:16-alpine as frontend-build
+
+WORKDIR /app
+
+# Copy frontend package files and install dependencies
+COPY ragbot-frontend/package*.json ./
+RUN npm install
+
+# Copy frontend source files
+COPY ragbot-frontend/ .
+
+# Set the API URL to use a relative path
+ENV REACT_APP_API_URL=/api
+
+# Build the frontend
+RUN npm run build
+
+# Backend stage
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
 # Install Python and system dependencies
@@ -49,6 +68,9 @@ RUN python3.11 -m pip install faiss-cpu
 
 # Copy backend code
 COPY . .
+
+# Copy frontend build from the frontend-build stage
+COPY --from=frontend-build /app/build /code/frontend/build
 
 # Expose the port Flask runs on
 EXPOSE 50505
