@@ -99,17 +99,27 @@ class ChromaDBConnectionPool:
             try:
                 api_key = os.getenv("OPENAI_API_KEY")
                 if not api_key:
+                    logger.error("[ChromaDB Pool] OPENAI_API_KEY environment variable is not set")
                     raise ValueError("OPENAI_API_KEY environment variable is not set")
                 
-                logger.info("[ChromaDB Pool] Creating embedding function")
+                logger.info("[ChromaDB Pool] Creating OpenAI embedding function")
+                logger.info(f"[ChromaDB Pool] Using API key: {api_key[:10]}...{api_key[-4:] if len(api_key) > 14 else '***'}")
+                
                 self._embedding_function = embedding_functions.OpenAIEmbeddingFunction(
                     api_key=api_key,
-                    model_name="text-embedding-ada-002"
+                    model_name="text-embedding-3-small"  # Updated to newer model
                 )
-                logger.info("[ChromaDB Pool] Successfully created embedding function")
+                logger.info("[ChromaDB Pool] Successfully created OpenAI embedding function")
             except Exception as e:
                 logger.error(f"[ChromaDB Pool] Error creating embedding function: {str(e)}")
-                raise
+                # Try with a fallback sentence transformer model
+                try:
+                    logger.info("[ChromaDB Pool] Falling back to default sentence transformer embedding")
+                    self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
+                    logger.info("[ChromaDB Pool] Successfully created fallback embedding function")
+                except Exception as fallback_error:
+                    logger.error(f"[ChromaDB Pool] Fallback embedding function also failed: {str(fallback_error)}")
+                    raise e  # Raise the original error
         return self._embedding_function
     
     def get_or_create_collection(self, collection_name: str, metadata: Optional[dict] = None):
