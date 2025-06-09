@@ -33,5 +33,7 @@ pymupdf
 Wand
 cairosvg
 accelerate
+wand
+cairosvg
 # GPU optimization packages
 nvidia-ml-py3

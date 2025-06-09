@@ -16,10 +16,9 @@ from dotenv import load_dotenv
 import openai
 import anthropic
 import requests  # For Groq API
-import chromadb
-from chromadb.utils import embedding_functions
+# ChromaDB imports removed - using connection pool instead
 from PIL import Image  # Add this import for image processing
-from image_processor import ImageProcessor
+from image_processor import ImageProcessor, VECTOR_DIMENSION
 import faiss
 import io
 import numpy as np
@@ -146,8 +145,6 @@ os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 # Initialize ChromaDB via connection pool
 from connection_pool import chroma_pool
-chroma_client = chroma_pool.get_client()
-openai_ef = chroma_pool.get_embedding_function()
 
 # Pre-load AI models at startup for better performance
 print("[STARTUP] Pre-loading AI models...")
@@ -165,10 +162,9 @@ image_processor = ImageProcessor(app_base_dir)
 CONVERSATIONS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversations")
 os.makedirs(CONVERSATIONS_FOLDER, exist_ok=True)
 
-# Using the imported sync_datasets_with_collections function
-
 # Run the sync on app startup
-sync_datasets_with_collections(chroma_client, openai_ef)
+from dataset_handlers import sync_datasets_with_collections
+sync_datasets_with_collections()
 
 # Update the authentication decorator to use the imported module
 def require_auth_wrapper(f):
@@ -237,15 +233,8 @@ def create_dataset(user_data):
     
     # Create a ChromaDB collection for this dataset
     try:
-        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            model_name="text-embedding-ada-002"
-        )
-        
-        # Use get_or_create_collection which handles the "already exists" case
-        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+        from connection_pool import chroma_pool
+        chroma_pool.get_or_create_collection(dataset_id)
         print(f"Collection for dataset {dataset_id} ensured.", flush=True)
     except Exception as e:
         print(f"Error ensuring ChromaDB collection: {str(e)}", flush=True)
@@ -418,10 +407,8 @@ def upload_document(user_data, dataset_id):
         
         # Add chunks to vector store
         try:
-            chroma_collection = chroma_client.get_or_create_collection(
-                name=dataset_id,
-                embedding_function=openai_ef
-            )
+            from connection_pool import chroma_pool
+            chroma_collection = chroma_pool.get_or_create_collection(dataset_id)
             
             # Create unique IDs for chunks
             chunk_ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -572,35 +559,40 @@ def dataset_status(user_data, dataset_id):
     chunk_count = 0
     
     if dataset_type in ["text", "mixed"]:
-        existing_collections = chroma_client.list_collections()
-        collection_exists = dataset_id in existing_collections
-        
-        if collection_exists:
-            try:
-                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
-                chunk_count = collection.count()
-                
-                # Get document count by counting unique document_ids
+        try:
+            from connection_pool import chroma_pool
+            existing_collections = chroma_pool.list_collections()
+            collection_exists = any(col.name == dataset_id for col in existing_collections)
+            
+            if collection_exists:
                 try:
-                    results = collection.get()
-                    if results and results["metadatas"]:
-                        # Extract unique document IDs
-                        document_ids = set()
-                        for metadata in results["metadatas"]:
-                            if metadata and "document_id" in metadata:
-                                document_ids.add(metadata["document_id"])
-                        doc_count = len(document_ids)
-                except Exception as e:
-                    print(f"Error calculating document count: {str(e)}", flush=True)
-                    # Fallback to existing document count in dataset
-                    doc_count = dataset.get("document_count", 0)
+                    collection = chroma_pool.get_collection(dataset_id)
+                    chunk_count = collection.count()
                     
-            except Exception as e:
-                return jsonify({
-                    "dataset": dataset,
-                    "collection_exists": False,
-                    "error": str(e)
-                }), 200
+                    # Get document count by counting unique document_ids
+                    try:
+                        results = collection.get()
+                        if results and results["metadatas"]:
+                            # Extract unique document IDs
+                            document_ids = set()
+                            for metadata in results["metadatas"]:
+                                if metadata and "document_id" in metadata:
+                                    document_ids.add(metadata["document_id"])
+                            doc_count = len(document_ids)
+                    except Exception as e:
+                        print(f"Error calculating document count: {str(e)}", flush=True)
+                        # Fallback to existing document count in dataset
+                        doc_count = dataset.get("document_count", 0)
+                        
+                except Exception as e:
+                    collection_exists = False
+                    print(f"Error accessing collection: {str(e)}", flush=True)
+        except Exception as e:
+            return jsonify({
+                "dataset": dataset,
+                "collection_exists": False,
+                "error": str(e)
+            }), 200
     
     # Check image index status for images
     image_index_exists = False
@@ -742,7 +734,8 @@ def get_dataset_documents(user_data, dataset_id):
     
     # Try to get the collection from ChromaDB
     try:
-        collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+        from connection_pool import chroma_pool
+        collection = chroma_pool.get_collection(dataset_id)
         
         # Query all documents in the collection
         results = collection.get()
@@ -986,7 +979,8 @@ def chat_with_bot(user_data, bot_id):
         for dataset_id in dataset_ids:
             try:
                 # Text-based document retrieval
-                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                from connection_pool import chroma_pool
+                collection = chroma_pool.get_collection(dataset_id)
                 
                 # Check if collection has any documents
                 collection_count = collection.count()
@@ -1438,7 +1432,8 @@ def chat_with_bot(user_data, bot_id):
                         for dataset_id in dataset_ids:
                             try:
                                 # Text-based document retrieval specific to this model
-                                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                                from connection_pool import chroma_pool
+                                collection = chroma_pool.get_collection(dataset_id)
                                 
                                 # Check if collection has any documents
                                 collection_count = collection.count()
@@ -2977,9 +2972,7 @@ def remove_image(user_data, dataset_id, image_id):
                 
                 # Rebuild the FAISS index to remove the deleted image
                 try:
-                    # Import VECTOR_DIMENSION from image_processor
-                    # Standard CLIP embeddings are 512-dimensional
-                    VECTOR_DIMENSION = 512
+                    # VECTOR_DIMENSION imported from image_processor at top of file
                     
                     # Create a new empty index
                     index = faiss.IndexFlatIP(VECTOR_DIMENSION)
@@ -3340,7 +3333,8 @@ def get_document_content(user_data, document_id):
         for dataset in datasets:
             dataset_id = dataset["id"]
             try:
-                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                from connection_pool import chroma_pool
+                collection = chroma_pool.get_collection(dataset_id)
                 results = collection.get(where={"document_id": document_id})
                 
                 if results and len(results["documents"]) > 0:
@@ -3415,7 +3409,8 @@ def get_context_snippet(user_data, document_id):
         for dataset in datasets:
             dataset_id = dataset["id"]
             try:
-                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                from connection_pool import chroma_pool
+                collection = chroma_pool.get_collection(dataset_id)
                 
                 # If chunk index is provided, get only that specific chunk
                 if chunk_index:
@@ -3490,7 +3485,8 @@ def get_original_document(user_data, document_id):
         for dataset in datasets:
             dataset_id = dataset["id"]
             try:
-                collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                from connection_pool import chroma_pool
+                collection = chroma_pool.get_collection(dataset_id)
                 
                 # Query for just one chunk to get metadata
                 results = collection.get(

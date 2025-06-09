@@ -6,8 +6,7 @@ from datetime import UTC
 import tempfile
 from werkzeug.utils import secure_filename
 from flask import request, jsonify, send_file
-import chromadb
-from chromadb.utils import embedding_functions
+# ChromaDB imports removed - using connection pool instead
 import faiss
 import numpy as np
 import io
@@ -42,7 +41,7 @@ def add_document_to_chroma(dataset_id, chunks, document_id, filename):
     from connection_pool import chroma_pool
     
     # Use connection pool instead of creating new client
-    chroma_collection = chroma_pool.get_collection(dataset_id)
+    chroma_collection = chroma_pool.get_or_create_collection(dataset_id)
     
     # Create chunk IDs and metadata
     chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
@@ -62,52 +61,58 @@ def add_document_to_chroma(dataset_id, chunks, document_id, filename):
         metadatas=metadatas
     )
 
-# Helper functions for dataset operations
-def find_dataset_by_id(dataset_id):
-    """Find a dataset by its ID across all users
+def find_dataset_by_id(user_data, dataset_id):
+    """Find a dataset by ID and return it
     
     Args:
-        dataset_id: The ID of the dataset to find
+        user_data: User data from JWT token
+        dataset_id: ID of the dataset to find
         
     Returns:
-        dict: The dataset if found, None otherwise
+        tuple: (dataset_dict, dataset_index) or (None, -1) if not found
     """
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    if not os.path.exists(datasets_dir):
-        return None
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
-    # Check all user dataset files
-    for filename in os.listdir(datasets_dir):
-        if filename.endswith("_datasets.json"):
-            try:
-                with open(os.path.join(datasets_dir, filename), 'r') as f:
-                    datasets = json.load(f)
-                
-                for dataset in datasets:
-                    if dataset.get("id") == dataset_id:
-                        return dataset
-            except Exception as e:
-                print(f"Error reading dataset file {filename}: {str(e)}")
-    
-    return None
+    if not os.path.exists(user_datasets_file):
+        return None, -1
+        
+    with open(user_datasets_file, 'r') as f:
+        datasets = json.load(f)
+        
+    for i, dataset in enumerate(datasets):
+        if dataset["id"] == dataset_id:
+            return dataset, i
+            
+    return None, -1
 
-def sync_datasets_with_collections(chroma_client, openai_ef):
-    """Syncs datasets with ChromaDB collections to ensure consistency
-    
-    Args:
-        chroma_client: The ChromaDB client
-        openai_ef: OpenAI embedding function
-    """
+def get_mimetype_from_dataset_type(dataset_type):
+    """Get the appropriate MIME type based on dataset type"""
+    if dataset_type == "image":
+        return "image/*"
+    elif dataset_type == "text":
+        return "text/*"
+    else:  # mixed
+        return "*/*"
+
+def sync_datasets_with_collections():
+    """Syncs datasets with ChromaDB collections to ensure consistency"""
     print("Syncing datasets with ChromaDB collections...")
+    from connection_pool import chroma_pool
+    
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
     
     # Get all dataset files
     dataset_files = [f for f in os.listdir(datasets_dir) if f.endswith('_datasets.json')]
     
-    # In ChromaDB v0.6.0, list_collections() only returns collection names
-    existing_collections = chroma_client.list_collections()
-    existing_collection_names = [col.name for col in existing_collections]
+    # Get existing collections
+    try:
+        existing_collections = chroma_pool.list_collections()
+        existing_collection_names = [col.name for col in existing_collections]
+    except Exception as e:
+        print(f"Error listing collections: {str(e)}")
+        existing_collection_names = []
     
     for dataset_file in dataset_files:
         try:
@@ -121,8 +126,7 @@ def sync_datasets_with_collections(chroma_client, openai_ef):
                 if dataset_id not in existing_collection_names:
                     print(f"Creating missing collection for dataset: {dataset_id}")
                     try:
-                        # Use get_or_create_collection which handles the "already exists" case
-                        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+                        chroma_pool.get_or_create_collection(dataset_id)
                         print(f"Collection for dataset {dataset_id} ensured.")
                     except Exception as e:
                         print(f"Error ensuring collection for dataset {dataset_id}: {str(e)}")
@@ -131,6 +135,7 @@ def sync_datasets_with_collections(chroma_client, openai_ef):
     
     print("Dataset sync completed")
 
+# Helper functions for dataset operations
 def get_mime_types_for_dataset(dataset_type):
     """Get MIME types for dataset based on its type
     
@@ -156,7 +161,6 @@ def convert_wmf_to_png(wmf_path):
         str: Path to converted PNG file
     """
     try:
-        import cairosvg
         from wand.image import Image as WandImage
         
         # Create PNG path
@@ -168,6 +172,9 @@ def convert_wmf_to_png(wmf_path):
             img.save(filename=png_path)
             
         return png_path
+    except ImportError:
+        print("Warning: Wand (ImageMagick) not available. Cannot convert WMF files.")
+        return None
     except Exception as e:
         print(f"Error converting WMF to PNG: {str(e)}")
         return None
@@ -288,77 +295,77 @@ def create_dataset_handler(user_data):
     
     Args:
         user_data: User data from JWT token
-    
+        
     Returns:
         tuple: JSON response and status code
     """
-    data = request.json
+    print("[Dataset Creation] Starting dataset creation process...")
     
-    print(f"[Dataset Creation] Starting dataset creation for user {user_data['id']}")
+    data = request.get_json()
     
-    if not data or not data.get('name'):
+    # Validate required fields
+    if not data.get('name'):
+        print("[Dataset Creation] Error: Dataset name is required")
         return jsonify({"error": "Dataset name is required"}), 400
-        
-    # Get dataset type, default to "text"
-    dataset_type = data.get('type', 'text')
-    if dataset_type not in ['text', 'image', 'mixed']:
-        return jsonify({"error": "Invalid dataset type. Must be 'text', 'image', or 'mixed'"}), 400
-        
-    print(f"[Dataset Creation] Creating {dataset_type} dataset: {data.get('name')}")
     
-    # Create a new dataset
+    if not data.get('type'):
+        print("[Dataset Creation] Error: Dataset type is required")
+        return jsonify({"error": "Dataset type is required"}), 400
+    
+    # Validate dataset type - now supports mixed type
+    valid_types = ['text', 'image', 'mixed']
+    if data.get('type') not in valid_types:
+        print(f"[Dataset Creation] Error: Invalid dataset type '{data.get('type')}'. Must be one of: {valid_types}")
+        return jsonify({"error": f"Dataset type must be one of: {', '.join(valid_types)}"}), 400
+    
+    print(f"[Dataset Creation] Creating dataset: {data.get('name')} (type: {data.get('type')})")
+    
+    # Create dataset
     dataset_id = str(uuid.uuid4())
     new_dataset = {
         "id": dataset_id,
         "name": data.get('name'),
         "description": data.get('description', ''),
-        "type": dataset_type,
-        "documents": [],
-        "images": [],
+        "type": data.get('type'),
+        "created_at": datetime.datetime.now(UTC).isoformat(),
         "document_count": 0,
-        "chunk_count": 0,
-        "image_count": 0,
-        "created_at": datetime.datetime.now(UTC).isoformat()
+        "chunk_count": 0
     }
     
-    print(f"[Dataset Creation] Generated dataset ID: {dataset_id}")
-    
-    # Save the dataset
+    # Load existing datasets or create empty list
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
-    
-    # Check if user already has datasets
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    print(f"[Dataset Creation] Saving dataset to file system...")
     
     if os.path.exists(user_datasets_file):
         with open(user_datasets_file, 'r') as f:
             datasets = json.load(f)
-        datasets.append(new_dataset)
     else:
-        datasets = [new_dataset]
+        datasets = []
     
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
-        f.flush()  # Ensure data is written to disk
-        os.fsync(f.fileno())  # Force write to disk
+    datasets.append(new_dataset)
+    print(f"[Dataset Creation] Added dataset to list. Total datasets: {len(datasets)}")
     
-    print(f"[Dataset Creation] Dataset saved to file system successfully")
+    # Save datasets to file with error handling
+    try:
+        with open(user_datasets_file, 'w') as f:
+            json.dump(datasets, f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
+        print(f"[Dataset Creation] Dataset saved to file system successfully")
+    except Exception as e:
+        print(f"[Dataset Creation] Error saving dataset to file: {str(e)}")
+        return jsonify({
+            "error": "Failed to save dataset",
+            "details": str(e)
+        }), 500
     
     # Create a ChromaDB collection for this dataset using connection pool
     print(f"[Dataset Creation] Creating vector database collection for dataset {dataset_id}...")
     try:
         from connection_pool import chroma_pool
-        print(f"[Dataset Creation] Getting ChromaDB client...")
-        client = chroma_pool.get_client()
-        print(f"[Dataset Creation] Getting embedding function...")
-        embedding_function = chroma_pool.get_embedding_function()
         print(f"[Dataset Creation] Creating collection {dataset_id}...")
-        collection = client.get_or_create_collection(
-            name=dataset_id,
-            embedding_function=embedding_function
-        )
+        collection = chroma_pool.get_or_create_collection(dataset_id)
         print(f"[Dataset Creation] Vector database collection created successfully: {collection.name}")
     except Exception as e:
         print(f"[Dataset Creation] Error creating vector database collection: {str(e)}")
@@ -376,76 +383,68 @@ def create_dataset_handler(user_data):
     dataset_cache.invalidate_user(user_data['id'])
     
     print(f"[Dataset Creation] Dataset creation completed successfully: {data.get('name')}")
-    
-    return jsonify({
-        "dataset": new_dataset,
-        "status": {
-            "message": f"Successfully created {dataset_type} dataset '{data.get('name')}'",
-            "details": {
-                "dataset_id": dataset_id,
-                "type": dataset_type,
-                "created_at": new_dataset["created_at"],
-                "ready_for_uploads": True
-            }
-        }
-    }), 201
+    return jsonify(new_dataset), 201
 
 def delete_dataset_handler(user_data, dataset_id):
-    """Delete a dataset
+    """Delete a dataset and all its associated data
     
     Args:
         user_data: User data from JWT token
         dataset_id: ID of the dataset to delete
-    
+        
     Returns:
         tuple: JSON response and status code
     """
+    print(f"[Dataset Deletion] Starting deletion process for dataset {dataset_id}")
+    
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
+    print(f"[Dataset Deletion] Checking for dataset file: {user_datasets_file}")
     if not os.path.exists(user_datasets_file):
+        print(f"[Dataset Deletion] Dataset file not found")
         return jsonify({"error": "Dataset not found"}), 404
         
+    print(f"[Dataset Deletion] Loading datasets from file...")
     with open(user_datasets_file, 'r') as f:
         datasets = json.load(f)
-    
-    # Find and remove the dataset
-    dataset_found = False
-    dataset_to_delete = None
-    for i, dataset in enumerate(datasets):
+        
+    print(f"[Dataset Deletion] Found {len(datasets)} datasets, looking for {dataset_id}")
+    dataset_exists = False
+    dataset_index = -1
+    for idx, dataset in enumerate(datasets):
         if dataset["id"] == dataset_id:
-            dataset_to_delete = datasets.pop(i)
-            dataset_found = True
+            dataset_exists = True
+            dataset_index = idx
+            print(f"[Dataset Deletion] Found dataset at index {idx}: {dataset.get('name')}")
             break
-    
-    if not dataset_found:
+            
+    if not dataset_exists:
+        print(f"[Dataset Deletion] Dataset {dataset_id} not found in user's datasets")
         return jsonify({"error": "Dataset not found"}), 404
     
-    # Save updated datasets list
+    document_files_deleted = 0
+    
+    # Delete the dataset from the file
+    print(f"[Dataset Deletion] Removing dataset from file...")
+    del datasets[dataset_index]
+    
+    print(f"[Dataset Deletion] Saving updated dataset list...")
     with open(user_datasets_file, 'w') as f:
         json.dump(datasets, f)
         f.flush()  # Ensure data is written to disk
         os.fsync(f.fileno())  # Force write to disk
-
-    # Document and file cleanup
-    DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
-    IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
-    document_files_deleted = 0
-    image_files_deleted = 0
     
-    # First try to get document file paths from ChromaDB
+    # Clean up ChromaDB collection and associated files
     try:
-        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            model_name="text-embedding-ada-002"
-        )
+        print(f"[Dataset Deletion] Cleaning up ChromaDB collection...")
+        from connection_pool import chroma_pool
         
         # Get the collection for this dataset
         try:
-            collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+            print(f"[Dataset Deletion] Getting ChromaDB collection {dataset_id}...")
+            collection = chroma_pool.get_collection(dataset_id)
             # Get all metadata from collection
             results = collection.get()
             
@@ -462,24 +461,26 @@ def delete_dataset_handler(user_data, dataset_id):
                         if os.path.exists(file_path):
                             os.remove(file_path)
                             document_files_deleted += 1
-                            print(f"Deleted document file: {file_path}")
+                            print(f"[Dataset Deletion] Deleted document file: {file_path}")
                     except Exception as e:
-                        print(f"Error deleting document file {file_path}: {str(e)}")
+                        print(f"[Dataset Deletion] Error deleting document file {file_path}: {str(e)}")
             
             # Now delete the collection itself
-            chroma_client.delete_collection(name=dataset_id)
-            print(f"Deleted ChromaDB collection for dataset {dataset_id}")
+            print(f"[Dataset Deletion] Deleting ChromaDB collection {dataset_id}...")
+            chroma_pool.delete_collection(dataset_id)
+            print(f"[Dataset Deletion] Successfully deleted ChromaDB collection {dataset_id}")
             
         except Exception as e:
-            print(f"Error accessing ChromaDB collection: {str(e)}")
+            print(f"[Dataset Deletion] Error accessing ChromaDB collection: {str(e)}")
             # Try to delete the collection anyway
             try:
-                chroma_client.delete_collection(name=dataset_id)
-                print(f"Deleted ChromaDB collection for dataset {dataset_id}")
+                print(f"[Dataset Deletion] Attempting to force delete ChromaDB collection {dataset_id}...")
+                chroma_pool.delete_collection(dataset_id)
+                print(f"[Dataset Deletion] Successfully force deleted ChromaDB collection {dataset_id}")
             except Exception as e2:
-                print(f"Error deleting ChromaDB collection: {str(e2)}")
+                print(f"[Dataset Deletion] Error force deleting ChromaDB collection: {str(e2)}")
     except Exception as e:
-        print(f"Error connecting to ChromaDB: {str(e)}")
+        print(f"[Dataset Deletion] Error connecting to ChromaDB: {str(e)}")
     
     # Clean up image dataset resources (FAISS index and metadata)
     indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
@@ -489,6 +490,7 @@ def delete_dataset_handler(user_data, dataset_id):
     # Delete image files referenced in metadata file
     if os.path.exists(metadata_file):
         try:
+            print(f"[Dataset Deletion] Processing image metadata file: {metadata_file}")
             with open(metadata_file, 'r') as f:
                 image_metadata = json.load(f)
                 
@@ -497,63 +499,69 @@ def delete_dataset_handler(user_data, dataset_id):
                 if 'path' in img_meta and os.path.exists(img_meta['path']):
                     try:
                         os.remove(img_meta['path'])
-                        image_files_deleted += 1
-                        print(f"Deleted image file: {img_meta['path']}")
+                        document_files_deleted += 1
+                        print(f"[Dataset Deletion] Deleted image file: {img_meta['path']}")
                     except Exception as e:
-                        print(f"Error deleting image file: {str(e)}")
+                        print(f"[Dataset Deletion] Error deleting image file: {str(e)}")
             
             # Now delete the metadata file itself
             os.remove(metadata_file)
-            print(f"Deleted image metadata file for dataset {dataset_id}")
+            print(f"[Dataset Deletion] Deleted image metadata file for dataset {dataset_id}")
         except Exception as e:
-            print(f"Error processing image metadata: {str(e)}")
+            print(f"[Dataset Deletion] Error processing image metadata: {str(e)}")
     
     # Delete FAISS index file if it exists
     if os.path.exists(index_path):
         try:
             os.remove(index_path)
-            print(f"Deleted FAISS index for dataset {dataset_id}")
+            print(f"[Dataset Deletion] Deleted FAISS index for dataset {dataset_id}")
         except Exception as e:
-            print(f"Error deleting FAISS index: {str(e)}")
+            print(f"[Dataset Deletion] Error deleting FAISS index: {str(e)}")
     
     # Try to remove the dataset from image processor memory
     try:
+        print(f"[Dataset Deletion] Cleaning up image processor resources...")
         from app import image_processor
         if hasattr(image_processor, 'image_indices') and dataset_id in image_processor.image_indices:
             del image_processor.image_indices[dataset_id]
-            print(f"Removed dataset {dataset_id} from image processor indices")
+            print(f"[Dataset Deletion] Removed dataset {dataset_id} from image processor indices")
         
         if hasattr(image_processor, 'image_metadata') and dataset_id in image_processor.image_metadata:
             del image_processor.image_metadata[dataset_id]
-            print(f"Removed dataset {dataset_id} from image processor metadata")
+            print(f"[Dataset Deletion] Removed dataset {dataset_id} from image processor metadata")
     except Exception as e:
-        print(f"Error cleaning up image processor resources: {str(e)}")
+        print(f"[Dataset Deletion] Error cleaning up image processor resources: {str(e)}")
     
     # Legacy cleanup for older datasets that might still use the documents array
-    if dataset_to_delete and dataset_to_delete.get("documents"):
-        for doc in dataset_to_delete["documents"]:
-            doc_path = os.path.join(DOCUMENT_FOLDER, doc["filename"])
+    if dataset_exists and dataset.get("documents"):
+        print(f"[Dataset Deletion] Cleaning up legacy document files...")
+        for doc in dataset["documents"]:
+            doc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents", doc["filename"])
             try:
                 if os.path.exists(doc_path):
                     os.remove(doc_path)
                     document_files_deleted += 1
+                    print(f"[Dataset Deletion] Deleted legacy document: {doc['filename']}")
             except Exception as e:
-                print(f"Error deleting legacy document {doc['filename']}: {str(e)}")
+                print(f"[Dataset Deletion] Error deleting legacy document {doc['filename']}: {str(e)}")
     
     # Legacy cleanup for older datasets that might still use the images array
-    if dataset_to_delete and dataset_to_delete.get("images"):
-        for img in dataset_to_delete["images"]:
-            img_path = os.path.join(IMAGE_FOLDER, img["filename"])
+    if dataset_exists and dataset.get("images"):
+        print(f"[Dataset Deletion] Cleaning up legacy image files...")
+        for img in dataset["images"]:
+            img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images", img["filename"])
             try:
                 if os.path.exists(img_path):
                     os.remove(img_path)
-                    image_files_deleted += 1
+                    document_files_deleted += 1
+                    print(f"[Dataset Deletion] Deleted legacy image: {img['filename']}")
             except Exception as e:
-                print(f"Error deleting legacy image {img['filename']}: {str(e)}")
+                print(f"[Dataset Deletion] Error deleting legacy image {img['filename']}: {str(e)}")
     
     # Also remove the dataset from any bots that use it
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
     if os.path.exists(bots_dir):
+        print(f"[Dataset Deletion] Updating bot references...")
         for filename in os.listdir(bots_dir):
             if filename.endswith("_bots.json"):
                 try:
@@ -566,14 +574,16 @@ def delete_dataset_handler(user_data, dataset_id):
                         if "dataset_ids" in bot and dataset_id in bot["dataset_ids"]:
                             bot["dataset_ids"].remove(dataset_id)
                             updated = True
+                            print(f"[Dataset Deletion] Removed dataset {dataset_id} from bot {bot.get('name', 'unnamed')}")
                     
                     if updated:
                         with open(bots_file_path, 'w') as f:
                             json.dump(bots, f)
+                            print(f"[Dataset Deletion] Updated bot file: {filename}")
                 except Exception as e:
-                    print(f"Error updating bots file {filename}: {str(e)}")
+                    print(f"[Dataset Deletion] Error updating bots file {filename}: {str(e)}")
     
-    print(f"Deleted dataset {dataset_id} with {document_files_deleted} document files and {image_files_deleted} image files")
+    print(f"[Dataset Deletion] Successfully deleted dataset {dataset_id} with {document_files_deleted} document files")
     return jsonify({"message": "Dataset deleted successfully"}), 200
 
 def get_dataset_type_handler(user_data, dataset_id):
@@ -628,35 +638,14 @@ def remove_document_handler(user_data, dataset_id, document_id):
         tuple: JSON response and status code
     """
     # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-        
-    dataset_exists = False
-    dataset_index = -1
-    for idx, dataset in enumerate(datasets):
-        if dataset["id"] == dataset_id:
-            dataset_exists = True
-            dataset_index = idx
-            break
-            
-    if not dataset_exists:
+    dataset, dataset_index = find_dataset_by_id(user_data, dataset_id)
+    if not dataset:
         return jsonify({"error": "Dataset not found"}), 404
     
     # Try to get the collection from ChromaDB
     try:
-        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            model_name="text-embedding-ada-002"
-        )
-        collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+        from connection_pool import chroma_pool
+        collection = chroma_pool.get_collection(dataset_id)
         
         # Get all chunks with the matching document_id in their metadata
         results = collection.get(
@@ -695,15 +684,27 @@ def remove_document_handler(user_data, dataset_id, document_id):
         print(f"Removed {len(deleted_files)} document files")
         
         # Update document count and chunk count in dataset
-        if datasets[dataset_index]["document_count"] > 0:
-            datasets[dataset_index]["document_count"] -= 1
+        # Load the datasets to get the updated list
+        datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+        user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+        
+        with open(user_datasets_file, 'r') as f:
+            datasets = json.load(f)
+        
+        # Find and update the dataset
+        for i, ds in enumerate(datasets):
+            if ds["id"] == dataset_id:
+                if ds["document_count"] > 0:
+                    ds["document_count"] -= 1
+                    
+                # Update chunk count if it exists
+                if "chunk_count" in ds:
+                    ds["chunk_count"] -= num_chunks_to_remove
+                    if ds["chunk_count"] < 0:
+                        ds["chunk_count"] = 0
+                break
             
-        # Update chunk count if it exists
-        if "chunk_count" in datasets[dataset_index]:
-            datasets[dataset_index]["chunk_count"] -= num_chunks_to_remove
-            if datasets[dataset_index]["chunk_count"] < 0:
-                datasets[dataset_index]["chunk_count"] = 0
-            
+        # Save the updated datasets
         with open(user_datasets_file, 'w') as f:
             json.dump(datasets, f)
             f.flush()  # Ensure data is written to disk
@@ -730,25 +731,16 @@ def rebuild_dataset_handler(user_data, dataset_id):
         tuple: JSON response and status code
     """
     # Check if dataset exists and belongs to user
+    dataset, dataset_index = find_dataset_by_id(user_data, dataset_id)
+    if not dataset:
+        return jsonify({"error": "Dataset not found"}), 404
+    
+    # Load and update dataset
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
     with open(user_datasets_file, 'r') as f:
         datasets = json.load(f)
-        
-    dataset_exists = False
-    dataset_index = -1
-    for idx, dataset in enumerate(datasets):
-        if dataset["id"] == dataset_id:
-            dataset_exists = True
-            dataset_index = idx
-            break
-            
-    if not dataset_exists:
-        return jsonify({"error": "Dataset not found"}), 404
     
     # Reset document count
     datasets[dataset_index]["document_count"] = 0
@@ -760,24 +752,16 @@ def rebuild_dataset_handler(user_data, dataset_id):
     
     # Try to delete the existing collection if it exists
     try:
-        chroma_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-        chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        existing_collections = chroma_client.list_collections()
-        if dataset_id in existing_collections:
-            chroma_client.delete_collection(name=dataset_id)
-            print(f"Deleted existing collection for dataset: {dataset_id}")
-    except Exception as e:
-        print(f"Error deleting collection: {str(e)}")
-    
-    # Create a new collection
-    try:
-        openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            model_name="text-embedding-ada-002"
-        )
+        from connection_pool import chroma_pool
         
-        # Use get_or_create_collection which handles the "already exists" case
-        chroma_client.get_or_create_collection(name=dataset_id, embedding_function=openai_ef)
+        try:
+            chroma_pool.delete_collection(dataset_id)
+            print(f"Deleted existing collection for dataset: {dataset_id}")
+        except Exception as e:
+            print(f"Collection may not exist: {str(e)}")
+        
+        # Create a new collection
+        chroma_pool.get_or_create_collection(dataset_id)
         print(f"Collection for dataset {dataset_id} ensured.")
                 
         return jsonify({"message": "Dataset collection has been rebuilt. Please re-upload your documents."}), 200
@@ -801,8 +785,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
     import base64
     import os
     
-    # Import resize_image from image_handlers
-    from image_handlers import resize_image
+    # resize_image is already imported from text_extractors at the top
     
     # Check if dataset exists and belongs to user
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
@@ -989,7 +972,7 @@ def bulk_upload_handler(user_data, dataset_id):
     Returns:
         tuple: JSON response and status code
     """
-    from image_handlers import resize_image
+    # resize_image is already imported from text_extractors at the top
     import threading
     import time
     
