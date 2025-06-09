@@ -21,6 +21,7 @@ torchaudio
 --extra-index-url https://download.pytorch.org/whl/cu121
 tesseract
 transformers
+sentence-transformers
 open_clip_torch
 ftfy
 regex
