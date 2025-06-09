@@ -1,0 +1,43 @@
+[Unit]
+Description=RagBot - AI-Powered Document Chat Application
+After=network.target postgresql.service nginx.service
+Wants=postgresql.service nginx.service
+
+[Service]
+Type=exec
+User=azureuser
+Group=azureuser
+WorkingDirectory=/home/azureuser/apps/ragbot/ragbot-backend
+Environment=PATH=/home/azureuser/apps/ragbot/venv/bin
+Environment=FLASK_ENV=production
+Environment=FLASK_DEBUG=False
+ExecStart=/home/azureuser/apps/ragbot/venv/bin/gunicorn --config gunicorn.conf.py production_app:app
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/azureuser/apps/ragbot
+PrivateDevices=false  # Set to false for GPU access
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# GPU access
+DeviceAllow=/dev/nvidia0 rw
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia-uvm rw
+DeviceAllow=/dev/nvidia-modeset rw
+
+[Install]
+WantedBy=multi-user.target 

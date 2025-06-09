@@ -3574,4 +3574,11 @@ def get_upload_status(user_data, dataset_id, status_id):
         return jsonify({"error": f"Failed to read status: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=50505, debug=True)
+    # Development mode only - use gunicorn for production
+    import os
+    debug_mode = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
+    port = int(os.getenv('PORT', 50505))
+    host = os.getenv('HOST', '0.0.0.0')
+    
+    print(f"Starting RagBot on {host}:{port} (debug={debug_mode})")
+    app.run(host=host, port=port, debug=debug_mode)

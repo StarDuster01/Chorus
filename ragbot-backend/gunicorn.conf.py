@@ -1,48 +1,66 @@
-# Gunicorn configuration file
+# Gunicorn configuration for RagBot production deployment
+
 import multiprocessing
+import os
 
-# Number of worker processes
-workers = 2  # Reduced to prevent OOM with heavy ML models
+# Server socket
+bind = "127.0.0.1:50505"
+backlog = 2048
 
-# Worker class - use sync for CUDA compatibility
-worker_class = 'sync'  # Required for CUDA multiprocessing compatibility
-
-# Number of workers (single worker for CUDA)
-workers = 1
-
-# Maximum number of simultaneous clients
+# Worker processes
+workers = min(multiprocessing.cpu_count(), 4)  # Limit workers due to GPU memory constraints
+worker_class = "sync"
 worker_connections = 1000
-
-# Timeout for worker processes
-timeout = 7200  # Increased for image processing operations
-
-# Maximum number of requests a worker will process before restarting
+timeout = 300  # 5 minutes for large file uploads
+keepalive = 2
 max_requests = 1000
 max_requests_jitter = 50
 
+# Restart workers after processing this many requests to prevent memory leaks
+preload_app = True
+
 # Logging
-accesslog = '-'
-errorlog = '-'
-loglevel = 'info'
+accesslog = "/home/azureuser/apps/ragbot/logs/gunicorn_access.log"
+errorlog = "/home/azureuser/apps/ragbot/logs/gunicorn_error.log"
+loglevel = "info"
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
 # Process naming
-proc_name = 'ragbot'
+proc_name = 'ragbot-gunicorn'
 
-# Server socket
-bind = '0.0.0.0:50505'
+# Security
+limit_request_line = 4094
+limit_request_fields = 100
+limit_request_field_size = 8190
+
+# Performance tuning for large file uploads
+worker_tmp_dir = '/dev/shm'  # Use shared memory for better performance
+
+# Startup/shutdown
+def on_starting(server):
+    server.log.info("Starting RagBot server")
+
+def on_reload(server):
+    server.log.info("Reloading RagBot server")
+
+def worker_int(worker):
+    worker.log.info("Worker received INT or QUIT signal")
+
+def pre_fork(server, worker):
+    server.log.info("Worker spawned (pid: %s)", worker.pid)
+
+def post_fork(server, worker):
+    server.log.info("Worker spawned (pid: %s)", worker.pid)
+
+def worker_abort(worker):
+    worker.log.info("Worker received SIGABRT signal")
 
 # SSL (uncomment and configure if using HTTPS)
 # keyfile = '/path/to/keyfile'
 # certfile = '/path/to/certfile'
 
-# Keep-alive settings
-keepalive = 30
-
 # Graceful timeout for worker shutdown
 graceful_timeout = 120
-
-# Preload app for faster worker startup
-preload_app = True
 
 # Memory optimization - use gthread for better async support with ML models
 
