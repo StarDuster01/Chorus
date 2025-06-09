@@ -26,7 +26,7 @@ ftfy
 regex
 tqdm
 scipy
-faiss-gpu
+faiss-gpu-cu12
 pytesseract
 pdf2image
 pymupdf
