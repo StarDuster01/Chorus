@@ -6,7 +6,7 @@ set -e
 echo "🚀 Building RagBot with GPU-based embeddings..."
 
 # Version info
-BUILD_VERSION="1.1.6"
+BUILD_VERSION="1.1.7"
 BUILD_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 VCS_REF="simplified-chroma-client"
 
