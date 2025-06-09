@@ -20,6 +20,11 @@ services:
         limits:
           memory: 6G
           cpus: '4'
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:50505/health"]
