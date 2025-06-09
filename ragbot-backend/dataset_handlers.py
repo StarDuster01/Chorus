@@ -301,8 +301,8 @@ def create_dataset_handler(user_data):
         
     # Get dataset type, default to "text"
     dataset_type = data.get('type', 'text')
-    if dataset_type not in ['text', 'image']:
-        return jsonify({"error": "Invalid dataset type. Must be 'text' or 'image'"}), 400
+    if dataset_type not in ['text', 'image', 'mixed']:
+        return jsonify({"error": "Invalid dataset type. Must be 'text', 'image', or 'mixed'"}), 400
         
     print(f"[Dataset Creation] Creating {dataset_type} dataset: {data.get('name')}")
     
