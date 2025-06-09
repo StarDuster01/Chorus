@@ -991,6 +991,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
         
         # Invalidate cache so frontend sees updated counts
         try:
+            from dataset_cache import dataset_cache
             dataset_cache.invalidate_user(user_data['id'])
             print(f"🔄 Cache invalidated for user {user_data['id']} after image upload")
         except Exception as cache_e:
@@ -1303,6 +1304,7 @@ def bulk_upload_handler(user_data, dataset_id):
                     
                 # Invalidate cache so frontend sees updated counts
                 try:
+                    from dataset_cache import dataset_cache
                     dataset_cache.invalidate_user(user_data['id'])
                     print(f"🔄 Cache invalidated for user {user_data['id']} after bulk upload")
                 except Exception as cache_e:

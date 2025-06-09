@@ -13,7 +13,7 @@ import {
 import botService from '../services/botService';
 
 const MODEL_OPTIONS = [
-  { provider: 'OpenAI', models: ['gpt-4.1-nano-2025-04-14'] },
+  { provider: 'OpenAI', models: ['gpt-4.1-nano-2025-04-14', 'o3-2025-04-16'] },
   { provider: 'Anthropic', models: ['claude-3-7-sonnet-latest'] },
   { provider: 'Groq', models: ['llama3-70b-8192', 'llama3-8b-8192'] },
   { provider: 'Mistral', models: ['mistral-large', 'mistral-medium', 'mistral-small'] },

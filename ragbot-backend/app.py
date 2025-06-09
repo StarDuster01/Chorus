@@ -857,7 +857,7 @@ def chat_with_bot(user_data, bot_id):
                 collection_count = collection.count()
                 if collection_count > 0:
                     # Determine how many results to request based on collection size
-                    n_results = min(15, collection_count)  # Default to 5 results
+                    n_results = min(15, collection_count)  # Increased for better coverage
                     
                     # First get a sample to check if we're dealing with PowerPoint content
                     sample_results = collection.query(
@@ -872,13 +872,22 @@ def chat_with_bot(user_data, bot_id):
                         if "## SLIDE " in sample_text or "## PRESENTATION SUMMARY ##" in sample_text:
                             is_powerpoint = True
                             # For PowerPoint content, get more chunks to ensure we have enough context
-                            n_results = min(10, collection_count)  # Double the number of chunks for PowerPoint
+                            n_results = min(20, collection_count)  # More chunks for PowerPoint content
                     
                     # Get the actual results
                     results = collection.query(
                         query_texts=[message],
                         n_results=n_results
                     )
+                    
+                    # Debug: log retrieved contexts
+                    if results["documents"][0]:
+                        print(f"CONTEXT DEBUG: Retrieved {len(results['documents'][0])} chunks from dataset {dataset_id}")
+                        for i, chunk in enumerate(results["documents"][0][:2]):  # Show first 2 chunks
+                            preview = chunk[:200] + "..." if len(chunk) > 200 else chunk
+                            print(f"CONTEXT DEBUG: Chunk {i+1}: {preview}")
+                    else:
+                        print(f"CONTEXT DEBUG: No chunks retrieved from dataset {dataset_id}")
                     
                     all_contexts.extend(results["documents"][0])
                 
@@ -1054,12 +1063,20 @@ def chat_with_bot(user_data, bot_id):
         
         # Adjust the maximum number of contexts based on content type
         if has_powerpoint:
-            max_contexts = 12  # Allow more contexts for PowerPoint content
+            max_contexts = 15  # Allow more contexts for PowerPoint content
         else:
-            max_contexts = 8  # Default limit for regular content
+            max_contexts = 12  # Increased limit for regular content
             
         contexts = all_contexts[:max_contexts]
         context_text = "\n\n".join([f"[{i+1}] {ctx}" for i, ctx in enumerate(contexts)])
+        
+        # Debug: log final context summary
+        print(f"FINAL CONTEXT DEBUG: Using {len(contexts)} total chunks (max_contexts: {max_contexts})")
+        if contexts:
+            print(f"FINAL CONTEXT DEBUG: Total context length: {len(context_text)} characters")
+            print(f"FINAL CONTEXT DEBUG: First context preview: {contexts[0][:300]}..." if len(contexts[0]) > 300 else f"FINAL CONTEXT DEBUG: First context: {contexts[0]}")
+        else:
+            print("FINAL CONTEXT DEBUG: No contexts available for query")
         
         # Prepare image information for context
         image_context = ""
