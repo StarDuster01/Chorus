@@ -49,8 +49,8 @@ RUN mkdir -p /code/uploads/images /code/uploads/documents /code/logs
 # Copy application code
 COPY ragbot-backend/ .
 
-# Copy frontend build
-COPY --from=frontend-build /app/build /code/frontend/build
+# Copy frontend build to the correct location
+COPY --from=frontend-build /app/build /code/frontend
 
 # Expose port
 EXPOSE 50505

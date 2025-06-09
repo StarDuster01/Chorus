@@ -13,8 +13,11 @@ services:
       - ./ragbot-backend/datasets:/code/datasets
       - ./ragbot-backend/bots:/code/bots
       - ./ragbot-backend/image_indices:/code/image_indices
+      - ./logs:/code/logs
     env_file:
       - ./ragbot-backend/.env
+    environment:
+      - PYTHONPATH=/code
     deploy:
       resources:
         limits:
@@ -25,7 +28,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    restart: on-failure
+    restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:50505/health"]
       interval: 30s
