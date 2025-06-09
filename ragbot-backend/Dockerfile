@@ -19,10 +19,23 @@ RUN npm run build
 # Use NVIDIA CUDA base image for GPU support
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
+# Build arguments for version control
+ARG BUILD_DATE
+ARG BUILD_VERSION=1.0.0
+ARG VCS_REF
+
+# Labels for version tracking
+LABEL maintainer="RagBot Team" \
+      version="${BUILD_VERSION}" \
+      build-date="${BUILD_DATE}" \
+      vcs-ref="${VCS_REF}" \
+      description="RagBot Application with GPU-based SentenceTransformer Embeddings"
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
-    TZ=UTC
+    TZ=UTC \
+    RAGBOT_VERSION=${BUILD_VERSION}
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -55,8 +68,8 @@ COPY --from=frontend-build /app/build /code/frontend
 # Expose port
 EXPOSE 50505
 
-# Create start script
-RUN echo '#!/bin/bash\nexec python3.11 -m gunicorn -c gunicorn.conf.py app:app\n' > /code/start.sh && chmod +x /code/start.sh
+# Create start script with version info
+RUN echo '#!/bin/bash\necho "Starting RagBot v${RAGBOT_VERSION} built on ${BUILD_DATE}"\nexec python3.11 -m gunicorn -c gunicorn.conf.py app:app\n' > /code/start.sh && chmod +x /code/start.sh
 
 # Start the application
 CMD ["/code/start.sh"]
