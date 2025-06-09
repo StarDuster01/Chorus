@@ -347,13 +347,24 @@ def create_dataset_handler(user_data):
     print(f"[Dataset Creation] Dataset saved to file system successfully")
     
     # Create a ChromaDB collection for this dataset using connection pool
-    print(f"[Dataset Creation] Creating vector database collection...")
+    print(f"[Dataset Creation] Creating vector database collection for dataset {dataset_id}...")
     try:
         from connection_pool import chroma_pool
-        chroma_pool.get_collection(dataset_id)
-        print(f"[Dataset Creation] Vector database collection created successfully")
+        print(f"[Dataset Creation] Getting ChromaDB client...")
+        client = chroma_pool.get_client()
+        print(f"[Dataset Creation] Getting embedding function...")
+        embedding_function = chroma_pool.get_embedding_function()
+        print(f"[Dataset Creation] Creating collection {dataset_id}...")
+        collection = client.get_or_create_collection(
+            name=dataset_id,
+            embedding_function=embedding_function
+        )
+        print(f"[Dataset Creation] Vector database collection created successfully: {collection.name}")
     except Exception as e:
         print(f"[Dataset Creation] Error creating vector database collection: {str(e)}")
+        print(f"[Dataset Creation] Error type: {type(e)}")
+        import traceback
+        print(f"[Dataset Creation] Error traceback: {traceback.format_exc()}")
         return jsonify({
             "error": "Failed to initialize vector database",
             "details": str(e)
