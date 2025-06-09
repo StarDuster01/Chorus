@@ -15,15 +15,11 @@ ENV REACT_APP_API_URL=/api
 # Build the application
 RUN npm run build
 
-# Production environment
-FROM nginx:alpine
+# The build output will be in /app/build
+WORKDIR /app/build
 
-# Copy build files from the build stage
-COPY --from=build /app/build /usr/share/nginx/html
+# Expose the port the app runs on
+EXPOSE 3000
 
-# Copy custom Nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"] 
+# Start the app
+CMD ["npx", "serve", "-s", ".", "-l", "3000"] 
