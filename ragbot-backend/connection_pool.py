@@ -5,6 +5,7 @@ import threading
 from typing import Optional
 import logging
 import re
+import torch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -94,27 +95,33 @@ class ChromaDBConnectionPool:
         return self._client
     
     def get_embedding_function(self):
-        """Get the OpenAI embedding function (creates if doesn't exist)"""
+        """Get the GPU-based sentence transformer embedding function (creates if doesn't exist)"""
         if self._embedding_function is None:
             try:
-                api_key = os.getenv("OPENAI_API_KEY")
-                if not api_key:
-                    logger.error("[ChromaDB Pool] OPENAI_API_KEY environment variable is not set")
-                    raise ValueError("OPENAI_API_KEY environment variable is not set")
+                # Check if CUDA is available
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"[ChromaDB Pool] Using device: {device}")
                 
-                logger.info("[ChromaDB Pool] Creating OpenAI embedding function")
-                logger.info(f"[ChromaDB Pool] Using API key: {api_key[:10]}...{api_key[-4:] if len(api_key) > 14 else '***'}")
+                if torch.cuda.is_available():
+                    logger.info(f"[ChromaDB Pool] GPU: {torch.cuda.get_device_name(0)}")
+                    logger.info(f"[ChromaDB Pool] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
                 
-                self._embedding_function = embedding_functions.OpenAIEmbeddingFunction(
-                    api_key=api_key,
-                    model_name="text-embedding-3-small"  # Updated to newer model
+                # Use a high-quality sentence transformer model that works well on GPU
+                # all-MiniLM-L6-v2 is fast and good quality, works well on GPU
+                model_name = "all-MiniLM-L6-v2"
+                logger.info(f"[ChromaDB Pool] Creating SentenceTransformer embedding function with model: {model_name}")
+                
+                self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=model_name,
+                    device=device
                 )
-                logger.info("[ChromaDB Pool] Successfully created OpenAI embedding function")
+                logger.info(f"[ChromaDB Pool] Successfully created SentenceTransformer embedding function on {device}")
+                
             except Exception as e:
                 logger.error(f"[ChromaDB Pool] Error creating embedding function: {str(e)}")
-                # Try with a fallback sentence transformer model
+                # Fall back to default embedding function if sentence transformers fail
                 try:
-                    logger.info("[ChromaDB Pool] Falling back to default sentence transformer embedding")
+                    logger.info("[ChromaDB Pool] Falling back to default embedding function")
                     self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
                     logger.info("[ChromaDB Pool] Successfully created fallback embedding function")
                 except Exception as fallback_error:
