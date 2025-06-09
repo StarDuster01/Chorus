@@ -195,68 +195,28 @@ def get_datasets(user_data):
 @app.route('/api/datasets', methods=['POST'])
 @require_auth_wrapper
 def create_dataset(user_data):
-    data = request.json
-    
-    if not data or not data.get('name'):
-        return jsonify({"error": "Dataset name is required"}), 400
-        
-    # Get dataset type, default to "text"
-    dataset_type = data.get('type', 'text')
-    if dataset_type not in ['text', 'image', 'mixed']:
-        return jsonify({"error": "Invalid dataset type. Must be 'text', 'image', or 'mixed'"}), 400
-        
-    # Create a new dataset
-    dataset_id = str(uuid.uuid4())
-    new_dataset = {
-        "id": dataset_id,
-        "name": data.get('name'),
-        "description": data.get('description', ''),
-        "type": dataset_type,
-        "user_id": user_data['id'],
-        "document_count": 0,
-        "image_count": 0,
-        "chunk_count": 0,
-        "created_at": datetime.datetime.now(UTC).isoformat()
-    }
-    
-    # Save the dataset
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    os.makedirs(datasets_dir, exist_ok=True)
-    
-    # Check if user already has datasets
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if os.path.exists(user_datasets_file):
-        with open(user_datasets_file, 'r') as f:
-            datasets = json.load(f)
-        datasets.append(new_dataset)
-    else:
-        datasets = [new_dataset]
-    
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
-    
-    # Create a ChromaDB collection for this dataset
-    try:
-        chroma_client.get_or_create_collection(dataset_id)
-        print(f"Collection for dataset {dataset_id} ensured.", flush=True)
-    except Exception as e:
-        print(f"Error ensuring ChromaDB collection: {str(e)}", flush=True)
-    
-    return jsonify(new_dataset), 201
+    return create_dataset_handler(user_data)
 
 @app.route('/api/datasets/<dataset_id>/documents', methods=['POST'])
 @require_auth_wrapper
 def upload_document(user_data, dataset_id):
+    print(f"\n=== Document Upload Started ===")
+    print(f"Dataset ID: {dataset_id}")
+    print(f"User ID: {user_data['id']}")
+    
     if 'file' not in request.files:
+        print("❌ No file part in request")
         return jsonify({"error": "No file part"}), 400
         
     file = request.files['file']
     if file.filename == '':
+        print("❌ No file selected")
         return jsonify({"error": "No selected file"}), 400
         
+    print(f"📄 Uploading file: {file.filename}")
+        
     # Get dataset information
-    dataset = find_dataset_by_id(dataset_id)
+    dataset, _ = find_dataset_by_id(user_data, dataset_id)
     if not dataset:
         return jsonify({"error": "Dataset not found"}), 404
         
@@ -403,15 +363,25 @@ def upload_document(user_data, dataset_id):
             max_chunk_size = 1000  
             overlap = 200
         
+        print(f"📝 Creating semantic chunks (max_size: {max_chunk_size}, overlap: {overlap})...")
         # Create chunks from text using the semantic chunking algorithm
-        chunks = create_semantic_chunks(text, max_chunk_size=max_chunk_size, overlap=overlap)
+        try:
+            chunks = create_semantic_chunks(text, max_chunk_size=max_chunk_size, overlap=overlap)
+            print(f"✅ Created {len(chunks)} chunks")
+        except Exception as e:
+            print(f"❌ Error creating chunks: {str(e)}")
+            os.remove(file_path)
+            return jsonify({"error": f"Error creating text chunks: {str(e)}"}), 500
         
         # Create document
         document_id = str(uuid.uuid4())
+        print(f"📄 Document ID: {document_id}")
         
+        print(f"🔧 Adding {len(chunks)} chunks to vector database...")
         # Add chunks to vector store
         try:
             chroma_collection = chroma_client.get_or_create_collection(dataset_id)
+            print(f"✅ Got ChromaDB collection: {chroma_collection.name}")
             
             # Create unique IDs for chunks
             chunk_ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -431,11 +401,13 @@ def upload_document(user_data, dataset_id):
             } for i in range(len(chunks))]
             
             # Add chunks to vector store
+            print(f"📥 Adding chunks to collection...")
             chroma_collection.add(
                 ids=chunk_ids,
                 documents=chunks,
                 metadatas=metadatas
             )
+            print(f"✅ Successfully added {len(chunks)} chunks to vector database")
             
             # Update document count and chunk count in dataset
             datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
@@ -463,22 +435,33 @@ def upload_document(user_data, dataset_id):
                 with open(user_datasets_file, 'w') as f:
                     json.dump(datasets, f)
             
+            print(f"✅ Document upload completed successfully!")
+            print("=== Document Upload Completed ===\n")
             # Return success
             return jsonify({
                 "id": document_id,
                 "filename": filename,
                 "type": "text",
-                "chunks": len(chunks)
+                "chunks": len(chunks),
+                "status": "success",
+                "message": f"Document processed successfully with {len(chunks)} chunks"
             }), 201
             
         except Exception as e:
+            print(f"❌ Error processing document: {str(e)}")
+            import traceback
+            print(f"Error traceback:\n{traceback.format_exc()}")
             # Clean up the file if there was an error
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
+                    print(f"🗑️ Cleaned up file: {file_path}")
                 except:
                     pass
-            return jsonify({"error": f"Error processing document: {str(e)}"}), 500
+            return jsonify({
+                "error": f"Error processing document: {str(e)}",
+                "details": "Check server logs for more information"
+            }), 500
         # After chunking and before returning success, add images from pptx_image_metadata
         if pptx_image_metadata:
             for img_meta in pptx_image_metadata:
@@ -532,185 +515,57 @@ def rebuild_dataset(user_data, dataset_id):
 @app.route('/api/datasets/<dataset_id>/status', methods=['GET'])
 @require_auth_wrapper
 def dataset_status(user_data, dataset_id):
+    """Get detailed status of a dataset"""
+    print(f"\n=== Dataset Status Check for {dataset_id} ===")
+    
     # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
-    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
-    
-    if not os.path.exists(user_datasets_file):
-        return jsonify({"error": "Dataset not found"}), 404
-        
-    with open(user_datasets_file, 'r') as f:
-        datasets = json.load(f)
-        
-    dataset = None
-    dataset_index = -1
-    for i, d in enumerate(datasets):
-        if d["id"] == dataset_id:
-            dataset = d
-            dataset_index = i
-            break
-            
+    dataset, _ = find_dataset_by_id(user_data, dataset_id)
     if not dataset:
+        print(f"❌ Dataset {dataset_id} not found")
         return jsonify({"error": "Dataset not found"}), 404
     
-    # Get dataset type
-    dataset_type = dataset.get("type", "text")
+    print(f"📊 Dataset info: {json.dumps(dataset, indent=2)}")
     
-    # Check ChromaDB collection status for text documents
-    collection_exists = False
-    doc_count = 0
-    chunk_count = 0
-    
-    if dataset_type in ["text", "mixed"]:
-        try:
-            existing_collections = chroma_client.list_collections()
-            collection_exists = any(col.name == dataset_id for col in existing_collections)
-            
-            if collection_exists:
-                try:
-                    collection = chroma_client.get_collection(dataset_id)
-                    chunk_count = collection.count()
-                    
-                    # Get document count by counting unique document_ids
-                    try:
-                        results = collection.get()
-                        if results and results["metadatas"]:
-                            # Extract unique document IDs
-                            document_ids = set()
-                            for metadata in results["metadatas"]:
-                                if metadata and "document_id" in metadata:
-                                    document_ids.add(metadata["document_id"])
-                            doc_count = len(document_ids)
-                    except Exception as e:
-                        print(f"Error calculating document count: {str(e)}", flush=True)
-                        # Fallback to existing document count in dataset
-                        doc_count = dataset.get("document_count", 0)
-                        
-                except Exception as e:
-                    collection_exists = False
-                    print(f"Error accessing collection: {str(e)}", flush=True)
-        except Exception as e:
-            return jsonify({
-                "dataset": dataset,
-                "collection_exists": False,
-                "error": str(e)
-            }), 200
-    
-    # Check image index status for images
-    image_index_exists = False
-    image_count = 0
-    image_previews = []
-    
-    if dataset_type in ["image", "mixed"]:
-        # Check if there's an image index for this dataset
-        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
-        index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
-        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
-        image_index_exists = os.path.exists(index_path)
+    # Get ChromaDB collection status
+    try:
+        collection = chroma_client.get_collection(dataset_id)
+        count = collection.count()
+        print(f"✅ ChromaDB collection found with {count} items")
         
-        # Validate metadata if it exists
-        if os.path.exists(metadata_file):
-            try:
-                # Load metadata from file to ensure it's up-to-date
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                
-                # Filter to ensure we only count images that still exist on disk
-                valid_metadata = []
-                for img_meta in metadata:
-                    # Ensure dataset_id is correct
-                    if not img_meta.get('dataset_id'):
-                        img_meta['dataset_id'] = dataset_id
-                    
-                    # Only include images for this dataset where the file still exists
-                    if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
-                        if os.path.exists(img_meta['path']):
-                            valid_metadata.append(img_meta)
-                
-                # Update processor's metadata to remove any non-existent images
-                image_processor.image_metadata[dataset_id] = valid_metadata
-                
-                # Update the index count to match
-                image_count = len(valid_metadata)
-                
-                # Include image previews (first 3 images that exist)
-                preview_count = 0
-                for img_meta in valid_metadata:
-                    if preview_count >= 10:  # Limit to 10 preview images
-                        break
-                    
-                    if 'path' in img_meta and os.path.exists(img_meta['path']):
-                        image_previews.append({
-                            "id": img_meta.get("id", ""),
-                            "url": f"/api/images/{os.path.basename(img_meta['path'])}",
-                            "caption": img_meta.get("caption", "")
-                        })
-                        preview_count += 1
-                
-                # Save updated metadata
-                try:
-                    with open(metadata_file, 'w') as f:
-                        json.dump(valid_metadata, f)
-                    print(f"Updated metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images", flush=True)
-                except Exception as e:
-                    print(f"Error saving updated metadata: {str(e)}", flush=True)
-                
-            except Exception as e:
-                print(f"Error validating image metadata: {str(e)}", flush=True)
-        elif dataset_id in image_processor.image_metadata:
-            # If no metadata file but we have metadata in memory, validate it
-            valid_metadata = []
-            for img_meta in image_processor.image_metadata[dataset_id]:
-                if img_meta.get('dataset_id') == dataset_id and 'path' in img_meta:
-                    if os.path.exists(img_meta['path']):
-                        valid_metadata.append(img_meta)
-            
-            # Update processor's metadata
-            image_processor.image_metadata[dataset_id] = valid_metadata
-            image_count = len(valid_metadata)
-            
-            # Include image previews (first 3 images)
-            preview_count = 0
-            for img_meta in valid_metadata:
-                if preview_count >= 3:  # Limit to 3 preview images
-                    break
-                
-                if 'path' in img_meta and os.path.exists(img_meta['path']):
-                    image_previews.append({
-                        "id": img_meta.get("id", ""),
-                        "url": f"/api/images/{os.path.basename(img_meta['path'])}",
-                        "caption": img_meta.get("caption", "")
-                    })
-                    preview_count += 1
-                    
-            # Save metadata file
-            try:
-                os.makedirs(indices_dir, exist_ok=True)
-                with open(metadata_file, 'w') as f:
-                    json.dump(valid_metadata, f)
-                print(f"Created metadata file for dataset {dataset_id} with {len(valid_metadata)} validated images", flush=True)
-            except Exception as e:
-                print(f"Error saving metadata: {str(e)}", flush=True)
-    
-    # Update dataset with accurate counts
-    dataset["document_count"] = doc_count
-    dataset["chunk_count"] = chunk_count
-    dataset["image_count"] = image_count
-    
-    # Save updated dataset counts back to file
-    datasets[dataset_index] = dataset
-    with open(user_datasets_file, 'w') as f:
-        json.dump(datasets, f)
-    
-    return jsonify({
-        "dataset": dataset,
-        "collection_exists": collection_exists,
-        "document_count": doc_count,
-        "chunk_count": chunk_count,
-        "image_index_exists": image_index_exists,
-        "image_count": image_count,
-        "image_previews": image_previews
-    }), 200
+        # Get collection metadata
+        collection_info = collection.get()
+        chunk_count = len(collection_info['ids']) if collection_info and 'ids' in collection_info else 0
+        
+        # Update dataset status
+        status = {
+            "id": dataset_id,
+            "name": dataset["name"],
+            "type": dataset["type"],
+            "document_count": dataset.get("document_count", 0),
+            "chunk_count": chunk_count,
+            "status": "ready" if chunk_count > 0 else "empty",
+            "created_at": dataset["created_at"],
+            "last_updated": datetime.datetime.now(UTC).isoformat(),
+            "collection_status": "active",
+            "message": "Dataset is ready for use" if chunk_count > 0 else "Dataset is empty - add documents to begin using"
+        }
+        
+        print(f"✅ Status check completed: {json.dumps(status, indent=2)}")
+        return jsonify(status), 200
+        
+    except Exception as e:
+        print(f"❌ Error checking dataset status: {str(e)}")
+        import traceback
+        print(f"Error traceback:\n{traceback.format_exc()}")
+        
+        return jsonify({
+            "id": dataset_id,
+            "name": dataset["name"],
+            "type": dataset["type"],
+            "status": "error",
+            "error": str(e),
+            "message": "Error checking dataset status"
+        }), 500
 
 @app.route('/api/datasets/<dataset_id>/documents', methods=['GET'])
 @require_auth_wrapper

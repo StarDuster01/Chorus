@@ -297,26 +297,28 @@ def create_dataset_handler(user_data):
     Returns:
         tuple: JSON response and status code
     """
-    print("[Dataset Creation] Starting dataset creation process...")
+    print("\n=== Dataset Creation Process Started ===")
+    print(f"User ID: {user_data['id']}")
     
     data = request.get_json()
+    print(f"Request data: {json.dumps(data, indent=2)}")
     
     # Validate required fields
     if not data.get('name'):
-        print("[Dataset Creation] Error: Dataset name is required")
+        print("❌ Error: Dataset name is required")
         return jsonify({"error": "Dataset name is required"}), 400
     
     if not data.get('type'):
-        print("[Dataset Creation] Error: Dataset type is required")
+        print("❌ Error: Dataset type is required")
         return jsonify({"error": "Dataset type is required"}), 400
     
     # Validate dataset type - now supports mixed type
     valid_types = ['text', 'image', 'mixed']
     if data.get('type') not in valid_types:
-        print(f"[Dataset Creation] Error: Invalid dataset type '{data.get('type')}'. Must be one of: {valid_types}")
+        print(f"❌ Error: Invalid dataset type '{data.get('type')}'. Must be one of: {valid_types}")
         return jsonify({"error": f"Dataset type must be one of: {', '.join(valid_types)}"}), 400
     
-    print(f"[Dataset Creation] Creating dataset: {data.get('name')} (type: {data.get('type')})")
+    print(f"\n📝 Creating dataset: {data.get('name')} (type: {data.get('type')})")
     
     # Create dataset
     dataset_id = str(uuid.uuid4())
@@ -327,7 +329,8 @@ def create_dataset_handler(user_data):
         "type": data.get('type'),
         "created_at": datetime.datetime.now(UTC).isoformat(),
         "document_count": 0,
-        "chunk_count": 0
+        "chunk_count": 0,
+        "status": "created"  # Add status field
     }
     
     # Load existing datasets or create empty list
@@ -335,54 +338,61 @@ def create_dataset_handler(user_data):
     os.makedirs(datasets_dir, exist_ok=True)
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
+    print(f"\n📂 Dataset directory: {datasets_dir}")
+    print(f"📄 User datasets file: {user_datasets_file}")
+    
     if os.path.exists(user_datasets_file):
+        print("Found existing datasets file, loading...")
         with open(user_datasets_file, 'r') as f:
             datasets = json.load(f)
+        print(f"Loaded {len(datasets)} existing datasets")
     else:
+        print("No existing datasets file, creating new one")
         datasets = []
     
     datasets.append(new_dataset)
-    print(f"[Dataset Creation] Added dataset to list. Total datasets: {len(datasets)}")
+    print(f"\n✅ Added dataset to list. Total datasets: {len(datasets)}")
     
     # Save datasets to file with error handling
     try:
+        print("\n💾 Saving dataset to file system...")
         with open(user_datasets_file, 'w') as f:
-            json.dump(datasets, f)
+            json.dump(datasets, f, indent=2)
             f.flush()  # Ensure data is written to disk
             os.fsync(f.fileno())  # Force write to disk
-        print(f"[Dataset Creation] Dataset saved to file system successfully")
+        print("✅ Dataset saved to file system successfully")
     except Exception as e:
-        print(f"[Dataset Creation] Error saving dataset to file: {str(e)}")
+        print(f"❌ Error saving dataset to file: {str(e)}")
         return jsonify({
             "error": "Failed to save dataset",
             "details": str(e)
         }), 500
     
-    # Create a ChromaDB collection for this dataset using simple client
-    print(f"[Dataset Creation] Creating vector database collection for dataset {dataset_id}...")
+    # Create a ChromaDB collection for this dataset
+    print(f"\n🔧 Creating vector database collection for dataset {dataset_id}...")
     try:
-        print(f"[Dataset Creation] Creating collection {dataset_id}...")
+        print(f"Creating collection {dataset_id}...")
         
         # Create the collection (embedding function already initialized at startup)
         collection = chroma_client.get_or_create_collection(dataset_id)
-        print(f"[Dataset Creation] Vector database collection created successfully: {collection.name}")
+        print(f"✅ Vector database collection created successfully: {collection.name}")
         
         # Verify collection is working by testing a simple operation
         try:
-            collection.count()  # Simple health check
-            print(f"[Dataset Creation] Collection health check passed")
+            count = collection.count()
+            print(f"✅ Collection health check passed. Current count: {count}")
         except Exception as health_error:
-            print(f"[Dataset Creation] Collection health check failed: {str(health_error)}")
+            print(f"❌ Collection health check failed: {str(health_error)}")
             raise
             
     except Exception as e:
-        print(f"[Dataset Creation] Error creating vector database collection: {str(e)}")
-        print(f"[Dataset Creation] Error type: {type(e)}")
+        print(f"\n❌ Error creating vector database collection: {str(e)}")
+        print(f"Error type: {type(e)}")
         import traceback
-        print(f"[Dataset Creation] Error traceback: {traceback.format_exc()}")
+        print(f"Error traceback:\n{traceback.format_exc()}")
         
         # ROLLBACK: Remove the dataset from JSON file if ChromaDB failed
-        print(f"[Dataset Creation] Rolling back dataset creation due to ChromaDB failure...")
+        print(f"\n🔄 Rolling back dataset creation due to ChromaDB failure...")
         try:
             if os.path.exists(user_datasets_file):
                 with open(user_datasets_file, 'r') as f:
@@ -392,12 +402,12 @@ def create_dataset_handler(user_data):
                 datasets = [d for d in datasets if d["id"] != dataset_id]
                 
                 with open(user_datasets_file, 'w') as f:
-                    json.dump(datasets, f)
+                    json.dump(datasets, f, indent=2)
                     f.flush()
                     os.fsync(f.fileno())
-                print(f"[Dataset Creation] Dataset rollback completed")
+                print(f"✅ Dataset rollback completed")
         except Exception as rollback_error:
-            print(f"[Dataset Creation] Error during rollback: {str(rollback_error)}")
+            print(f"❌ Error during rollback: {str(rollback_error)}")
         
         return jsonify({
             "error": "Failed to initialize vector database",
@@ -406,12 +416,18 @@ def create_dataset_handler(user_data):
         }), 500
     
     # Invalidate cache when dataset is created
-    print(f"[Dataset Creation] Invalidating cache...")
+    print(f"\n🔄 Invalidating cache...")
     from dataset_cache import dataset_cache
     dataset_cache.invalidate_user(user_data['id'])
     
-    print(f"[Dataset Creation] Dataset creation completed successfully: {data.get('name')}")
-    return jsonify(new_dataset), 201
+    print(f"\n✅ Dataset creation completed successfully: {data.get('name')}")
+    print("=== Dataset Creation Process Completed ===\n")
+    
+    return jsonify({
+        **new_dataset,
+        "status": "ready",
+        "message": "Dataset created successfully and ready for documents"
+    }), 201
 
 def delete_dataset_handler(user_data, dataset_id):
     """Delete a dataset and all its associated data

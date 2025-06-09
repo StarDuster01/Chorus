@@ -86,8 +86,9 @@ def get_or_create_collection(collection_name: str, metadata: dict = None):
     if chroma_client is None or embedding_function is None:
         raise RuntimeError("ChromaDB not initialized. Call initialize_chroma() first.")
     
-    # Simple name sanitization
+    # Better name sanitization for UUIDs
     sanitized_name = collection_name.lower().replace('-', '_')
+    # Ensure the name is valid
     if len(sanitized_name) < 3:
         sanitized_name = sanitized_name + '_ds'
     
@@ -97,15 +98,27 @@ def get_or_create_collection(collection_name: str, metadata: dict = None):
         default_metadata.update(metadata)
     
     try:
+        logger.info(f"[ChromaDB] Creating/getting collection: {sanitized_name} (from {collection_name})")
         collection = chroma_client.get_or_create_collection(
             name=sanitized_name,
             embedding_function=embedding_function,
             metadata=default_metadata
         )
-        logger.info(f"[ChromaDB] Got/created collection: {sanitized_name}")
+        logger.info(f"[ChromaDB] ✅ Collection ready: {sanitized_name}")
+        
+        # Test the collection with a simple operation
+        try:
+            count = collection.count()
+            logger.info(f"[ChromaDB] Collection health check passed. Count: {count}")
+        except Exception as health_error:
+            logger.error(f"[ChromaDB] Collection health check failed: {str(health_error)}")
+            raise
+            
         return collection
     except Exception as e:
-        logger.error(f"[ChromaDB] Error with collection {collection_name}: {str(e)}")
+        logger.error(f"[ChromaDB] ❌ Error with collection {collection_name}: {str(e)}")
+        import traceback
+        logger.error(f"[ChromaDB] Traceback:\n{traceback.format_exc()}")
         raise
 
 def get_collection(collection_name: str):
