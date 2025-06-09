@@ -15,9 +15,9 @@ werkzeug
 requests
 Pillow
 safetensors
-torch==2.5.1+cu121
-torchvision==0.20.1+cu121
-torchaudio==2.5.1+cu121
+torch
+torchvision
+torchaudio
 --extra-index-url https://download.pytorch.org/whl/cu121
 tesseract
 transformers
@@ -26,7 +26,7 @@ ftfy
 regex
 tqdm
 scipy
-faiss-gpu==1.7.4
+faiss-gpu
 pytesseract
 pdf2image
 pymupdf
