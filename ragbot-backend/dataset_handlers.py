@@ -1189,7 +1189,12 @@ def bulk_upload_handler(user_data, dataset_id):
                         processed_files += 1
                         continue
                         
-                    chunks = create_semantic_chunks(text)
+                    # Create chunks with proper parameters for better context
+                    is_powerpoint = ext == '.pptx'
+                    if is_powerpoint:
+                        chunks = create_semantic_chunks(text, max_chunk_size=6000, overlap=1000)
+                    else:
+                        chunks = create_semantic_chunks(text, max_chunk_size=6000, overlap=1000)
                     
                     # Add to ChromaDB
                     try:

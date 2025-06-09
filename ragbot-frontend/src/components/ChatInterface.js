@@ -868,7 +868,7 @@ const ChatInterface = () => {
                           <span><FaCode className="me-2" />Context Documents</span>
                         </div>
                         <div className="debug-content">
-                          {debugInfo.contexts.map((ctx, idx) => (
+                          {debugInfo.contexts && debugInfo.contexts.map((ctx, idx) => (
                             <div key={idx} className="debug-context-item">
                               <strong>Context {idx + 1}:</strong>
                               <p className="mb-0">{typeof ctx === 'string' ? ctx.substring(0, 150) : JSON.stringify(ctx).substring(0, 150)}...</p>
@@ -883,9 +883,9 @@ const ChatInterface = () => {
                             <span><FaVoteYea className="me-2" />Response Voting</span>
                           </div>
                           <div className="debug-content">
-                            {debugInfo.all_responses.map((resp, idx) => (
+                            {debugInfo.all_responses && debugInfo.all_responses.map((resp, idx) => (
                               <div key={idx} className="debug-response-item">
-                                <strong>Response {idx + 1} (Votes: {debugInfo.votes[idx]}) - {resp.provider} {resp.model}</strong>
+                                <strong>Response {idx + 1} (Votes: {debugInfo.votes && debugInfo.votes[idx] ? debugInfo.votes[idx] : 0}) - {resp.provider} {resp.model}</strong>
                                 <p className="mb-0">{typeof resp === 'string' ? resp.substring(0, 100) : (resp.response && typeof resp.response === 'string' ? resp.response.substring(0, 100) : JSON.stringify(resp).substring(0, 100))}...</p>
                               </div>
                             ))}
@@ -900,7 +900,7 @@ const ChatInterface = () => {
                           </div>
                           <div className="debug-content">
                             <div className="debug-logs">
-                              {debugInfo.logs.map((log, idx) => (
+                              {debugInfo.logs && debugInfo.logs.map((log, idx) => (
                                 <div key={idx}>{log}</div>
                               ))}
                             </div>

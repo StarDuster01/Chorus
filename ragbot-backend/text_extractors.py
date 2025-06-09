@@ -348,17 +348,16 @@ def create_semantic_chunks(text, max_chunk_size=2500, overlap=600):
     Returns:
         list: List of text chunks
     """
+    # If text is empty, return empty list
+    if not text or not text.strip():
+        return []
+    
+    # If text is smaller than max chunk size, return as single chunk
+    if len(text) <= max_chunk_size:
+        return [text]
+    
     # Detect if content is from a PowerPoint presentation
     is_powerpoint = "## SLIDE " in text or "## PRESENTATION SUMMARY ##" in text
-    
-    # Use larger chunks for PowerPoint content
-    if is_powerpoint:
-        max_chunk_size = 5000  # Much larger to contain multiple slides
-        overlap = 1000  # More overlap to maintain context between chunks
-    
-    # If text is empty or too short, return as is
-    if not text or len(text) <= max_chunk_size:
-        return [text]
     
     # For PowerPoint content, use a special chunking strategy
     if is_powerpoint:
@@ -455,30 +454,8 @@ def create_semantic_chunks(text, max_chunk_size=2500, overlap=600):
             if current_chunk:
                 chunks.append(current_chunk)
     
-    # Post-processing to ensure chunks are not too small or too large
-    final_chunks = []
-    current_chunk = ""
-    
-    for chunk in chunks:
-        # If chunk is very small, combine with previous unless it's a special section
-        # Increased minimum size to ensure chunks have enough context
-        if len(chunk) < max_chunk_size / 3 and not any(re.search(pattern, chunk) for pattern in section_patterns):
-            if current_chunk and len(current_chunk) + len(chunk) <= max_chunk_size:
-                current_chunk += "\n\n" + chunk
-            else:
-                if current_chunk:
-                    final_chunks.append(current_chunk)
-                current_chunk = chunk
-        else:
-            if current_chunk:
-                final_chunks.append(current_chunk)
-            current_chunk = chunk
-    
-    # Add the last chunk
-    if current_chunk:
-        final_chunks.append(current_chunk)
-    
-    return final_chunks
+    # Return chunks as-is, no post-processing needed
+    return chunks
 
 def chunk_powerpoint_content(text, max_chunk_size=5000, overlap=1000):
     """Special chunking function for PowerPoint content that keeps slides together
