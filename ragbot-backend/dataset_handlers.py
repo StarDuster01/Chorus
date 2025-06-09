@@ -1058,9 +1058,15 @@ def bulk_upload_handler(user_data, dataset_id):
         
     print(f"Processing zip file: {filename}")
     
-    # Save zip to temp dir
-    temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+    # Create unique temp directory for this upload
+    base_temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+    os.makedirs(base_temp_dir, exist_ok=True)
+    
+    # Create unique subdirectory with timestamp
+    upload_id = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    temp_dir = os.path.join(base_temp_dir, upload_id)
     os.makedirs(temp_dir, exist_ok=True)
+    
     zip_path = os.path.join(temp_dir, filename)
     file.save(zip_path)
     print(f"Saved zip to: {zip_path}")
@@ -1312,7 +1318,7 @@ def bulk_upload_handler(user_data, dataset_id):
     # Return initial response with status file path
     return jsonify({
         "message": "File uploaded successfully, processing started",
-        "status_file": f"/api/datasets/{dataset_id}/upload-status/{os.path.basename(temp_dir)}"
+        "status_file": f"/api/datasets/{dataset_id}/upload-status/{upload_id}"
     }), 202
 
 def diagnose_dataset_handler(user_data, dataset_id):

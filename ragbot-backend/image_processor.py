@@ -405,20 +405,31 @@ class ImageProcessor:
         # Initialize the dataset's index and metadata if needed
         if dataset_id not in self.image_indices:
             print(f"Creating new index for dataset {dataset_id}")
-            if USE_GPU_FAISS and global_model_manager.gpu_resources:
-                try:
-                    # Create GPU index
-                    cpu_index = faiss.IndexFlatIP(VECTOR_DIMENSION)
-                    self.image_indices[dataset_id] = faiss.index_cpu_to_gpu(
-                        global_model_manager.gpu_resources, 0, cpu_index
-                    )
-                    print(f"Created GPU FAISS index for dataset {dataset_id}")
-                except Exception as e:
-                    print(f"Failed to create GPU index, falling back to CPU: {str(e)}")
+            try:
+                if USE_GPU_FAISS and global_model_manager.gpu_resources:
+                    try:
+                        # Create GPU index
+                        cpu_index = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                        gpu_index = faiss.index_cpu_to_gpu(
+                            global_model_manager.gpu_resources, 0, cpu_index
+                        )
+                        self.image_indices[dataset_id] = gpu_index
+                        print(f"Created GPU FAISS index for dataset {dataset_id}")
+                    except Exception as e:
+                        print(f"Failed to create GPU index, falling back to CPU: {str(e)}")
+                        self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                        print(f"Created CPU FAISS index for dataset {dataset_id}")
+                else:
                     self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
-            else:
+                    print(f"Created CPU FAISS index for dataset {dataset_id}")
+                    
+                self.image_metadata[dataset_id] = []
+            except Exception as e:
+                print(f"Error creating FAISS index for dataset {dataset_id}: {str(e)}")
+                # Fallback to CPU index
                 self.image_indices[dataset_id] = faiss.IndexFlatIP(VECTOR_DIMENSION)
-            self.image_metadata[dataset_id] = []
+                self.image_metadata[dataset_id] = []
+                print(f"Created fallback CPU FAISS index for dataset {dataset_id}")
         
         # Ensure image path exists
         if not os.path.exists(image_path):
@@ -619,15 +630,47 @@ class ImageProcessor:
         
         # If it's a GPU index, copy to CPU before saving
         index_to_save = self.image_indices[dataset_id]
-        if USE_GPU_FAISS and hasattr(index_to_save, 'index'):
-            # This is a GPU index, copy to CPU
-            try:
+        try:
+            if USE_GPU_FAISS and hasattr(index_to_save, 'index'):
+                # This is a GPU index, copy to CPU
+                print(f"Converting GPU index to CPU for saving: {dataset_id}")
                 index_to_save = faiss.index_gpu_to_cpu(index_to_save)
-                print(f"Copied GPU index to CPU for saving: {dataset_id}")
-            except Exception as e:
-                print(f"Warning: Could not copy GPU index to CPU: {str(e)}")
-        
-        faiss.write_index(index_to_save, index_path)
+            elif USE_GPU_FAISS and isinstance(index_to_save, faiss.GpuIndex):
+                # Alternative check for GPU index
+                print(f"Converting GPU index to CPU for saving: {dataset_id}")
+                index_to_save = faiss.index_gpu_to_cpu(index_to_save)
+            
+            faiss.write_index(index_to_save, index_path)
+            print(f"Successfully saved FAISS index for dataset {dataset_id}")
+        except Exception as e:
+            print(f"Error saving FAISS index for dataset {dataset_id}: {str(e)}")
+            # Try to save as CPU index if GPU conversion fails
+            try:
+                print(f"Attempting to recreate as CPU index for dataset {dataset_id}")
+                cpu_index = faiss.IndexFlatIP(VECTOR_DIMENSION)
+                
+                # If we have metadata, rebuild the index
+                if dataset_id in self.image_metadata and self.image_metadata[dataset_id]:
+                    metadata = self.image_metadata[dataset_id]
+                    print(f"Rebuilding CPU index with {len(metadata)} images")
+                    
+                    for img_meta in metadata:
+                        img_path = img_meta.get("path", "")
+                        if img_path and os.path.exists(img_path):
+                            try:
+                                embedding = self.compute_image_embedding(img_path)
+                                cpu_index.add(np.array([embedding], dtype=np.float32))
+                            except Exception as embed_e:
+                                print(f"Error computing embedding during rebuild: {embed_e}")
+                
+                faiss.write_index(cpu_index, index_path)
+                # Update the in-memory index to CPU version
+                self.image_indices[dataset_id] = cpu_index
+                print(f"Successfully saved rebuilt CPU index for dataset {dataset_id}")
+                
+            except Exception as rebuild_e:
+                print(f"Failed to rebuild and save index for dataset {dataset_id}: {rebuild_e}")
+                raise
         
         # Save metadata
         metadata_path = os.path.join(self.indices_dir, f"{dataset_id}_metadata.json")

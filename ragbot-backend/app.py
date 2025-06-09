@@ -3409,8 +3409,16 @@ def get_upload_status(user_data, dataset_id, status_id):
     Returns:
         tuple: JSON response and status code
     """
-    status_file = os.path.join(app.config['TEMP_FOLDER'], status_id, "status.json")
+    # Look for status file in the temp directory structure
+    base_temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+    status_file = os.path.join(base_temp_dir, status_id, "status.json")
+    
     if not os.path.exists(status_file):
+        print(f"Upload status file not found: {status_file}")
+        # List available status files for debugging
+        if os.path.exists(base_temp_dir):
+            available_dirs = [d for d in os.listdir(base_temp_dir) if os.path.isdir(os.path.join(base_temp_dir, d))]
+            print(f"Available upload directories: {available_dirs}")
         return jsonify({"error": "Upload status not found"}), 404
         
     try:
@@ -3418,6 +3426,7 @@ def get_upload_status(user_data, dataset_id, status_id):
             status = json.load(f)
         return jsonify(status), 200
     except Exception as e:
+        print(f"Error reading status file {status_file}: {str(e)}")
         return jsonify({"error": f"Failed to read status: {str(e)}"}), 500
 
 if __name__ == '__main__':
