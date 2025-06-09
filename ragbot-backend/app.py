@@ -143,8 +143,8 @@ IMAGE_FOLDER = os.path.join(UPLOAD_FOLDER, "images")
 os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-# Initialize ChromaDB via connection pool
-from connection_pool import chroma_pool
+# Initialize ChromaDB
+import chroma_client
 
 # Pre-load AI models at startup for better performance
 print("[STARTUP] Pre-loading AI models...")
@@ -161,6 +161,11 @@ image_processor = ImageProcessor(app_base_dir)
 # Create directories for storing conversations
 CONVERSATIONS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversations")
 os.makedirs(CONVERSATIONS_FOLDER, exist_ok=True)
+
+# Initialize ChromaDB at startup (blocking until ready)
+print("[STARTUP] Initializing ChromaDB...")
+chroma_client.initialize_chroma()
+print("[STARTUP] ChromaDB ready!")
 
 # Run the sync on app startup
 from dataset_handlers import sync_datasets_with_collections
@@ -233,8 +238,7 @@ def create_dataset(user_data):
     
     # Create a ChromaDB collection for this dataset
     try:
-        from connection_pool import chroma_pool
-        chroma_pool.get_or_create_collection(dataset_id)
+        chroma_client.get_or_create_collection(dataset_id)
         print(f"Collection for dataset {dataset_id} ensured.", flush=True)
     except Exception as e:
         print(f"Error ensuring ChromaDB collection: {str(e)}", flush=True)
@@ -407,8 +411,7 @@ def upload_document(user_data, dataset_id):
         
         # Add chunks to vector store
         try:
-            from connection_pool import chroma_pool
-            chroma_collection = chroma_pool.get_or_create_collection(dataset_id)
+            chroma_collection = chroma_client.get_or_create_collection(dataset_id)
             
             # Create unique IDs for chunks
             chunk_ids = [f"{document_id}_{i}" for i in range(len(chunks))]
@@ -560,13 +563,12 @@ def dataset_status(user_data, dataset_id):
     
     if dataset_type in ["text", "mixed"]:
         try:
-            from connection_pool import chroma_pool
-            existing_collections = chroma_pool.list_collections()
+            existing_collections = chroma_client.list_collections()
             collection_exists = any(col.name == dataset_id for col in existing_collections)
             
             if collection_exists:
                 try:
-                    collection = chroma_pool.get_collection(dataset_id)
+                    collection = chroma_client.get_collection(dataset_id)
                     chunk_count = collection.count()
                     
                     # Get document count by counting unique document_ids
@@ -734,8 +736,7 @@ def get_dataset_documents(user_data, dataset_id):
     
     # Try to get the collection from ChromaDB
     try:
-        from connection_pool import chroma_pool
-        collection = chroma_pool.get_collection(dataset_id)
+        collection = chroma_client.get_collection(dataset_id)
         
         # Query all documents in the collection
         results = collection.get()
@@ -979,8 +980,7 @@ def chat_with_bot(user_data, bot_id):
         for dataset_id in dataset_ids:
             try:
                 # Text-based document retrieval
-                from connection_pool import chroma_pool
-                collection = chroma_pool.get_collection(dataset_id)
+                collection = chroma_client.get_collection(dataset_id)
                 
                 # Check if collection has any documents
                 collection_count = collection.count()
@@ -1432,8 +1432,7 @@ def chat_with_bot(user_data, bot_id):
                         for dataset_id in dataset_ids:
                             try:
                                 # Text-based document retrieval specific to this model
-                                from connection_pool import chroma_pool
-                                collection = chroma_pool.get_collection(dataset_id)
+                                collection = chroma_client.get_collection(dataset_id)
                                 
                                 # Check if collection has any documents
                                 collection_count = collection.count()
@@ -3333,8 +3332,7 @@ def get_document_content(user_data, document_id):
         for dataset in datasets:
             dataset_id = dataset["id"]
             try:
-                from connection_pool import chroma_pool
-                collection = chroma_pool.get_collection(dataset_id)
+                collection = chroma_client.get_collection(dataset_id)
                 results = collection.get(where={"document_id": document_id})
                 
                 if results and len(results["documents"]) > 0:
@@ -3409,8 +3407,7 @@ def get_context_snippet(user_data, document_id):
         for dataset in datasets:
             dataset_id = dataset["id"]
             try:
-                from connection_pool import chroma_pool
-                collection = chroma_pool.get_collection(dataset_id)
+                collection = chroma_client.get_collection(dataset_id)
                 
                 # If chunk index is provided, get only that specific chunk
                 if chunk_index:
@@ -3485,8 +3482,7 @@ def get_original_document(user_data, document_id):
         for dataset in datasets:
             dataset_id = dataset["id"]
             try:
-                from connection_pool import chroma_pool
-                collection = chroma_pool.get_collection(dataset_id)
+                collection = chroma_client.get_collection(dataset_id)
                 
                 # Query for just one chunk to get metadata
                 results = collection.get(

@@ -19,25 +19,12 @@ RUN npm run build
 # Use NVIDIA CUDA base image for GPU support
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
-# Build arguments for version control
-ARG BUILD_DATE
-ARG BUILD_VERSION=1.0.0
-ARG VCS_REF
-
-# Labels for version tracking
-LABEL maintainer="RagBot Team" \
-      version="${BUILD_VERSION}" \
-      build-date="${BUILD_DATE}" \
-      vcs-ref="${VCS_REF}" \
-      description="RagBot Application with GPU-based SentenceTransformer Embeddings"
-
-# Set environment variables
+# Set environment variables (static ones first)
 ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
-    TZ=UTC \
-    RAGBOT_VERSION=${BUILD_VERSION}
+    TZ=UTC
 
-# Install system dependencies
+# Install system dependencies (this should be cached)
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-dev \
@@ -53,11 +40,26 @@ WORKDIR /code
 # Copy only requirements first to leverage Docker cache
 COPY ragbot-backend/requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies (this should be cached unless requirements.txt changes)
 RUN python3.11 -m pip install -r requirements.txt
 
 # Create necessary directories
 RUN mkdir -p /code/uploads/images /code/uploads/documents /code/logs
+
+# NOW add the build arguments that change every build (after expensive operations)
+ARG BUILD_DATE
+ARG BUILD_VERSION=1.1.5
+ARG VCS_REF
+
+# Labels for version tracking
+LABEL maintainer="RagBot Team" \
+      version="${BUILD_VERSION}" \
+      build-date="${BUILD_DATE}" \
+      vcs-ref="${VCS_REF}" \
+      description="RagBot Application with GPU-based SentenceTransformer Embeddings"
+
+# Add dynamic environment variable
+ENV RAGBOT_VERSION=${BUILD_VERSION}
 
 # Copy application code
 COPY ragbot-backend/ .

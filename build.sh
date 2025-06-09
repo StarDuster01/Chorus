@@ -6,9 +6,9 @@ set -e
 echo "🚀 Building RagBot with GPU-based embeddings..."
 
 # Version info
-BUILD_VERSION="1.1.3"
+BUILD_VERSION="1.1.5"
 BUILD_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-VCS_REF="small-model-blocking-startup"
+VCS_REF="simplified-chroma-client"
 
 echo "📦 Version: $BUILD_VERSION"
 echo "📅 Build Date: $BUILD_DATE"
@@ -30,6 +30,7 @@ docker-compose down
 
 # Build with version arguments and optional no-cache
 echo "🏗️ Building Docker image with version control..."
+export DOCKER_BUILDKIT=1
 docker-compose build \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg BUILD_VERSION="$BUILD_VERSION" \

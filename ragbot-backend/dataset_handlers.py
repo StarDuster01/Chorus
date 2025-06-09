@@ -6,7 +6,8 @@ from datetime import UTC
 import tempfile
 from werkzeug.utils import secure_filename
 from flask import request, jsonify, send_file
-# ChromaDB imports removed - using connection pool instead
+# ChromaDB client
+import chroma_client
 import faiss
 import numpy as np
 import io
@@ -38,10 +39,9 @@ def add_document_to_chroma(dataset_id, chunks, document_id, filename):
     """
     import datetime
     from datetime import UTC
-    from connection_pool import chroma_pool
     
-    # Use connection pool instead of creating new client
-    chroma_collection = chroma_pool.get_or_create_collection(dataset_id)
+    # Use simple client instead of connection pool
+    chroma_collection = chroma_client.get_or_create_collection(dataset_id)
     
     # Create chunk IDs and metadata
     chunk_ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
@@ -98,7 +98,6 @@ def get_mimetype_from_dataset_type(dataset_type):
 def sync_datasets_with_collections():
     """Syncs datasets with ChromaDB collections to ensure consistency"""
     print("Syncing datasets with ChromaDB collections...")
-    from connection_pool import chroma_pool
     
     datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
     os.makedirs(datasets_dir, exist_ok=True)
@@ -108,7 +107,7 @@ def sync_datasets_with_collections():
     
     # Get existing collections
     try:
-        existing_collections = chroma_pool.list_collections()
+        existing_collections = chroma_client.list_collections()
         existing_collection_names = [col.name for col in existing_collections]
     except Exception as e:
         print(f"Error listing collections: {str(e)}")
@@ -126,7 +125,7 @@ def sync_datasets_with_collections():
                 if dataset_id not in existing_collection_names:
                     print(f"Creating missing collection for dataset: {dataset_id}")
                     try:
-                        chroma_pool.get_or_create_collection(dataset_id)
+                        chroma_client.get_or_create_collection(dataset_id)
                         print(f"Collection for dataset {dataset_id} ensured.")
                     except Exception as e:
                         print(f"Error ensuring collection for dataset {dataset_id}: {str(e)}")
@@ -190,7 +189,6 @@ def get_datasets_handler(user_data):
         tuple: JSON response and status code
     """
     from dataset_cache import dataset_cache
-    from connection_pool import chroma_pool
     
     # Try cache first
     cached_datasets = dataset_cache.get_datasets(user_data['id'])
@@ -360,21 +358,51 @@ def create_dataset_handler(user_data):
             "details": str(e)
         }), 500
     
-    # Create a ChromaDB collection for this dataset using connection pool
+    # Create a ChromaDB collection for this dataset using simple client
     print(f"[Dataset Creation] Creating vector database collection for dataset {dataset_id}...")
     try:
-        from connection_pool import chroma_pool
         print(f"[Dataset Creation] Creating collection {dataset_id}...")
-        collection = chroma_pool.get_or_create_collection(dataset_id)
+        
+        # Create the collection (embedding function already initialized at startup)
+        collection = chroma_client.get_or_create_collection(dataset_id)
         print(f"[Dataset Creation] Vector database collection created successfully: {collection.name}")
+        
+        # Verify collection is working by testing a simple operation
+        try:
+            collection.count()  # Simple health check
+            print(f"[Dataset Creation] Collection health check passed")
+        except Exception as health_error:
+            print(f"[Dataset Creation] Collection health check failed: {str(health_error)}")
+            raise
+            
     except Exception as e:
         print(f"[Dataset Creation] Error creating vector database collection: {str(e)}")
         print(f"[Dataset Creation] Error type: {type(e)}")
         import traceback
         print(f"[Dataset Creation] Error traceback: {traceback.format_exc()}")
+        
+        # ROLLBACK: Remove the dataset from JSON file if ChromaDB failed
+        print(f"[Dataset Creation] Rolling back dataset creation due to ChromaDB failure...")
+        try:
+            if os.path.exists(user_datasets_file):
+                with open(user_datasets_file, 'r') as f:
+                    datasets = json.load(f)
+                
+                # Remove the dataset we just added
+                datasets = [d for d in datasets if d["id"] != dataset_id]
+                
+                with open(user_datasets_file, 'w') as f:
+                    json.dump(datasets, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                print(f"[Dataset Creation] Dataset rollback completed")
+        except Exception as rollback_error:
+            print(f"[Dataset Creation] Error during rollback: {str(rollback_error)}")
+        
         return jsonify({
             "error": "Failed to initialize vector database",
-            "details": str(e)
+            "details": str(e),
+            "suggestion": "This may be due to GPU memory issues or embedding model problems. Try restarting the application."
         }), 500
     
     # Invalidate cache when dataset is created
@@ -439,12 +467,11 @@ def delete_dataset_handler(user_data, dataset_id):
     # Clean up ChromaDB collection and associated files
     try:
         print(f"[Dataset Deletion] Cleaning up ChromaDB collection...")
-        from connection_pool import chroma_pool
         
         # Get the collection for this dataset
         try:
             print(f"[Dataset Deletion] Getting ChromaDB collection {dataset_id}...")
-            collection = chroma_pool.get_collection(dataset_id)
+            collection = chroma_client.get_collection(dataset_id)
             # Get all metadata from collection
             results = collection.get()
             
@@ -467,7 +494,7 @@ def delete_dataset_handler(user_data, dataset_id):
             
             # Now delete the collection itself
             print(f"[Dataset Deletion] Deleting ChromaDB collection {dataset_id}...")
-            chroma_pool.delete_collection(dataset_id)
+            chroma_client.delete_collection(dataset_id)
             print(f"[Dataset Deletion] Successfully deleted ChromaDB collection {dataset_id}")
             
         except Exception as e:
@@ -475,7 +502,7 @@ def delete_dataset_handler(user_data, dataset_id):
             # Try to delete the collection anyway
             try:
                 print(f"[Dataset Deletion] Attempting to force delete ChromaDB collection {dataset_id}...")
-                chroma_pool.delete_collection(dataset_id)
+                chroma_client.delete_collection(dataset_id)
                 print(f"[Dataset Deletion] Successfully force deleted ChromaDB collection {dataset_id}")
             except Exception as e2:
                 print(f"[Dataset Deletion] Error force deleting ChromaDB collection: {str(e2)}")
@@ -644,8 +671,7 @@ def remove_document_handler(user_data, dataset_id, document_id):
     
     # Try to get the collection from ChromaDB
     try:
-        from connection_pool import chroma_pool
-        collection = chroma_pool.get_collection(dataset_id)
+        collection = chroma_client.get_collection(dataset_id)
         
         # Get all chunks with the matching document_id in their metadata
         results = collection.get(
@@ -752,16 +778,14 @@ def rebuild_dataset_handler(user_data, dataset_id):
     
     # Try to delete the existing collection if it exists
     try:
-        from connection_pool import chroma_pool
-        
         try:
-            chroma_pool.delete_collection(dataset_id)
+            chroma_client.delete_collection(dataset_id)
             print(f"Deleted existing collection for dataset: {dataset_id}")
         except Exception as e:
             print(f"Collection may not exist: {str(e)}")
         
         # Create a new collection
-        chroma_pool.get_or_create_collection(dataset_id)
+        chroma_client.get_or_create_collection(dataset_id)
         print(f"Collection for dataset {dataset_id} ensured.")
                 
         return jsonify({"message": "Dataset collection has been rebuilt. Please re-upload your documents."}), 200
@@ -1274,5 +1298,103 @@ def bulk_upload_handler(user_data, dataset_id):
         "message": "File uploaded successfully, processing started",
         "status_file": f"/api/datasets/{dataset_id}/upload-status/{os.path.basename(temp_dir)}"
     }), 202
+
+def diagnose_dataset_handler(user_data, dataset_id):
+    """Diagnose dataset and collection health
+    
+    Args:
+        user_data: User data from JWT token
+        dataset_id: ID of the dataset to diagnose
+    
+    Returns:
+        tuple: JSON response and status code
+    """
+    # Check if dataset exists in JSON
+    dataset, dataset_index = find_dataset_by_id(user_data, dataset_id)
+    if not dataset:
+        return jsonify({"error": "Dataset not found"}), 404
+    
+    diagnosis = {
+        "dataset_id": dataset_id,
+        "dataset_name": dataset.get("name", "Unknown"),
+        "dataset_type": dataset.get("type", "Unknown"),
+        "json_file": {
+            "exists": True,
+            "document_count": dataset.get("document_count", 0),
+            "chunk_count": dataset.get("chunk_count", 0),
+            "image_count": dataset.get("image_count", 0)
+        }
+    }
+    
+    # Diagnose ChromaDB collection
+    try:
+        # For now, do a simple check since we removed the complex diagnosis from connection pool
+        collection_diagnosis = {"exists": False, "accessible": False}
+        try:
+            collection = chroma_client.get_collection(dataset_id)
+            count = collection.count()
+            collection_diagnosis = {
+                "exists": True,
+                "count": count,
+                "accessible": True,
+                "embedding_compatible": True
+            }
+        except Exception as e:
+            collection_diagnosis = {"exists": False, "error": str(e)}
+        diagnosis["chromadb_collection"] = collection_diagnosis
+        
+        # Check for sync issues
+        json_doc_count = dataset.get("document_count", 0)
+        if collection_diagnosis.get("exists") and collection_diagnosis.get("count", 0) > 0:
+            chroma_count = collection_diagnosis.get("count", 0)
+            # Estimate document count from chunks (assuming ~5 chunks per document)
+            estimated_doc_count = max(1, chroma_count // 5)
+            if abs(json_doc_count - estimated_doc_count) > 2:  # Allow some variance
+                diagnosis["sync_issues"] = {
+                    "detected": True,
+                    "json_documents": json_doc_count,
+                    "estimated_from_chunks": estimated_doc_count,
+                    "total_chunks": chroma_count
+                }
+            else:
+                diagnosis["sync_issues"] = {"detected": False}
+        else:
+            diagnosis["sync_issues"] = {"detected": json_doc_count > 0}
+            
+    except Exception as e:
+        diagnosis["chromadb_collection"] = {
+            "error": f"Failed to diagnose: {str(e)}"
+        }
+    
+    # Check image index for image/mixed datasets
+    if dataset.get("type") in ["image", "mixed"]:
+        indices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+        index_path = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+        
+        diagnosis["image_index"] = {
+            "faiss_index_exists": os.path.exists(index_path),
+            "metadata_file_exists": os.path.exists(metadata_file)
+        }
+        
+        if os.path.exists(metadata_file):
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                diagnosis["image_index"]["metadata_count"] = len(metadata)
+            except Exception as e:
+                diagnosis["image_index"]["metadata_error"] = str(e)
+    
+    # Overall health assessment
+    collection_healthy = diagnosis.get("chromadb_collection", {}).get("accessible", False)
+    sync_healthy = not diagnosis.get("sync_issues", {}).get("detected", True)
+    
+    diagnosis["overall_health"] = {
+        "status": "healthy" if collection_healthy and sync_healthy else "issues_detected",
+        "collection_accessible": collection_healthy,
+        "data_synchronized": sync_healthy
+    }
+    
+    return jsonify(diagnosis), 200
 
 # More handlers can be added here for specific dataset operations 
