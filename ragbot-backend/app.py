@@ -857,7 +857,7 @@ def chat_with_bot(user_data, bot_id):
                 collection_count = collection.count()
                 if collection_count > 0:
                     # Determine how many results to request based on collection size
-                    n_results = min(25, collection_count)  # Default to 5 results
+                    n_results = min(15, collection_count)  # Default to 5 results
                     
                     # First get a sample to check if we're dealing with PowerPoint content
                     sample_results = collection.query(
