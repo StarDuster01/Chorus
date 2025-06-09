@@ -1398,13 +1398,18 @@ def chat_with_bot(user_data, bot_id):
                 for i in range(weight):
                     try:
                         if provider == 'OpenAI':
+                            # Some OpenAI models (like o3) only support default temperature
+                            api_temperature = temperature
+                            if model_name.startswith('o3-'):
+                                api_temperature = 1.0  # o3 models only support default temperature
+                            
                             response = openai.chat.completions.create(
                                 model=model_name,
                                 messages=[
                                     {"role": "system", "content": system_instruction_with_history},
                                     {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
-                                temperature=temperature
+                                temperature=api_temperature
                             )
                             response_text = response.choices[0].message.content
                             anonymized_responses.append(response_text)
@@ -1479,13 +1484,17 @@ def chat_with_bot(user_data, bot_id):
                             # Note: This would require a Mistral API implementation
                             # For now we'll use OpenAI as a fallback and log it
                             logs.append(f"Mistral API not implemented, using OpenAI fallback for {model_name}")
+                            
+                            # Use default temperature for gpt-3.5-turbo (it supports custom temperature, but being safe)
+                            fallback_temperature = min(temperature, 2.0)  # gpt-3.5-turbo supports up to 2.0
+                            
                             response = openai.chat.completions.create(
                                 model="gpt-3.5-turbo",
                                 messages=[
                                     {"role": "system", "content": system_instruction_with_history},
                                     {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
-                                temperature=temperature
+                                temperature=fallback_temperature
                             )
                             response_text = response.choices[0].message.content
                             anonymized_responses.append(response_text)
@@ -1660,10 +1669,15 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                     try:
                         vote_text = ""
                         if provider == 'OpenAI':
+                            # Some OpenAI models (like o3) only support default temperature
+                            api_temperature = temperature
+                            if model_name.startswith('o3-'):
+                                api_temperature = 1.0  # o3 models only support default temperature
+                            
                             voting_response = openai.chat.completions.create(
                                 model=model_name,
                                 messages=[{"role": "user", "content": voting_prompt}],
-                                temperature=temperature
+                                temperature=api_temperature
                             )
                             vote_text = voting_response.choices[0].message.content
                         elif provider == 'Anthropic':
@@ -1691,10 +1705,14 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                         elif provider == 'Mistral':
                             # Fallback to OpenAI for Mistral
                             logs.append(f"Mistral API not implemented for evaluation, using OpenAI fallback")
+                            
+                            # Use safe temperature for gpt-3.5-turbo
+                            fallback_temperature = min(temperature, 2.0)  # gpt-3.5-turbo supports up to 2.0
+                            
                             voting_response = openai.chat.completions.create(
                                 model="gpt-3.5-turbo",
                                 messages=[{"role": "user", "content": voting_prompt}],
-                                temperature=temperature
+                                temperature=fallback_temperature
                             )
                             vote_text = voting_response.choices[0].message.content
                         
