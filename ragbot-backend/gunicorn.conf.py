@@ -4,7 +4,7 @@ import multiprocessing
 import os
 
 # Server socket
-bind = "127.0.0.1:50505"
+bind = "0.0.0.0:50505"  # Changed to 0.0.0.0 to allow external access
 backlog = 2048
 
 # Worker processes
@@ -20,8 +20,8 @@ max_requests_jitter = 50
 preload_app = True
 
 # Logging
-accesslog = "/home/azureuser/apps/ragbot/logs/gunicorn_access.log"
-errorlog = "/home/azureuser/apps/ragbot/logs/gunicorn_error.log"
+accesslog = "/code/logs/gunicorn_access.log"
+errorlog = "/code/logs/gunicorn_error.log"
 loglevel = "info"
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
 
