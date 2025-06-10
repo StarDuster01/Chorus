@@ -1707,7 +1707,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                             logs.append(f"Mistral API not implemented for evaluation, using OpenAI fallback")
                             
                             # Use safe temperature for gpt-3.5-turbo
-                            fallback_temperature = min(temperature, 2.0)  # gpt-3.5-turbo supports up to 2.0
+                            fallback_temperature = min(temperature, 2.0)  # gpt-3.5-turbo supports up to 2.00
                             
                             voting_response = openai.chat.completions.create(
                                 model="gpt-3.5-turbo",
