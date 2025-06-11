@@ -130,6 +130,12 @@ anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", "s
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+# Validate Groq configuration at startup
+if GROQ_API_KEY and GROQ_API_KEY.startswith("gsk_"):
+    print(f"[STARTUP] Groq API configured (key: {GROQ_API_KEY[:10]}...)")
+else:
+    print(f"[STARTUP] Warning: Groq API key may be invalid or missing")
+
 # Configure JWT
 app.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET", "default-dev-secret")
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(hours=24)
@@ -1464,7 +1470,23 @@ def chat_with_bot(user_data, bot_id):
                                 "max_tokens": 1024
                             }
                             response = requests.post(GROQ_API_URL, json=payload, headers=headers)
+                            
+                            # Check if the request was successful
+                            if response.status_code != 200:
+                                raise Exception(f"HTTP {response.status_code}: {response.text}")
+                            
                             response_json = response.json()
+                            
+                            # Check if the response has the expected structure
+                            if "choices" not in response_json:
+                                error_msg = response_json.get("error", {}).get("message", "Unknown error")
+                                logs.append(f"Groq API response structure: {list(response_json.keys())}")
+                                raise Exception(f"API Error: {error_msg}")
+                            
+                            if not response_json["choices"] or "message" not in response_json["choices"][0]:
+                                logs.append(f"Groq choices structure: {response_json.get('choices', 'N/A')}")
+                                raise Exception("Invalid response structure: missing choices or message")
+                            
                             response_text = response_json["choices"][0]["message"]["content"]
                             anonymized_responses.append(response_text)
                             response_metadata.append({
@@ -1700,7 +1722,23 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                                 "max_tokens": 10
                             }
                             voting_response = requests.post(GROQ_API_URL, json=payload, headers=headers)
+                            
+                            # Check if the request was successful
+                            if voting_response.status_code != 200:
+                                raise Exception(f"HTTP {voting_response.status_code}: {voting_response.text}")
+                            
                             voting_json = voting_response.json()
+                            
+                            # Check if the response has the expected structure
+                            if "choices" not in voting_json:
+                                error_msg = voting_json.get("error", {}).get("message", "Unknown error")
+                                logs.append(f"Groq voting API response structure: {list(voting_json.keys())}")
+                                raise Exception(f"API Error: {error_msg}")
+                            
+                            if not voting_json["choices"] or "message" not in voting_json["choices"][0]:
+                                logs.append(f"Groq voting choices structure: {voting_json.get('choices', 'N/A')}")
+                                raise Exception("Invalid response structure: missing choices or message")
+                            
                             vote_text = voting_json["choices"][0]["message"]["content"]
                         elif provider == 'Mistral':
                             # Fallback to OpenAI for Mistral
