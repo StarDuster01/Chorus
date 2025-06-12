@@ -858,7 +858,7 @@ def upload_document_handler(user_data, dataset_id):
             )
 
             # --- update dataset counts & invalidate cache (unchanged) ---
-            datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+            datasets_dir      = DATASETS_FOLDER
             user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
             if os.path.exists(user_datasets_file):
                 with open(user_datasets_file, 'r') as f:
@@ -947,7 +947,7 @@ def upload_document_handler(user_data, dataset_id):
             print(f"✅ Successfully added {len(chunks)} chunks to vector DB")
 
             # Update dataset counts & cache
-            datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+            datasets_dir      = DATASETS_FOLDER
             user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
             if os.path.exists(user_datasets_file):
                 with open(user_datasets_file, 'r') as f:
@@ -1077,7 +1077,7 @@ def get_dataset_documents_handler(user_data, dataset_id):
     ChromaDB collection.  Logic is an exact copy of the former Flask route.
     """
     # -------- verify dataset exists & belongs to user --------
-    datasets_dir       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir       = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
 
     if not os.path.exists(user_datasets_file):
