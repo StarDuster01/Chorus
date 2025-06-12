@@ -710,3 +710,7 @@ class ImageProcessor:
         except Exception as e:
             print(f"Error deleting dataset {dataset_id}: {str(e)}")
             return False 
+
+# Default ImageProcessor instance for handlers
+_default_data_dir = os.path.dirname(os.path.abspath(__file__))
+image_processor = ImageProcessor(_default_data_dir) 

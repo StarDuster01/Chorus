@@ -11,6 +11,9 @@ from PIL import Image
 import openai
 import faiss
 import numpy as np
+import os, json
+from flask import jsonify, request
+from image_processor import image_processor   
 # Import the constant from constants.py instead of app.py
 from constants import DEFAULT_LLM_MODEL
 from constants import IMAGE_FOLDER
@@ -227,9 +230,8 @@ def resize_image(image_path, max_dimension=1024):
     
 # image_handlers.py  (append near the other handlers)
 
-import os, json
-from flask import jsonify, request
-from image_processor import image_processor   # already imported at top of app.py
+
+
 
 
 def search_dataset_images_handler(user_data, dataset_id):
