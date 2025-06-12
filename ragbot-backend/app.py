@@ -114,9 +114,7 @@ load_dotenv()
 # Set OpenMP environment variable to avoid library conflicts
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# Define supported file extensions
-text_extensions = ['.pdf', '.docx', '.txt', '.pptx']
-image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
+
 
 # Set up necessary directories
 app_base_dir = os.path.dirname(os.path.abspath(__file__))

@@ -5,3 +5,6 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "upload
 IMAGE_FOLDER = os.path.join(UPLOAD_FOLDER, "images")
 DOCUMENT_FOLDER = os.path.join(UPLOAD_FOLDER, "documents")
 VECTOR_DIMENSION = 512
+# Define supported file extensions
+text_extensions = ['.pdf', '.docx', '.txt', '.pptx']
+image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']

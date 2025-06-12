@@ -15,7 +15,9 @@ import zipfile
 import shutil
 import threading
 import time
+import traceback
 from image_processor import ImageProcessor
+from image_processor import image_processor
 
 from text_extractors import (
     
@@ -24,6 +26,7 @@ from text_extractors import (
     create_semantic_chunks,
 
 )
+from constants import text_extensions, image_extensions, IMAGE_FOLDER, DOCUMENT_FOLDER
 from handlers.image_handlers import resize_image
 
 def add_document_to_chroma(dataset_id, chunks, document_id, filename):
@@ -787,7 +790,342 @@ def rebuild_dataset_handler(user_data, dataset_id):
         return jsonify({"message": "Dataset collection has been rebuilt. Please re-upload your documents."}), 200
     except Exception as e:
         return jsonify({"error": f"Failed to rebuild dataset: {str(e)}"}), 500
+def upload_document_handler(user_data, dataset_id):
+    """
+    Exact copy of the former /api/datasets/<dataset_id>/documents POST route.
+    Returns (jsonify(...), status_code) for Flask.
+    """
+    print("\n=== Document Upload Started ===")
+    print(f"Dataset ID: {dataset_id}")
+    print(f"User ID: {user_data['id']}")
 
+    if 'file' not in request.files:
+        print("❌ No file part in request")
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        print("❌ No file selected")
+        return jsonify({"error": "No selected file"}), 400
+
+    print(f"📄 Uploading file: {file.filename}")
+
+    # Get dataset information
+    dataset, _ = find_dataset_by_id(user_data, dataset_id)
+    if not dataset:
+        return jsonify({"error": "Dataset not found"}), 404
+
+    # Check if dataset belongs to user or user is admin
+    user_id  = user_data.get('id')
+    is_admin = user_data.get('isAdmin', False)
+    print(f"Dataset user_id: {dataset.get('user_id')}, Current user_id: {user_id}, isAdmin: {is_admin}", flush=True)
+    if 'user_id' in dataset and dataset['user_id'] != user_id and not is_admin:
+        return jsonify({"error": "You don't have permission to access this dataset"}), 403
+
+    # File extension & dataset type checks
+    filename       = secure_filename(file.filename)
+    file_extension = os.path.splitext(filename)[1].lower()
+    dataset_type   = dataset.get("type", "text")
+
+    if dataset_type == "text" and file_extension not in text_extensions:
+        return jsonify({"error": f"Unsupported file type for text dataset. Supported types: {', '.join(text_extensions)}"}), 400
+    elif dataset_type == "image" and file_extension not in image_extensions:
+        return jsonify({"error": f"Unsupported file type for image dataset. Supported types: {', '.join(image_extensions)}"}), 400
+    elif dataset_type == "mixed":
+        if file_extension not in text_extensions and file_extension not in image_extensions:
+            return jsonify({"error": f"Unsupported file type. Supported types: {', '.join(text_extensions + image_extensions)}"}), 400
+
+    # ------------------------------------------------------------------ #
+    # IMAGE branch
+    # ------------------------------------------------------------------ #
+    if file_extension in image_extensions and dataset_type in ["image", "mixed"]:
+        try:
+            file_id   = str(uuid.uuid4())
+            orig_name = filename
+            filename  = f"{file_id}{file_extension}"
+            file_path = os.path.join(IMAGE_FOLDER, filename)
+            file.save(file_path)
+
+            image_meta = image_processor.add_image_to_dataset(
+                dataset_id,
+                file_path,
+                {
+                    "dataset_id": dataset_id,
+                    "original_filename": orig_name,
+                    "url": f"/api/images/{filename}",
+                    "type": "image"
+                }
+            )
+
+            # --- update dataset counts & invalidate cache (unchanged) ---
+            datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+            user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+            if os.path.exists(user_datasets_file):
+                with open(user_datasets_file, 'r') as f:
+                    datasets = json.load(f)
+                for idx, ds in enumerate(datasets):
+                    if ds["id"] == dataset_id:
+                        datasets[idx]["image_count"] = ds.get("image_count", 0) + 1
+                        break
+                with open(user_datasets_file, 'w') as f:
+                    json.dump(datasets, f)
+                try:
+                    from dataset_cache import dataset_cache
+                    dataset_cache.invalidate_user(user_data['id'])
+                    print(f"🔄 Cache invalidated for user {user_data['id']} after image upload")
+                except Exception as cache_e:
+                    print(f"Warning: Could not invalidate cache: {cache_e}")
+
+            return jsonify({
+                "id": image_meta.get("id", ""),
+                "filename": orig_name,
+                "type": "image",
+                "caption": image_meta.get("caption", ""),
+                "url": f"/api/images/{filename}"
+            }), 201
+
+        except Exception as e:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return jsonify({"error": f"Error processing image: {str(e)}"}), 500
+
+    # ------------------------------------------------------------------ #
+    # TEXT / PPTX branch
+    # ------------------------------------------------------------------ #
+    elif file_extension in text_extensions and dataset_type in ["text", "mixed"]:
+        try:
+            # Save file
+            file_path = os.path.join(DOCUMENT_FOLDER, f"{uuid.uuid4()}_{filename}")
+            file.save(file_path)
+
+            if file_extension == '.pptx':
+                text, pptx_image_metadata = extract_text_from_pptx(file_path)
+            else:
+                text = extract_text_from_file(file_path)
+                pptx_image_metadata = []
+            if not text:
+                os.remove(file_path)
+                return jsonify({"error": "Could not extract text from file"}), 400
+
+            # PPTX clean-up & chunking params
+            if file_extension == '.pptx':
+                lines, clean_lines, skip_metadata = text.split('\n'), [], True
+                for line in lines:
+                    if skip_metadata and line.startswith(("Presentation Title:", "Author:", "Subject:", "Keywords:", "Category:", "Comments:")):
+                        continue
+                    if line.startswith("## SLIDE "):
+                        skip_metadata = False
+                    if "Speaker Notes:" in line:
+                        continue
+                    clean_lines.append(line)
+                text = '\n'.join(clean_lines)
+
+            is_powerpoint = (file_extension == '.pptx') or ("## SLIDE " in text)
+            max_chunk = 6000
+            overlap   = 1000
+            print(f"📝 Creating semantic chunks (max_size: {max_chunk}, overlap: {overlap})...")
+            chunks = create_semantic_chunks(text, max_chunk_size=max_chunk, overlap=overlap)
+            print(f"✅ Created {len(chunks)} chunks")
+
+            # Add chunks to ChromaDB
+            document_id      = str(uuid.uuid4())
+            chroma_collection = chroma_client.get_or_create_collection(dataset_id)
+            chunk_ids = [f"{document_id}_{i}" for i in range(len(chunks))]
+            metadatas = [{
+                "document_id": document_id,
+                "dataset_id":  dataset_id,
+                "filename":    filename,
+                "source":      filename,
+                "file_path":   file_path,
+                "chunk":       i,
+                "total_chunks": len(chunks),
+                "file_type":   file_extension,
+                "is_powerpoint": is_powerpoint,
+                "created_at":  datetime.datetime.now(UTC).isoformat(),
+            } for i in range(len(chunks))]
+            chroma_collection.add(ids=chunk_ids, documents=chunks, metadatas=metadatas)
+            print(f"✅ Successfully added {len(chunks)} chunks to vector DB")
+
+            # Update dataset counts & cache
+            datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+            user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+            if os.path.exists(user_datasets_file):
+                with open(user_datasets_file, 'r') as f:
+                    datasets = json.load(f)
+                for idx, ds in enumerate(datasets):
+                    if ds["id"] == dataset_id:
+                        ds["document_count"] = ds.get("document_count", 0) + 1
+                        ds["chunk_count"]    = ds.get("chunk_count", 0) + len(chunks)
+                        break
+                with open(user_datasets_file, 'w') as f:
+                    json.dump(datasets, f)
+                try:
+                    from dataset_cache import dataset_cache
+                    dataset_cache.invalidate_user(user_data['id'])
+                    print(f"🔄 Cache invalidated for user {user_data['id']}")
+                except Exception as cache_e:
+                    print(f"Warning: Could not invalidate cache: {cache_e}")
+
+            # Handle images extracted from PPTX
+            if pptx_image_metadata:
+                for img_meta in pptx_image_metadata:
+                    img_meta.update({
+                        "document_id": document_id,
+                        "file_path":   file_path,
+                        "dataset_id":  dataset_id,
+                        "type":        "image",
+                    })
+                    img_filename = f"{uuid.uuid4()}.png"
+                    img_save_path = os.path.join(IMAGE_FOLDER, img_filename)
+                    shutil.copy(img_meta["image_path"], img_save_path)
+                    img_meta["path"] = img_save_path
+                    img_meta["url"]  = f"/api/images/{img_filename}"
+                    image_processor.add_image_to_dataset(dataset_id, img_save_path, img_meta)
+
+            print("✅ Document upload completed successfully!\n")
+            return jsonify({
+                "id": document_id,
+                "filename": filename,
+                "type": "text",
+                "chunks": len(chunks),
+                "status": "success",
+                "message": f"Document processed successfully with {len(chunks)} chunks"
+            }), 201
+
+        except Exception as e:
+            print(f"❌ Error processing document: {e}")
+            traceback.print_exc()
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"🗑️ Cleaned up file: {file_path}")
+                except Exception:
+                    pass
+            return jsonify({
+                "error": f"Error processing document: {e}",
+                "details": "Check server logs for more information"
+            }), 500
+
+    # Unsupported
+    return jsonify({"error": "Unsupported file type"}), 400
+
+
+
+
+
+def dataset_status_handler(user_data, dataset_id):
+    """
+    Return detailed status information for a dataset.
+    Logic is an exact copy of the original /status route body.
+    """
+    print(f"\n=== Dataset Status Check for {dataset_id} ===")
+
+    # ---------- verify dataset exists & ownership ----------
+    dataset, _ = find_dataset_by_id(user_data, dataset_id)
+    if not dataset:
+        print(f"❌ Dataset {dataset_id} not found")
+        return jsonify({"error": "Dataset not found"}), 404
+
+    print(f"📊 Dataset info: {json.dumps(dataset, indent=2)}")
+
+    # ---------- ChromaDB collection ----------
+    try:
+        collection = chroma_client.get_collection(dataset_id)
+        count      = collection.count()
+        print(f"✅ ChromaDB collection found with {count} items")
+
+        collection_info = collection.get()
+        chunk_count = len(collection_info["ids"]) if collection_info and "ids" in collection_info else 0
+
+        status = {
+            "id"             : dataset_id,
+            "name"           : dataset["name"],
+            "type"           : dataset["type"],
+            "document_count" : dataset.get("document_count", 0),
+            "chunk_count"    : chunk_count,
+            "status"         : "ready" if chunk_count > 0 else "empty",
+            "created_at"     : dataset["created_at"],
+            "last_updated"   : datetime.datetime.now(UTC).isoformat(),
+            "collection_status": "active",
+            "message"        : (
+                "Dataset is ready for use"
+                if chunk_count > 0
+                else "Dataset is empty - add documents to begin using"
+            ),
+        }
+
+        print(f"✅ Status check completed: {json.dumps(status, indent=2)}")
+        return jsonify(status), 200
+
+    except Exception as e:
+        print(f"❌ Error checking dataset status: {e}")
+        print(f"Error traceback:\n{traceback.format_exc()}")
+
+        return jsonify({
+            "id"     : dataset_id,
+            "name"   : dataset["name"],
+            "type"   : dataset["type"],
+            "status" : "error",
+            "error"  : str(e),
+            "message": "Error checking dataset status",
+        }), 500
+    
+
+def get_dataset_documents_handler(user_data, dataset_id):
+    """
+    Return every unique document (with chunk counts) stored in a dataset’s
+    ChromaDB collection.  Logic is an exact copy of the former Flask route.
+    """
+    # -------- verify dataset exists & belongs to user --------
+    datasets_dir       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+
+    if not os.path.exists(user_datasets_file):
+        return jsonify({"error": "Dataset not found"}), 404
+
+    with open(user_datasets_file, "r") as f:
+        datasets = json.load(f)
+
+    if not any(ds["id"] == dataset_id for ds in datasets):
+        return jsonify({"error": "Dataset not found"}), 404
+
+    # -------- pull every chunk from ChromaDB --------
+    try:
+        collection = chroma_client.get_collection(dataset_id)
+        results    = collection.get()
+
+        if not results or len(results["ids"]) == 0:
+            return jsonify({"documents": []}), 200
+
+        documents = {}
+        for meta in results["metadatas"]:
+            if meta and "document_id" in meta and "source" in meta:
+                doc_id = meta["document_id"]
+                if doc_id not in documents:
+                    documents[doc_id] = {
+                        "id"        : doc_id,
+                        "filename"  : meta["source"],
+                        "chunk_count": 1,
+                        "file_type" : meta.get("file_type", ""),
+                        "created_at": meta.get("created_at", ""),
+                    }
+                else:
+                    documents[doc_id]["chunk_count"] += 1
+
+        # newest first
+        doc_list = list(documents.values())
+        doc_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+        return jsonify({
+            "documents"      : doc_list,
+            "total_documents": len(doc_list),
+            "total_chunks"   : len(results["ids"]),
+        }), 200
+
+    except Exception as e:
+        print(f"Error getting documents: {e}", flush=True)
+        return jsonify({"error": f"Failed to get documents: {e}"}), 500
+    
 def upload_image_handler(user_data, dataset_id, image_folder):
     """Upload an image to a dataset using ImageProcessor
     
