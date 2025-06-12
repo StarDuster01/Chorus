@@ -22,6 +22,7 @@ from constants import IMAGE_FOLDER
 from constants import CONVERSATIONS_FOLDER
 from constants import DEFAULT_LLM_MODEL
 from constants import IMAGE_GENERATION_MODEL
+from constants import DATASETS_FOLDER
 
 # timezone used for timestamping
 UTC = datetime.timezone.utc
@@ -312,7 +313,7 @@ def chat_with_bot_handler(user_data, bot_id):
                     
                     # If we get here, it is an image query, so check if the dataset has images
                     # Check dataset type and image count from metadata
-                    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+                    datasets_dir = DATASETS_FOLDER
                     for user_id in [user_data['id'], "shared"]:  # Check both user and shared datasets
                         user_datasets_file = os.path.join(datasets_dir, f"{user_id}_datasets.json")
                         if os.path.exists(user_datasets_file):

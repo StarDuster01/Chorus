@@ -18,7 +18,7 @@ import time
 import traceback
 from image_processor import ImageProcessor
 from image_processor import image_processor
-
+from constants import DATASETS_FOLDER
 from text_extractors import (
     
     extract_text_from_pptx,
@@ -73,7 +73,7 @@ def find_dataset_by_id(user_data, dataset_id):
     Returns:
         tuple: (dataset_dict, dataset_index) or (None, -1) if not found
     """
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     if not os.path.exists(user_datasets_file):
@@ -101,7 +101,7 @@ def sync_datasets_with_collections():
     """Syncs datasets with ChromaDB collections to ensure consistency"""
     print("Syncing datasets with ChromaDB collections...")
     
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     os.makedirs(datasets_dir, exist_ok=True)
     
     # Get all dataset files
@@ -177,7 +177,7 @@ def get_datasets_handler(user_data):
         }), 200
     
     # Cache miss - load from file
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     os.makedirs(datasets_dir, exist_ok=True)
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
@@ -309,7 +309,7 @@ def create_dataset_handler(user_data):
     }
     
     # Load existing datasets or create empty list
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     os.makedirs(datasets_dir, exist_ok=True)
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
@@ -417,7 +417,7 @@ def delete_dataset_handler(user_data, dataset_id):
     print(f"[Dataset Deletion] Starting deletion process for dataset {dataset_id}")
     
     # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     print(f"[Dataset Deletion] Checking for dataset file: {user_datasets_file}")
@@ -615,7 +615,7 @@ def delete_dataset_handler(user_data, dataset_id):
 def get_dataset_type_handler(user_data, dataset_id):
     """Get the type of a dataset (text, image, or mixed) to inform frontend file selection"""
     # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     if not os.path.exists(user_datasets_file):
@@ -710,7 +710,7 @@ def remove_document_handler(user_data, dataset_id, document_id):
         
         # Update document count and chunk count in dataset
         # Load the datasets to get the updated list
-        datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+        datasets_dir = DATASETS_FOLDER
         user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
         
         with open(user_datasets_file, 'r') as f:
@@ -761,7 +761,7 @@ def rebuild_dataset_handler(user_data, dataset_id):
         return jsonify({"error": "Dataset not found"}), 404
     
     # Load and update dataset
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     with open(user_datasets_file, 'r') as f:
@@ -1146,7 +1146,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
     # resize_image is already imported from text_extractors at the top
     
     # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     if not os.path.exists(user_datasets_file):
@@ -1347,7 +1347,7 @@ def bulk_upload_handler(user_data, dataset_id):
     print(f"Starting bulk upload for dataset {dataset_id}")
     
     # Check if dataset exists and belongs to user
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     if not os.path.exists(user_datasets_file):
         print(f"Dataset file not found: {user_datasets_file}")

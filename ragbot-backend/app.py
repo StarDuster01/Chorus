@@ -38,7 +38,8 @@ from handlers.image_handlers import (
     generate_image_handler,
     enhance_prompt_handler,
     get_image_handler,
-    edit_image_handler
+    edit_image_handler,
+    get_dataset_images_handler
 )
 # Import conversation handlers
 from handlers.conversation_handlers import (
@@ -477,6 +478,11 @@ def bulk_upload(user_data, dataset_id):
 def get_upload_status(user_data, dataset_id, status_id):
     return get_upload_status_handler(user_data, dataset_id, status_id)
 
+# GET dataset images listing
+@app.route('/api/datasets/<dataset_id>/images', methods=['GET'])
+@require_auth_wrapper
+def list_dataset_images(user_data, dataset_id):
+    return get_dataset_images_handler(user_data, dataset_id)
 
 if __name__ == '__main__':
     # Development mode only - use gunicorn for production

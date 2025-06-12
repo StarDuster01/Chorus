@@ -10,8 +10,9 @@ from flask import jsonify, send_file
 from text_extractors import extract_text_from_file       # already in your project
 import chroma_client                                      # your wrapper
 from datetime import UTC                                  # only for logging – optional
-
+from constants import DATASETS_FOLDER
 from constants import DOCUMENT_FOLDER
+
 
 # document_handlers.py   (add this just under get_document_content_handler)
 
@@ -68,7 +69,7 @@ def get_original_document_handler(user_data, document_id):
     """
     try:
         # -------- locate user datasets --------
-        datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+        datasets_dir = DATASETS_FOLDER
         user_ds_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
 
         if not os.path.exists(user_ds_file):
@@ -126,7 +127,7 @@ def get_context_snippet_handler(user_data, document_id):
     """
     try:
         # ------------- locate all datasets for this user -------------
-        datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+        datasets_dir = DATASETS_FOLDER
         user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
 
         if not os.path.exists(user_datasets_file):
@@ -195,7 +196,7 @@ def get_document_content_handler(user_data, document_id):
     """Return the full text of a document reconstructed from ChromaDB chunks."""
     try:
         # ---------- locate the user’s datasets ----------
-        datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+        datasets_dir = DATASETS_FOLDER
         user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
 
         if not os.path.exists(user_datasets_file):

@@ -5,6 +5,7 @@ import datetime
 from datetime import UTC
 from flask import request, jsonify
 from handlers.dataset_handlers import find_dataset_by_id
+from constants import DATASETS_FOLDER
 
 # Bot handler functions
 def get_bots_handler(user_data):
@@ -163,7 +164,7 @@ def get_bot_datasets_handler(user_data, bot_id):
         return jsonify({"error": "Bot not found"}), 404
     
     # Get dataset info for each dataset ID
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     
     dataset_details = []
     
@@ -240,7 +241,7 @@ def add_dataset_to_bot_handler(user_data, bot_id):
         return jsonify({"error": "Dataset ID is required"}), 400
     
     # Check if dataset exists
-    datasets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     
     dataset_exists = False
