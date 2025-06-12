@@ -9,8 +9,182 @@ from werkzeug.utils import secure_filename
 from flask import send_from_directory, send_file, jsonify, request
 from PIL import Image
 import openai
+import faiss
+import numpy as np
 # Import the constant from constants.py instead of app.py
 from constants import DEFAULT_LLM_MODEL
+from constants import IMAGE_FOLDER
+from constants import VECTOR_DIMENSION
+
+
+
+
+def remove_image_handler(user_data, dataset_id, image_id):
+    """Remove an image from a dataset and rebuild its FAISS index."""
+    # 1) validate the dataset belongs to this user
+    datasets_dir      = os.path.join(os.path.dirname(__file__), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    if not os.path.exists(user_datasets_file):
+        return jsonify({"error": "Dataset not found"}), 404
+
+    with open(user_datasets_file, 'r') as f:
+        datasets = json.load(f)
+
+    # find index
+    ds_idx = next((i for i, d in enumerate(datasets) if d["id"] == dataset_id), None)
+    if ds_idx is None:
+        return jsonify({"error": "Dataset not found"}), 404
+
+    try:
+        # locate the image's file path so we can delete it after removal
+        image_path = None
+        for img in image_processor.image_metadata.get(dataset_id, []):
+            if img["id"] == image_id:
+                image_path = img.get("path")
+                break
+
+        # remove from the in‐memory processor
+        success = image_processor.remove_image(dataset_id, image_id)
+        if not success:
+            return jsonify({"error": "Image not found in dataset"}), 404
+
+        # delete the file on disk
+        if image_path and os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except Exception:
+                pass
+
+        # rebuild metadata.json + FAISS index
+        indices_dir   = os.path.join(os.path.dirname(__file__), "data", "image_indices")
+        metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+        index_path    = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+
+        # reload & filter metadata on disk
+        if os.path.exists(metadata_file):
+            with open(metadata_file,'r') as f:
+                meta = json.load(f)
+            valid = [m for m in meta if m["id"] != image_id and os.path.exists(m.get("path",""))]
+            image_processor.image_metadata[dataset_id] = valid
+
+            # save filtered metadata
+            with open(metadata_file,'w') as f:
+                json.dump(valid, f)
+
+            # rebuild FAISS index
+            idx = faiss.IndexFlatIP(VECTOR_DIMENSION)
+            for m in valid:
+                emb = m.get("embedding")
+                if isinstance(emb, list):
+                    idx.add(np.array([emb],dtype=np.float32))
+                else:
+                    try:
+                        e = image_processor.compute_image_embedding(m["path"])
+                        idx.add(np.array([e],dtype=np.float32))
+                        m["embedding"] = e.tolist()
+                    except Exception:
+                        pass
+
+            image_processor.image_indices[dataset_id] = idx
+            faiss.write_index(idx, index_path)
+
+        # update the dataset's image_count
+        actual = len(image_processor.image_metadata.get(dataset_id, []))
+        datasets[ds_idx]["image_count"] = actual
+        with open(user_datasets_file,'w') as f:
+            json.dump(datasets, f)
+
+        return jsonify({"message": "Image removed successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to remove image: {str(e)}"}), 500
+
+
+def get_dataset_images_handler(user_data, dataset_id):
+    """Get all images for a specific dataset"""
+    print(f"Getting images for dataset {dataset_id}")
+    print(f"Available image metadata keys: {list(image_processor.image_metadata.keys())}")
+
+    # 1) verify dataset file for this user
+    datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+    if not os.path.exists(user_datasets_file):
+        return jsonify({"error": "Dataset not found"}), 404
+
+    with open(user_datasets_file, 'r') as f:
+        datasets = json.load(f)
+
+    # 2) find the dataset index
+    dataset_index = next((i for i, ds in enumerate(datasets) if ds["id"] == dataset_id), None)
+    if dataset_index is None:
+        print(f"Dataset {dataset_id} not found in user datasets")
+        return jsonify({"error": "Dataset not found"}), 404
+
+    # prepare for potential index/metadata reload
+    indices_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+    metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
+    index_path    = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
+
+    # 3) if metadata file exists, validate & rebuild in‐memory structures
+    if os.path.exists(metadata_file):
+        try:
+            print(f"Loading metadata file from {metadata_file}")
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+
+            valid = []
+            for img_meta in metadata:
+                img_meta.setdefault('dataset_id', dataset_id)
+                if img_meta['dataset_id']==dataset_id and os.path.exists(img_meta.get('path','')):
+                    valid.append(img_meta)
+                else:
+                    print(f"Skipping {img_meta.get('id')} missing file {img_meta.get('path')}")
+
+            image_processor.image_metadata[dataset_id] = valid
+
+            # rebuild or empty index
+            idx = faiss.IndexFlatIP(VECTOR_DIMENSION)
+            if os.path.exists(index_path) and valid:
+                for m in valid:
+                    emb = m.get('embedding')
+                    if emb:
+                        idx.add(np.array([emb],dtype=np.float32))
+                    else:
+                        try:
+                            e = image_processor.compute_image_embedding(m['path'])
+                            idx.add(np.array([e],dtype=np.float32))
+                        except Exception as e:
+                            print(f"Error embedding {m.get('id')}: {e}")
+
+            image_processor.image_indices[dataset_id] = idx
+            image_processor._save_dataset_index(dataset_id)
+            print(f"Rebuilt index for {dataset_id} ({len(valid)} images)")
+
+        except Exception as e:
+            print(f"Error loading/validating metadata: {e}")
+
+    # 4) now collect the ready metadata for response
+    out = []
+    for m in image_processor.image_metadata.get(dataset_id, []):
+        if m.get('dataset_id')!=dataset_id: continue
+        p = m.get('path')
+        if not p or not os.path.exists(p): 
+            print(f"skip missing {m.get('id')}")
+            continue
+        c = m.copy()
+        c['url'] = f"/api/images/{os.path.basename(p)}"
+        c.pop('path',None)
+        out.append(c)
+
+    # sort & persist count
+    out.sort(key=lambda x: x.get('created_at',''), reverse=True)
+    actual = len(out)
+    if datasets[dataset_index].get('image_count',0)!=actual:
+        datasets[dataset_index]['image_count']=actual
+        with open(user_datasets_file,'w') as f:
+            json.dump(datasets,f)
+
+    return jsonify({"images": out, "total_images": actual}), 200
 
 # Helper function to resize large images
 def resize_image(image_path, max_dimension=1024):
@@ -50,6 +224,58 @@ def resize_image(image_path, max_dimension=1024):
     except Exception as e:
         print(f"Error resizing image: {str(e)}")
         return image_path  # Return original path if resize fails
+    
+# image_handlers.py  (append near the other handlers)
+
+import os, json
+from flask import jsonify, request
+from image_processor import image_processor   # already imported at top of app.py
+
+
+def search_dataset_images_handler(user_data, dataset_id):
+    """
+    Search the given dataset for images semantically matching `query`.
+    Mirrors original Flask route logic, untouched.
+    """
+    # ---------- verify dataset ownership ----------
+    datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    user_ds_file      = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
+
+    if not os.path.exists(user_ds_file):
+        return jsonify({"error": "Dataset not found"}), 404
+
+    with open(user_ds_file, "r") as f:
+        datasets = json.load(f)
+
+    if not any(ds["id"] == dataset_id for ds in datasets):
+        return jsonify({"error": "Dataset not found"}), 404
+
+    # ---------- read request payload ----------
+    data  = request.get_json(silent=True) or {}
+    query = data.get("query")
+    if not query:
+        return jsonify({"error": "Search query is required"}), 400
+    limit = data.get("limit", 5)
+
+    try:
+        # ---------- perform semantic search ----------
+        results = image_processor.search_images(dataset_id, query, limit)
+
+        # redact local paths before sending to client
+        formatted = []
+        for r in results:
+            r2 = r.copy()
+            if "path" in r2:
+                r2["url"] = f"/api/images/{os.path.basename(r2['path'])}"
+                del r2["path"]
+            formatted.append(r2)
+
+        return jsonify({"query": query, "results": formatted}), 200
+
+    except Exception as e:
+        print(f"Error searching images: {e}")
+        return jsonify({"error": f"Failed to search images: {e}"}), 500
+
 
 def generate_image_handler(user_data, image_folder):
     """Handle image generation requests"""
@@ -205,3 +431,86 @@ def get_image_handler(image_folder, filename):
     else:
         # Regular image view
         return send_from_directory(image_folder, filename) 
+    
+
+def edit_image_handler(user_data):
+    """Edit an image using OpenAI’s image‐edit API"""
+    try:
+        # 1) multipart/form-data check
+        if not request.content_type or not request.content_type.startswith('multipart/form-data'):
+            return jsonify({"error": "Request must be multipart/form-data"}), 400
+
+        # 2) get the uploaded image
+        if 'image' not in request.files:
+            return jsonify({"error": "Image file is required"}), 400
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify({"error": "No image selected"}), 400
+
+        # 3) get the prompt
+        prompt = request.form.get('prompt', '')
+        if not prompt:
+            return jsonify({"error": "Prompt is required"}), 400
+
+        # 4) optional params
+        model         = request.form.get('model', 'gpt-image-1')
+        size          = request.form.get('size', '1024x1024')
+        quality       = request.form.get('quality', 'medium')
+        output_format = request.form.get('output_format', 'png')
+
+        # 5) save source image
+        ext      = os.path.splitext(image_file.filename)[1]
+        src_name = secure_filename(f"edit_source_{uuid.uuid4()}{ext}")
+        src_path = os.path.join(IMAGE_FOLDER, src_name)
+        image_file.save(src_path)
+
+        # 6) resize if needed
+        src_path = resize_image(src_path)
+
+        # 7) call OpenAI edit API
+        response = openai.images.edit(
+            image=open(src_path, 'rb'),
+            prompt=prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            n=1
+        )
+
+        if not getattr(response, 'data', None):
+            return jsonify({"error": "No image was generated"}), 500
+        image_obj = response.data[0]
+
+        # 8) pull down the edited image bytes
+        if getattr(image_obj, 'b64_json', None):
+            image_bytes = base64.b64decode(image_obj.b64_json)
+        elif getattr(image_obj, 'url', None):
+            dl = requests.get(image_obj.url)
+            if dl.status_code != 200:
+                return jsonify({"error": "Failed to download edited image"}), 500
+            image_bytes = dl.content
+        else:
+            return jsonify({"error": "No image data found in response"}), 500
+
+        # 9) save edited image
+        out_name = f"edited_{uuid.uuid4()}.{output_format}"
+        out_path = os.path.join(IMAGE_FOLDER, out_name)
+        with open(out_path, 'wb') as f:
+            f.write(image_bytes)
+
+        api_url = f"/api/images/{out_name}"
+        return jsonify({
+            "success":   True,
+            "image_url": api_url,
+            "images":    [{"image_url": api_url}],
+            "params": {
+                "model":  model,
+                "size":   size,
+                "quality": quality,
+                "format":  output_format
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"Error editing image: {e}")
+        return jsonify({"error": f"Image editing failed: {e}"}), 500

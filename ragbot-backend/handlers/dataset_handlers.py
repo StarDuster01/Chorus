@@ -26,7 +26,7 @@ from text_extractors import (
     create_semantic_chunks,
     chunk_powerpoint_content
 )
-from image_handlers import resize_image
+from handlers.image_handlers import resize_image
 
 def add_document_to_chroma(dataset_id, chunks, document_id, filename):
     """Add document chunks to ChromaDB
@@ -916,7 +916,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
                 
         except Exception as e:
             return jsonify({"error": f"Failed to process image data: {str(e)}"}), 400
-    
+
     # Get additional metadata
     custom_metadata = {
         "id": file_id,
@@ -1018,6 +1018,8 @@ def upload_image_handler(user_data, dataset_id, image_folder):
             except:
                 pass
         return jsonify({"error": f"Failed to process image: {str(e)}"}), 500
+    
+
 
 def bulk_upload_handler(user_data, dataset_id):
     """Bulk upload a zip file of documents/images to a dataset
@@ -1448,5 +1450,32 @@ def diagnose_dataset_handler(user_data, dataset_id):
     }
     
     return jsonify(diagnosis), 200
+
+
+
+def get_upload_status_handler(user_data, dataset_id, status_id):
+    """Get the status of a bulk upload"""
+    # Look for status file in the temp directory structure
+    base_temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+    status_file = os.path.join(base_temp_dir, status_id, "status.json")
+    
+    if not os.path.exists(status_file):
+        print(f"Upload status file not found: {status_file}")
+        # List available status files for debugging
+        if os.path.exists(base_temp_dir):
+            available_dirs = [
+                d for d in os.listdir(base_temp_dir)
+                if os.path.isdir(os.path.join(base_temp_dir, d))
+            ]
+            print(f"Available upload directories: {available_dirs}")
+        return jsonify({"error": "Upload status not found"}), 404
+        
+    try:
+        with open(status_file, 'r') as f:
+            status = json.load(f)
+        return jsonify(status), 200
+    except Exception as e:
+        print(f"Error reading status file {status_file}: {str(e)}")
+        return jsonify({"error": f"Failed to read status: {str(e)}"}), 500
 
 # More handlers can be added here for specific dataset operations 

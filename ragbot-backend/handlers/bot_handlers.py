@@ -4,7 +4,7 @@ import uuid
 import datetime
 from datetime import UTC
 from flask import request, jsonify
-from dataset_handlers import find_dataset_by_id
+from handlers.dataset_handlers import find_dataset_by_id
 
 # Bot handler functions
 def get_bots_handler(user_data):

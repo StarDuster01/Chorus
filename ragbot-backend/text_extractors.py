@@ -11,6 +11,7 @@ from pdf2image import convert_from_path
 from PyPDF2 import PdfReader
 import docx
 from pptx import Presentation
+from handlers.dataset_handlers import convert_wmf_to_png
 
 # Configure OCR
 try:
@@ -35,7 +36,6 @@ def extract_text_from_image(img):
             # If img is a path
             if img.lower().endswith('.wmf'):
                 # Convert WMF to PNG first
-                from dataset_handlers import convert_wmf_to_png
                 png_path = convert_wmf_to_png(img)
                 if png_path:
                     img = Image.open(png_path)
