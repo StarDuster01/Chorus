@@ -20,6 +20,7 @@ import requests  # For Groq API
 from PIL import Image  # Add this import for image processing
 from image_processor import ImageProcessor
 from constants import VECTOR_DIMENSION
+from constants import STORAGE_DIR
 from handlers.image_handlers import remove_image_handler
 import faiss
 import io
@@ -167,9 +168,8 @@ except Exception as e:
     print(f"[STARTUP] Warning: Failed to pre-load models: {str(e)}")
     print("[STARTUP] Models will be loaded on-demand (slower performance)")
 
-# Initialize ImageProcessor for image RAG
-app_base_dir = os.path.dirname(os.path.abspath(__file__))
-image_processor = ImageProcessor(app_base_dir)
+# Initialize global ImageProcessor using external storage
+image_processor = ImageProcessor(STORAGE_DIR)
 
 # Create directories for storing conversations
 CONVERSATIONS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conversations")

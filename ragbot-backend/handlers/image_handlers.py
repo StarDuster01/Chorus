@@ -18,6 +18,8 @@ from image_processor import image_processor
 from constants import DEFAULT_LLM_MODEL
 from constants import IMAGE_FOLDER
 from constants import VECTOR_DIMENSION
+# newly added for external storage paths
+from constants import DATASETS_FOLDER, IMAGE_INDICES
 
 
 
@@ -59,7 +61,7 @@ def remove_image_handler(user_data, dataset_id, image_id):
                 pass
 
         # rebuild metadata.json + FAISS index
-        indices_dir   = os.path.join(os.path.dirname(__file__), "data", "image_indices")
+        indices_dir   = IMAGE_INDICES
         metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
         index_path    = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
 
@@ -109,7 +111,7 @@ def get_dataset_images_handler(user_data, dataset_id):
     print(f"Available image metadata keys: {list(image_processor.image_metadata.keys())}")
 
     # 1) verify dataset file for this user
-    datasets_dir      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
+    datasets_dir      = DATASETS_FOLDER
     user_datasets_file = os.path.join(datasets_dir, f"{user_data['id']}_datasets.json")
     if not os.path.exists(user_datasets_file):
         return jsonify({"error": "Dataset not found"}), 404
@@ -124,7 +126,7 @@ def get_dataset_images_handler(user_data, dataset_id):
         return jsonify({"error": "Dataset not found"}), 404
 
     # prepare for potential index/metadata reload
-    indices_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "image_indices")
+    indices_dir   = IMAGE_INDICES
     metadata_file = os.path.join(indices_dir, f"{dataset_id}_metadata.json")
     index_path    = os.path.join(indices_dir, f"{dataset_id}_index.faiss")
 
@@ -436,7 +438,7 @@ def get_image_handler(image_folder, filename):
     
 
 def edit_image_handler(user_data):
-    """Edit an image using OpenAI’s image‐edit API"""
+    """Edit an image using OpenAI's image-edit API"""
     try:
         # 1) multipart/form-data check
         if not request.content_type or not request.content_type.startswith('multipart/form-data'):

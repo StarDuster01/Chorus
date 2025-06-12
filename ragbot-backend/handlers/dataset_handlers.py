@@ -1251,8 +1251,7 @@ def upload_image_handler(user_data, dataset_id, image_folder):
     custom_metadata['username'] = user_data['username']
     
     try:
-        # Access the global image_processor from app.py
-        from app import image_processor
+        # Use global image_processor instance initialized at startup
         
         # Add image to dataset in image processor
         image_metadata = image_processor.add_image_to_dataset(dataset_id, image_path, custom_metadata)
@@ -1438,9 +1437,6 @@ def bulk_upload_handler(user_data, dataset_id):
             status["status"] = "processing"
             with open(status_file, 'w') as f:
                 json.dump(status, f)
-            
-            # Initialize image processor for bulk upload
-            image_processor = ImageProcessor(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
             
             # Process files
             successes = []
