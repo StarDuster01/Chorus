@@ -1073,7 +1073,7 @@ def dataset_status_handler(user_data, dataset_id):
 
 def get_dataset_documents_handler(user_data, dataset_id):
     """
-    Return every unique document (with chunk counts) stored in a dataset’s
+    Return every unique document (with chunk counts) stored in a dataset's
     ChromaDB collection.  Logic is an exact copy of the former Flask route.
     """
     # -------- verify dataset exists & belongs to user --------
@@ -1447,8 +1447,6 @@ def bulk_upload_handler(user_data, dataset_id):
             errors = []
             text_exts = ['.pdf', '.docx', '.txt', '.pptx']
             image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
-            DOCUMENT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "documents")
-            IMAGE_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "images")
             os.makedirs(DOCUMENT_FOLDER, exist_ok=True)
             os.makedirs(IMAGE_FOLDER, exist_ok=True)
             

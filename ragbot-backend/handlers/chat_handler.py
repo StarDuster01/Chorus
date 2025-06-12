@@ -17,19 +17,9 @@ from image_processor import image_processor
 # helpers you actually call in this handler
 from handlers.image_handlers import resize_image
 from handlers.dataset_handlers import find_dataset_by_id
-
-#
-# ——— constants (pulled straight from your app.py) ———
-#
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# where chat images get written
-IMAGE_FOLDER = os.path.join(BASE_DIR, "uploads", "images")
-
-# where you store per‐user/bot conversation JSONs
-CONVERSATIONS_FOLDER = os.path.join(BASE_DIR, "conversations")
-
-# default LLM to call
+from constants import BASE_DIR
+from constants import IMAGE_FOLDER
+from constants import CONVERSATIONS_FOLDER
 from constants import DEFAULT_LLM_MODEL
 from constants import IMAGE_GENERATION_MODEL
 

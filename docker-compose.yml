@@ -6,6 +6,7 @@ services:
     ports:
       - "50505:50505"
     volumes:
+      - ../ChorusAllData:/ChorusAllData
       - ./ragbot-backend/uploads:/code/uploads
       - ./ragbot-backend/data:/code/data
       - ./ragbot-backend/conversations:/code/conversations
@@ -18,6 +19,7 @@ services:
       - ./ragbot-backend/.env
     environment:
       - PYTHONPATH=/code
+      - STORAGE_DIR=/ChorusAllData
     deploy:
       resources:
         limits:
