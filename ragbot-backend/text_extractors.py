@@ -11,7 +11,7 @@ from pdf2image import convert_from_path
 from PyPDF2 import PdfReader
 import docx
 from pptx import Presentation
-from handlers.dataset_handlers import convert_wmf_to_png
+from utils.image_utils import convert_wmf_to_png
 
 # Configure OCR
 try:
