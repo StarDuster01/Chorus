@@ -18,13 +18,11 @@ import time
 from image_processor import ImageProcessor
 
 from text_extractors import (
-    extract_text_from_image,
-    extract_text_from_pdf,
-    extract_text_from_docx,
+    
     extract_text_from_pptx,
     extract_text_from_file,
     create_semantic_chunks,
-    chunk_powerpoint_content
+
 )
 from handlers.image_handlers import resize_image
 
