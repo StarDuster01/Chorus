@@ -306,13 +306,7 @@ def chat_with_bot_handler(user_data, bot_id):
                         matching_terms = [term for term in image_query_terms if term in message.lower()]
                         print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}", flush=True)
                     
-                    # Skip all image processing if this is not an image query
-                    if not is_image_query:
-                        print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query: '{message}'", flush=True)
-                        continue
-                    
-                    # If we get here, it is an image query, so check if the dataset has images
-                    # Check dataset type and image count from metadata
+                    # Check dataset type and image count from metadata first
                     datasets_dir = DATASETS_FOLDER
                     for user_id in [user_data['id'], "shared"]:  # Check both user and shared datasets
                         user_datasets_file = os.path.join(datasets_dir, f"{user_id}_datasets.json")
@@ -331,26 +325,49 @@ def chat_with_bot_handler(user_data, bot_id):
                     dataset_has_metadata = dataset_id in image_processor.image_metadata
                     metadata_count = len(image_processor.image_metadata.get(dataset_id, [])) if dataset_has_metadata else 0
                     
+                    # Skip image retrieval if this is not an image query AND dataset has no images
+                    # But always mark dataset as having data if images exist, even for non-image queries
+                    if not is_image_query and not (has_images or metadata_count > 0):
+                        print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query with no images: '{message}'", flush=True)
+                        continue
+                    
                     # If dataset has images according to either source, retrieve them
                     if has_images or metadata_count > 0:
                         print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}", flush=True)
                         
-                        # Set search parameters based on whether we're using chorus mode
-                        if use_model_chorus:
-                            # In chorus mode, more aggressively search for images
-                            top_k = 8 if is_image_query else 4
+                        # Set search parameters based on whether we're using chorus mode and query type
+                        if is_image_query:
+                            # For explicit image queries, search more aggressively
+                            if use_model_chorus:
+                                top_k = 8
+                            else:
+                                top_k = 6
                         else:
-                            # In standard mode, still search for images but with lower priority if not an image query
-                            top_k = 6 if is_image_query else 3
+                            # For non-image queries, just grab a few images to ensure bot knows it has data
+                            # But don't search with the user's query - use generic search instead
+                            if use_model_chorus:
+                                top_k = 2  # Just enough to show the bot has data
+                            else:
+                                top_k = 1  # Minimal for standard mode
                         
-                        print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images", flush=True)
+                        print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images (is_image_query: {is_image_query})", flush=True)
                         
-                        # Search for images with the user's query
+                        # Search for images - use different strategy based on query type
                         img_results = []
                         try:
-                            print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'", flush=True)
-                            img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
-                            print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}", flush=True)
+                            if is_image_query:
+                                # For image queries, search with the user's specific query
+                                print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'", flush=True)
+                                img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
+                                print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}", flush=True)
+                            else:
+                                # For non-image queries, just get some representative images to show the bot has data
+                                print(f"IMAGE SEARCH DEBUG: Getting representative images for non-image query", flush=True)
+                                # Use a very generic query to get any available images
+                                generic_query = "image"
+                                img_results = image_processor.search_images(dataset_id, generic_query, top_k=top_k)
+                                print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} representative images in dataset {dataset_id}", flush=True)
+                                
                             if img_results:
                                 for i, img in enumerate(img_results):
                                     print(f"IMAGE SEARCH DEBUG: Image {i+1}: {img.get('caption', 'No caption')} (score: {img.get('score', 0):.4f})", flush=True)

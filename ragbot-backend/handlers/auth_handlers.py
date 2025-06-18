@@ -7,6 +7,7 @@ import bcrypt
 import jwt
 import functools
 from flask import request, jsonify
+from constants import USERS_FOLDER
 
 # Helper functions for authentication
 def get_token_from_header():
@@ -78,7 +79,7 @@ def register_handler(jwt_secret_key, jwt_expires):
         return jsonify({"error": "Username and password are required"}), 400
         
     # Check if user already exists - for demo purposes using a simple file
-    users_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+    users_file = os.path.join(USERS_FOLDER, "users.json")
     users = {}
     if os.path.exists(users_file):
         with open(users_file, 'r') as f:
@@ -125,7 +126,7 @@ def login_handler(jwt_secret_key, jwt_expires):
         return jsonify({"error": "Username and password are required"}), 400
         
     # Check user credentials - for demo purposes using a simple file
-    users_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+    users_file = os.path.join(USERS_FOLDER, "users.json")
     
     if not os.path.exists(users_file):
         return jsonify({"error": "Invalid username or password"}), 401
