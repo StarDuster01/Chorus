@@ -83,8 +83,16 @@ def initialize_chroma():
 
 def get_or_create_collection(collection_name: str, metadata: dict = None):
     """Get or create a ChromaDB collection"""
+    global chroma_client, embedding_function
+    
+    # Check if client is initialized, attempt reinitialization if not
     if chroma_client is None or embedding_function is None:
-        raise RuntimeError("ChromaDB not initialized. Call initialize_chroma() first.")
+        logger.warning(f"[ChromaDB] Client not initialized for collection {collection_name}, attempting to reinitialize...")
+        try:
+            initialize_chroma()
+        except Exception as init_error:
+            logger.error(f"[ChromaDB] Failed to reinitialize: {str(init_error)}")
+            raise RuntimeError(f"ChromaDB client initialization failed: {str(init_error)}")
     
     # Better name sanitization for UUIDs
     sanitized_name = collection_name.lower().replace('-', '_')
@@ -123,8 +131,16 @@ def get_or_create_collection(collection_name: str, metadata: dict = None):
 
 def get_collection(collection_name: str):
     """Get an existing ChromaDB collection"""
+    global chroma_client, embedding_function
+    
+    # Check if client is initialized, attempt reinitialization if not
     if chroma_client is None or embedding_function is None:
-        raise RuntimeError("ChromaDB not initialized. Call initialize_chroma() first.")
+        logger.warning(f"[ChromaDB] Client not initialized for collection {collection_name}, attempting to reinitialize...")
+        try:
+            initialize_chroma()
+        except Exception as init_error:
+            logger.error(f"[ChromaDB] Failed to reinitialize: {str(init_error)}")
+            raise RuntimeError(f"ChromaDB client initialization failed: {str(init_error)}")
     
     sanitized_name = collection_name.lower().replace('-', '_')
     if len(sanitized_name) < 3:
@@ -143,8 +159,16 @@ def get_collection(collection_name: str):
 
 def delete_collection(collection_name: str):
     """Delete a ChromaDB collection"""
+    global chroma_client, embedding_function
+    
+    # Check if client is initialized, attempt reinitialization if not
     if chroma_client is None:
-        raise RuntimeError("ChromaDB not initialized. Call initialize_chroma() first.")
+        logger.warning(f"[ChromaDB] Client not initialized for deleting collection {collection_name}, attempting to reinitialize...")
+        try:
+            initialize_chroma()
+        except Exception as init_error:
+            logger.error(f"[ChromaDB] Failed to reinitialize: {str(init_error)}")
+            raise RuntimeError(f"ChromaDB client initialization failed: {str(init_error)}")
     
     sanitized_name = collection_name.lower().replace('-', '_')
     if len(sanitized_name) < 3:
@@ -159,8 +183,16 @@ def delete_collection(collection_name: str):
 
 def list_collections():
     """List all ChromaDB collections"""
+    global chroma_client, embedding_function
+    
+    # Check if client is initialized, attempt reinitialization if not
     if chroma_client is None:
-        raise RuntimeError("ChromaDB not initialized. Call initialize_chroma() first.")
+        logger.warning(f"[ChromaDB] Client not initialized for listing collections, attempting to reinitialize...")
+        try:
+            initialize_chroma()
+        except Exception as init_error:
+            logger.error(f"[ChromaDB] Failed to reinitialize: {str(init_error)}")
+            raise RuntimeError(f"ChromaDB client initialization failed: {str(init_error)}")
     
     try:
         collections = chroma_client.list_collections()

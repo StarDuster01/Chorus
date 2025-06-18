@@ -11,7 +11,7 @@ import anthropic
 import requests
 
 # your ChromaDB client and image‐RAG processor
-from chroma_client import chroma_client
+import chroma_client
 from image_processor import image_processor
 
 # helpers you actually call in this handler
