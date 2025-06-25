@@ -143,15 +143,21 @@ Respond with a JSON object in this exact format:
 
 Only respond with the JSON object, nothing else."""
 
-        intent_response = openai.chat.completions.create(
-            model=DEFAULT_LLM_MODEL,
-            messages=[
+        # Handle temperature for o3 models
+        intent_params = {
+            "model": DEFAULT_LLM_MODEL,
+            "messages": [
                 {"role": "system", "content": "You are an expert at analyzing user intent to determine if they want to generate new images, retrieve existing images, or get text responses. Always respond with valid JSON only."},
                 {"role": "user", "content": intent_analysis_prompt}
             ],
-            temperature=0.3,
-            max_completion_tokens=200
-        )
+            "max_completion_tokens": 200
+        }
+        
+        # Only add temperature for non-o3 models
+        if not DEFAULT_LLM_MODEL.startswith('o3-'):
+            intent_params["temperature"] = 0.3
+            
+        intent_response = openai.chat.completions.create(**intent_params)
         
         # Parse the AI response
         try:
@@ -305,15 +311,21 @@ Only respond with the JSON object, nothing else."""
 Enhance the user's request by adding visual details, artistic style, lighting, mood, and composition while keeping the core intent.
 Make it specific and visually compelling. Respond with ONLY the enhanced prompt text, nothing else."""
 
-            enhance_response = openai.chat.completions.create(
-                model=DEFAULT_LLM_MODEL,
-                messages=[
+            # Handle temperature for o3 models
+            enhance_params = {
+                "model": DEFAULT_LLM_MODEL,
+                "messages": [
                     {"role": "system", "content": enhancement_system_message},
                     {"role": "user", "content": f"Enhance this image request: {image_generation_prompt}"}
                 ],
-                temperature=0.7,
-                max_completion_tokens=300
-            )
+                "max_completion_tokens": 300
+            }
+            
+            # Only add temperature for non-o3 models
+            if not DEFAULT_LLM_MODEL.startswith('o3-'):
+                enhance_params["temperature"] = 0.7
+                
+            enhance_response = openai.chat.completions.create(**enhance_params)
             
             enhanced_prompt = enhance_response.choices[0].message.content.strip()
             
@@ -465,7 +477,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
             messages = [
                 {
                     "role": "system", 
-                    "content": bot.get("system_instruction", "You are a helpful assistant that can analyze images.")
+                    "content": bot.get("system_instruction", "You are a helpful assistant that can analyze images.") + "\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly."
                 },
                 {
                     "role": "user", 
@@ -1106,7 +1118,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                             response = openai.chat.completions.create(
                                 model=model_name,
                                 messages=[
-                                    {"role": "system", "content": system_instruction_with_history},
+                                    {"role": "system", "content": system_instruction_with_history + "\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly."},
                                     {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
                                 temperature=api_temperature
@@ -1129,7 +1141,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                         elif provider == 'Anthropic':
                             response = anthropic_client.messages.create(
                                 model=model_name,
-                                system=system_instruction_with_history,
+                                system=system_instruction_with_history + "\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly.",
                                 messages=[{"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}],
                                 temperature=temperature,
                                 max_tokens=1024
@@ -1157,7 +1169,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                             payload = {
                                 "model": model_name,
                                 "messages": [
-                                    {"role": "system", "content": system_instruction_with_history},
+                                    {"role": "system", "content": system_instruction_with_history + "\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly."},
                                     {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
                                 "temperature": temperature,
@@ -1207,7 +1219,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                             response = openai.chat.completions.create(
                                 model="gpt-3.5-turbo",
                                 messages=[
-                                    {"role": "system", "content": system_instruction_with_history},
+                                    {"role": "system", "content": system_instruction_with_history + "\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly."},
                                     {"role": "user", "content": "Context:\n" + model_full_context + image_prompt_instruction + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. For images, use [Image 1], [Image 2], etc. Only reference images that are directly relevant to answering the question."}
                                 ],
                                 temperature=fallback_temperature
@@ -1599,7 +1611,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
         response = openai.chat.completions.create(
             model=DEFAULT_LLM_MODEL,
             messages=[
-                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc.\n\nIMPORTANT: Before stating that information isn't available, check ALL context including image captions. If information is only found in an image caption, still use that information and cite the image.\n\nIMPORTANT: Do NOT state that you cannot display or show images to the user. When referencing images, simply describe what they contain and cite them with [Image X]. Images mentioned in the context ARE available to the user for viewing."},
+                {"role": "system", "content": system_instruction_with_history + "\n\nWhen you reference information from the provided context, please cite the source using the number in square brackets, e.g. [1], [2], etc. For images, use [Image 1], [Image 2], etc.\n\nIMPORTANT: Before stating that information isn't available, check ALL context including image captions. If information is only found in an image caption, still use that information and cite the image.\n\nIMPORTANT: Do NOT state that you cannot display or show images to the user. When referencing images, simply describe what they contain and cite them with [Image X]. Images mentioned in the context ARE available to the user for viewing.\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly."},
                 {"role": "user", "content": "Context:\n" + full_context + "\n\nUser question: " + message + "\n\nIf referencing information, please include citations [1], [2], etc. Only reference images that are directly relevant to answering the question."}
             ]
         )
@@ -1888,7 +1900,7 @@ def chat_with_image_handler(user_data, bot_id):
             system_inst += "\n\nConversation so far:\n" + hist
 
         payload = [
-            {"role":"system","content": system_inst},
+            {"role":"system","content": system_inst + "\n\nFORMAT YOUR RESPONSE IN MARKDOWN: Use proper markdown formatting including **bold**, *italics*, `code`, ## headings, - bullet points, 1. numbered lists, > blockquotes, and | tables | when appropriate to make your response clear and well-structured. The frontend will render your markdown properly."},
             {"role":"user","content":[
                 {"type":"text","text":message if message!="[Image uploaded]" else "What's in this image?"},
                 {"type":"image_url","image_url":{"url":f"data:image/{file_ext};base64,{b64}"}}
