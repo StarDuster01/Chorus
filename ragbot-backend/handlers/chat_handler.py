@@ -135,13 +135,22 @@ TEXT_RESPONSE:
 - "How do I cook this?"
 - "Explain the benefits of..."
 
-Respond with a JSON object in this exact format:
-{{
-    "intent": "GENERATE_IMAGE" | "RETRIEVE_IMAGES" | "TEXT_RESPONSE",
-    "image_description": "detailed description (only if intent is GENERATE_IMAGE)"
-}}
+CRITICAL: You must respond with ONLY a valid JSON object in this exact format, with no additional text, explanations, or markdown:
 
-Only respond with the JSON object, nothing else."""
+{{"intent": "GENERATE_IMAGE", "image_description": "detailed description for generation"}}
+
+OR
+
+{{"intent": "RETRIEVE_IMAGES"}}
+
+OR
+
+{{"intent": "TEXT_RESPONSE"}}
+
+Remember: 
+- Use double quotes for all strings
+- Only include "image_description" if intent is "GENERATE_IMAGE"
+- Respond with ONLY the JSON object, nothing else."""
 
         # Handle temperature for o3 models
         intent_params = {
@@ -161,7 +170,17 @@ Only respond with the JSON object, nothing else."""
         
         # Parse the AI response
         try:
-            intent_result = json.loads(intent_response.choices[0].message.content.strip())
+            response_content = intent_response.choices[0].message.content.strip()
+            
+            # Try to extract JSON from the response - sometimes AI adds extra text
+            json_start = response_content.find('{')
+            json_end = response_content.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_content = response_content[json_start:json_end]
+            else:
+                json_content = response_content
+            
+            intent_result = json.loads(json_content)
             user_intent = intent_result.get("intent", "TEXT_RESPONSE")
             
             if user_intent == "GENERATE_IMAGE":
@@ -178,12 +197,13 @@ Only respond with the JSON object, nothing else."""
                 is_image_generation_request = False
                 force_image_search = False
                 print(f"AI detected intent: {user_intent} - will provide regular text response", flush=True)
-        except json.JSONDecodeError:
-            print(f"Failed to parse intent analysis response: {intent_response.choices[0].message.content}", flush=True)
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse intent analysis response. Raw response: {intent_response.choices[0].message.content}", flush=True)
+            print(f"JSON decode error: {str(e)}", flush=True)
             # Fall back to conservative keyword detection (avoid conflicts with dataset image retrieval)
             message_lower = message.lower().strip()
             # Very specific keywords that clearly indicate NEW image generation
-            generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture", "paint me", "illustrate"]
+            generation_keywords = ["generate" ,"draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture", "paint me", "illustrate"]
             # Default to retrieval for "show me" style requests
             retrieval_indicators = ["show me", "display", "find", "what do you have"]
             has_retrieval_indicators = any(indicator in message_lower for indicator in retrieval_indicators)
@@ -577,17 +597,18 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     
                     # Debug: log retrieved contexts
                     if results["documents"][0]:
-                        print(f"CONTEXT DEBUG: Retrieved {len(results['documents'][0])} chunks from dataset {dataset_id}")
-                        for i, chunk in enumerate(results["documents"][0][:10]):  # Show first 5 chunks for better debugging
-                            preview = chunk[:300] + "..." if len(chunk) > 300 else chunk
-                            print(f"CONTEXT DEBUG: Chunk {i+1}: {preview}")
-                            # Check for key terms
-                            if "private selection" in chunk.lower():
-                                print(f"CONTEXT DEBUG: ✅ Chunk {i+1} contains Private Selection data")
-                            if "simple truth" in chunk.lower():
-                                print(f"CONTEXT DEBUG: ✅ Chunk {i+1} contains Simple Truth data")
-                    else:
-                        print(f"CONTEXT DEBUG: No chunks retrieved from dataset {dataset_id}")
+                        # print(f"CONTEXT DEBUG: Retrieved {len(results['documents'][0])} chunks from dataset {dataset_id}")
+                        # for i, chunk in enumerate(results["documents"][0][:10]):  # Show first 5 chunks for better debugging
+                        #     preview = chunk[:300] + "..." if len(chunk) > 300 else chunk
+                        #     print(f"CONTEXT DEBUG: Chunk {i+1}: {preview}")
+                        #     # Check for key terms
+                        #     if "private selection" in chunk.lower():
+                        #         print(f"CONTEXT DEBUG: ✅ Chunk {i+1} contains Private Selection data")
+                        #     if "simple truth" in chunk.lower():
+                        #         print(f"CONTEXT DEBUG: ✅ Chunk {i+1} contains Simple Truth data")
+                        pass
+                    # else:
+                    #     print(f"CONTEXT DEBUG: No chunks retrieved from dataset {dataset_id}")
                     
                     all_contexts.extend(results["documents"][0])
                 
@@ -612,12 +633,12 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me') or force_image_search
                     
                     # Debug: Log image query detection decision
-                    print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query} (force_image_search: {force_image_search})", flush=True)
-                    if is_image_query:
-                        matching_terms = [term for term in image_query_terms if term in message.lower()]
-                        print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}", flush=True)
-                        if force_image_search:
-                            print(f"IMAGE SEARCH DEBUG: Forced image search due to RETRIEVE_IMAGES intent", flush=True)
+                    # print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query} (force_image_search: {force_image_search})", flush=True)
+                    # if is_image_query:
+                    #     matching_terms = [term for term in image_query_terms if term in message.lower()]
+                    #     print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}", flush=True)
+                    #     if force_image_search:
+                    #         print(f"IMAGE SEARCH DEBUG: Forced image search due to RETRIEVE_IMAGES intent", flush=True)
                     
                     # Check dataset type and image count from metadata first
                     datasets_dir = DATASETS_FOLDER
@@ -642,12 +663,12 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     # But always mark dataset as having data if images exist, even for non-image queries
                     # Never skip if force_image_search is True
                     if not is_image_query and not (has_images or metadata_count > 0) and not force_image_search:
-                        print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query with no images: '{message}'", flush=True)
+                        # print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query with no images: '{message}'", flush=True)
                         continue
                     
                     # If dataset has images according to either source, retrieve them
                     if has_images or metadata_count > 0:
-                        print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}", flush=True)
+                        # print(f"Dataset {dataset_id} has images: dataset says {has_images}, metadata has {metadata_count}", flush=True)
                         
                         # Set search parameters based on whether we're using chorus mode and query type
                         if is_image_query:
@@ -664,27 +685,27 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                             else:
                                 top_k = 1  # Minimal for standard mode
                         
-                        print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images (is_image_query: {is_image_query})", flush=True)
+                        # print(f"IMAGE SEARCH DEBUG: Will search for up to {top_k} images (is_image_query: {is_image_query})", flush=True)
                         
                         # Search for images - use different strategy based on query type
                         img_results = []
                         try:
                             if is_image_query:
                                 # For image queries, search with the user's specific query
-                                print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'", flush=True)
+                                # print(f"IMAGE SEARCH DEBUG: Starting semantic image search for '{message}'", flush=True)
                                 img_results = image_processor.search_images(dataset_id, message, top_k=top_k)
-                                print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}", flush=True)
+                                # print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} images for query '{message}' in dataset {dataset_id}", flush=True)
                             else:
                                 # For non-image queries, just get some representative images to show the bot has data
-                                print(f"IMAGE SEARCH DEBUG: Getting representative images for non-image query", flush=True)
+                                # print(f"IMAGE SEARCH DEBUG: Getting representative images for non-image query", flush=True)
                                 # Use a very generic query to get any available images
                                 generic_query = "image"
                                 img_results = image_processor.search_images(dataset_id, generic_query, top_k=top_k)
-                                print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} representative images in dataset {dataset_id}", flush=True)
+                                # print(f"IMAGE SEARCH DEBUG: Found {len(img_results)} representative images in dataset {dataset_id}", flush=True)
                                 
-                            if img_results:
-                                for i, img in enumerate(img_results):
-                                    print(f"IMAGE SEARCH DEBUG: Image {i+1}: {img.get('caption', 'No caption')} (score: {img.get('score', 0):.4f})", flush=True)
+                            # if img_results:
+                            #     for i, img in enumerate(img_results):
+                            #         print(f"IMAGE SEARCH DEBUG: Image {i+1}: {img.get('caption', 'No caption')} (score: {img.get('score', 0):.4f})", flush=True)
                         except Exception as img_search_error:
                             print(f"IMAGE SEARCH ERROR: {str(img_search_error)}", flush=True)
                         
@@ -718,11 +739,11 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                                     "helpful picture for reference"
                                 ])
                             
-                            print(f"IMAGE SEARCH DEBUG: Using fallback generic queries: {generic_queries[:3]}...", flush=True)
+                            # print(f"IMAGE SEARCH DEBUG: Using fallback generic queries: {generic_queries[:3]}...", flush=True)
                             
                             for generic_query in generic_queries:
                                 try:
-                                    print(f"IMAGE SEARCH DEBUG: Trying generic query: '{generic_query}'", flush=True)
+                                    # print(f"IMAGE SEARCH DEBUG: Trying generic query: '{generic_query}'", flush=True)
                                     generic_results = image_processor.search_images(dataset_id, generic_query, top_k=4 if is_image_query else 2)
                                     if generic_results:
                                         for gen_img in generic_results:
@@ -791,12 +812,12 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
         context_text = "\n\n".join([f"[{i+1}] {ctx}" for i, ctx in enumerate(contexts)])
         
         # Debug: log final context summary
-        print(f"FINAL CONTEXT DEBUG: Using {len(contexts)} total chunks (max_contexts: {max_contexts})")
-        if contexts:
-            print(f"FINAL CONTEXT DEBUG: Total context length: {len(context_text)} characters")
-            print(f"FINAL CONTEXT DEBUG: First context preview: {contexts[0][:300]}..." if len(contexts[0]) > 300 else f"FINAL CONTEXT DEBUG: First context: {contexts[0]}")
-        else:
-            print("FINAL CONTEXT DEBUG: No contexts available for query")
+        # print(f"FINAL CONTEXT DEBUG: Using {len(contexts)} total chunks (max_contexts: {max_contexts})")
+        # if contexts:
+        #     print(f"FINAL CONTEXT DEBUG: Total context length: {len(context_text)} characters")
+        #     print(f"FINAL CONTEXT DEBUG: First context preview: {contexts[0][:300]}..." if len(contexts[0]) > 300 else f"FINAL CONTEXT DEBUG: First context: {contexts[0]}")
+        # else:
+        #     print("FINAL CONTEXT DEBUG: No contexts available for query")
         
         # Prepare image information for context
         image_context = ""
@@ -1269,7 +1290,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                 used_image_indices = set()
                 if image_results:
                     # Check which images are explicitly referenced in the response
-                    print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
+                    # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
                     
                     # Use robust regex to find all [Image X] references
                     matches = re.findall(r'\[Image (\d+)\]', response_text)
@@ -1277,7 +1298,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                         idx = int(match)
                         if 1 <= idx <= len(image_results[:5]):
                             used_image_indices.add(idx)
-                            print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
+                            # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
                             
                     # If the response mentions images but doesn't use the exact citation format,
                     # include highly relevant images that meet our threshold
@@ -1286,7 +1307,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     
                     if has_image_mentions:
                         matching_terms = [term for term in image_mention_terms if term.lower() in response_text.lower()]
-                        print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
+                        # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
                     
                     # Include relevant images only if the response mentions images or the query is explicitly about images
                     image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
@@ -1295,14 +1316,14 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     if (has_image_mentions or is_image_query) and not used_image_indices:
                         # Use a reasonable threshold for image relevance
                         relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
-                        print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
+                        # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
                         for i, img in enumerate(image_results[:5]):
                             score = img.get('score', 0)
                             if score >= relevance_threshold:
                                 used_image_indices.add(i+1)
-                                print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
-                            else:
-                                print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}", flush=True)
+                                # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
+                            # else:
+                            #     print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}", flush=True)
                     
                     # Only force-include an image for explicit image queries
                     if is_image_query and not used_image_indices and image_results:
@@ -1311,11 +1332,11 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                         best_score = image_results[0].get('score', 0)
                         if best_score >= min_score_threshold:
                             used_image_indices.add(1)  # Add the first (highest scoring) image
-                            print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query", flush=True)
-                        else:
-                            print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images", flush=True)
+                            # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query", flush=True)
+                        # else:
+                        #     print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images", flush=True)
                     
-                    print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}", flush=True)
+                    # print(f"CHORUS MODE (SINGLE) - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}", flush=True)
                 
                 # Prepare image details for referenced images
                 image_details = []
@@ -1344,12 +1365,12 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                             })
                 
                 # Debug logging before response
-                print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
-                print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
-                print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
-                if image_details:
-                    for detail in image_details:
-                        print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
+                # print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
+                # print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
+                # print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
+                # if image_details:
+                #     for detail in image_details:
+                #         print(f"CHORUS MODE (SINGLE) - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
                 
                 # Save the response in the conversation with image details
                 bot_response = {
@@ -1485,7 +1506,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             used_image_indices = set()
             if image_results:
                 # Check which images are explicitly referenced in the response
-                print(f"CHORUS MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
+                # print(f"CHORUS MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
                 
                 # Use robust regex to find all [Image X] references
                 matches = re.findall(r'\[Image (\d+)\]', winning_response)
@@ -1493,7 +1514,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                     idx = int(match)
                     if 1 <= idx <= len(image_results[:5]):
                         used_image_indices.add(idx)
-                        print(f"CHORUS MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
+                        # print(f"CHORUS MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
                         
                 # If the response mentions images but doesn't use the exact citation format,
                 # include highly relevant images that meet our threshold
@@ -1502,7 +1523,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 
                 if has_image_mentions:
                     matching_terms = [term for term in image_mention_terms if term.lower() in winning_response.lower()]
-                    print(f"IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
+                    # print(f"IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
                 
                 # Include relevant images only if the response mentions images or the query is explicitly about images
                 image_query_terms = ["image", "picture", "photo", "visual", "diagram", "graph", "chart", "illustration"]
@@ -1511,14 +1532,14 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 if (has_image_mentions or is_image_query) and not used_image_indices:
                     # Use a reasonable threshold for image relevance
                     relevance_threshold = 0.3  # Increased from 0.2 for higher quality image matches
-                    print(f"IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
+                    # print(f"IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
                     for i, img in enumerate(image_results[:5]):
                         score = img.get('score', 0)
                         if score >= relevance_threshold:
                             used_image_indices.add(i+1)
-                            print(f"IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
-                        else:
-                            print(f"IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}", flush=True)
+                            # print(f"IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
+                        # else:
+                        #     print(f"IMAGE INCLUSION DEBUG: Image {i+1} score {score:.4f} below threshold {relevance_threshold}", flush=True)
                 
                 # Only force-include an image for explicit image queries
                 if is_image_query and not used_image_indices and image_results:
@@ -1527,11 +1548,11 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                     best_score = image_results[0].get('score', 0)
                     if best_score >= min_score_threshold:
                         used_image_indices.add(1)  # Add the first (highest scoring) image
-                        print(f"IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query", flush=True)
-                    else:
-                        print(f"IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images", flush=True)
+                        # print(f"IMAGE INCLUSION DEBUG: Force including top image with score {best_score:.4f} for image query", flush=True)
+                    # else:
+                    #     print(f"IMAGE INCLUSION DEBUG: Top image score {best_score:.4f} below minimum threshold {min_score_threshold}, not including any images", flush=True)
                 
-                print(f"IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}", flush=True)
+                # print(f"IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}", flush=True)
             
             # Prepare image details for referenced images
             image_details = []
@@ -1560,12 +1581,12 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                         })
             
             # Debug logging before response
-            print(f"CHORUS MODE - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
-            print(f"CHORUS MODE - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
-            print(f"CHORUS MODE - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
-            if image_details:
-                for detail in image_details:
-                    print(f"CHORUS MODE - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
+            # print(f"CHORUS MODE - IMAGE DEBUG: image_results count: {len(image_results) if image_results else 0}", flush=True)
+            # print(f"CHORUS MODE - IMAGE DEBUG: used_image_indices: {used_image_indices}", flush=True)
+            # print(f"CHORUS MODE - IMAGE DEBUG: image_details count: {len(image_details)}", flush=True)
+            # if image_details:
+            #     for detail in image_details:
+            #         print(f"CHORUS MODE - IMAGE DEBUG: image detail: {detail['index']} -> {detail['url']}", flush=True)
             
             # Save the response in the conversation with image details
             bot_response = {
@@ -1633,7 +1654,7 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
             is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
             max_images = 5 if is_image_query else 3
             top_images = image_results[:max_images]
-            print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
+            # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Checking for image references in response: {len(image_results)} images available", flush=True)
             
             # Use robust regex to find all [Image X] references
             matches = re.findall(r'\[Image (\d+)\]', response_text)
@@ -1641,31 +1662,31 @@ str(len(anonymized_responses)) + ") of the best response.\n" + \
                 idx = int(match)
                 if 1 <= idx <= len(top_images):
                     used_image_indices.add(idx)
-                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
+                    # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response explicitly references [Image {idx}]", flush=True)
                 
             # Also check if the image caption is mentioned in the response
             for i in range(1, len(top_images) + 1):
                 if top_images[i-1].get('caption'):
                     if top_images[i-1]['caption'].lower() in response_text.lower():
                         used_image_indices.add(i)
-                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response mentions image caption for Image {i}", flush=True)
+                        # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response mentions image caption for Image {i}", flush=True)
             image_mention_terms = ["image", "picture", "photo", "logo", "diagram", "graph", "visual", "illustration", "icon"]
             has_image_mentions = any(term.lower() in response_text.lower() for term in image_mention_terms)
             if has_image_mentions:
                 matching_terms = [term for term in image_mention_terms if term.lower() in response_text.lower()]
-                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
+                # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Response contains image-related terms: {matching_terms}", flush=True)
             if (has_image_mentions or is_image_query) and not used_image_indices:
                 relevance_threshold = 0.3
-                print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
+                # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Applying relevance threshold {relevance_threshold} for image queries", flush=True)
                 for i, img in enumerate(top_images):
                     score = img.get('score', 0)
                     if score >= relevance_threshold:
                         used_image_indices.add(i+1)
-                        print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
+                        # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Including Image {i+1} with score {score:.4f} (above threshold {relevance_threshold})", flush=True)
                 if not used_image_indices and top_images:
                     used_image_indices.add(1)
-                    print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Force including top image for image query")
-            print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}")
+                    # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Force including top image for image query")
+            # print(f"STANDARD MODE - IMAGE INCLUSION DEBUG: Final image selection: {sorted(used_image_indices)}")
         
         # Filter source_documents to only include those that were actually cited
         used_source_documents = [doc for doc in source_documents if doc['context_index'] in used_indices]
