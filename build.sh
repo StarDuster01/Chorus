@@ -46,8 +46,8 @@ sleep 10
 docker-compose ps
 
 echo "📄 Viewing recent logs..."
-docker logs ragbot_backend_1 --tail 40
+docker logs ragbot-backend-1 --tail 40
 
 echo "🎉 RagBot v$BUILD_VERSION is ready!"
 echo "🌐 Frontend: http://localhost:50505"
-echo "📊 To view logs: docker logs ragbot_backend_1 -f" 
+echo "📊 To view logs: docker logs ragbot-backend-1 -f" 
