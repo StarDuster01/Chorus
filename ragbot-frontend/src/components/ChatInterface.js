@@ -175,8 +175,8 @@ const ChatInterface = () => {
           // Load available chorus configurations
           loadChorusConfigurations();
           
-          // Load conversation history - TEMPORARILY DISABLED TO AVOID CORRUPTED DATA
-          // loadConversations();
+          // Load conversation history
+          loadConversations();
           
           // Load bot datasets
           loadBotDatasets();
@@ -453,81 +453,11 @@ const ChatInterface = () => {
         );
       }
       
-      // Create bot response message with source documents and/or generated images
-      const botResponseContent = response.source_documents || response.image_details ? (
-        <div>
-          <div className="mb-3">{response.response}</div>
-          
-          {/* Source Documents */}
-          {response.source_documents && response.source_documents.length > 0 && (
-            <div className="source-documents mt-2 p-2 border-top">
-              <div className="text-muted mb-2">Source Documents:</div>
-              {response.source_documents.map((doc, index) => (
-                <div key={index} className="source-document">
-                  <Button
-                    variant="link"
-                    className="p-0 text-decoration-none"
-                    onClick={() => handleDownloadDocument(doc)}
-                  >
-                    <FaFileAlt className="me-1" />
-                    {doc.filename}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          {/* Generated or Referenced Images */}
-          {response.image_details && response.image_details.length > 0 && (
-            <div className="source-images mt-3 p-2 border-top">
-              <div className="text-muted mb-2">
-                {response.image_generated ? "Generated Image:" : "Referenced Images:"}
-              </div>
-              <div className="d-flex flex-wrap gap-3">
-                {response.image_details.map((img, index) => (
-                  <div key={index} className="source-image">
-                    <div className="mb-1 text-center small fw-bold">
-                      {img.index}
-                    </div>
-                    <a 
-                      href={img.download_url || img.url} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      title={img.caption || "View full image"}
-                    >
-                      <img 
-                        src={img.url} 
-                        alt={img.caption || "Generated/Referenced image"} 
-                        style={{ 
-                          maxWidth: '100%', 
-                          maxHeight: response.image_generated ? '300px' : '200px',
-                          borderRadius: '8px', 
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
-                        }}
-                      />
-                    </a>
-                    {img.caption && (
-                      <div className="mt-1 small text-muted">
-                        {img.caption}
-                      </div>
-                    )}
-                    {response.image_generated && response.image_prompt_used && (
-                      <div className="mt-1 small text-info">
-                        Prompt: {response.image_prompt_used}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : response.response;
-
+      // Create bot response message - store only the text content, handle rendering in the display
       const botMessage = {
         id: uuid(),
         role: 'assistant',
-        content: botResponseContent,
+        content: response.response, // Store only the raw text response
         timestamp: new Date().toISOString(),
         source_documents: response.source_documents,
         image_details: response.image_details, // Store image details in the message
@@ -983,9 +913,6 @@ const ChatInterface = () => {
                   </div>
                 ) : (
                   messages.map((msg, index) => {
-                    // Debug logging
-                    console.log('Message content:', msg.content, 'Type:', typeof msg.content);
-                    
                     return (
                     <div 
                       key={msg.id} 
