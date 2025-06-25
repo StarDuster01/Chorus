@@ -5,10 +5,12 @@ import datetime
 from datetime import UTC
 from flask import jsonify, request
 
+from constants import CHORUSES_FOLDER, BOTS_FOLDER
+
 def get_chorus_config_handler(user_data, bot_id):
     # Check if bot exists and belongs to user
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -31,10 +33,10 @@ def get_chorus_config_handler(user_data, bot_id):
         return jsonify({"error": "No chorus configuration found for this bot"}), 404
     
     # Get the user's chorus definitions
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+    # Using CHORUSES_FOLDER from constants
     os.makedirs(chorus_dir, exist_ok=True)
     
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     if not os.path.exists(user_choruses_file):
         return jsonify({"error": "No chorus configurations found"}), 404
     
@@ -53,8 +55,8 @@ def save_chorus_config_handler(user_data, bot_id):
     # For backward compatibility
     
     # Check if bot exists and belongs to user
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -79,11 +81,11 @@ def save_chorus_config_handler(user_data, bot_id):
     # First, create or update a chorus
     try:
         # Create chorus directory if it doesn't exist
-        chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+        # Using CHORUSES_FOLDER from constants
         os.makedirs(chorus_dir, exist_ok=True)
         
         # Load or create user's chorus list
-        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+        user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
         
         if os.path.exists(user_choruses_file):
             with open(user_choruses_file, 'r') as f:
@@ -132,8 +134,8 @@ def save_chorus_config_handler(user_data, bot_id):
 
 def set_bot_chorus_handler(user_data, bot_id):
     # Check if bot exists and belongs to user
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -159,8 +161,8 @@ def set_bot_chorus_handler(user_data, bot_id):
     # Empty string means unassign any chorus
     if chorus_id:
         # Verify that the chorus exists if an ID was provided
-        chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-        user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+        # Using CHORUSES_FOLDER from constants
+        user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
         
         if os.path.exists(user_choruses_file):
             with open(user_choruses_file, 'r') as f:
@@ -185,11 +187,11 @@ def set_bot_chorus_handler(user_data, bot_id):
 
 def list_choruses_handler(user_data):
     # Get all chorus configurations
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+    # Using CHORUSES_FOLDER from constants
     os.makedirs(chorus_dir, exist_ok=True)
     
     # First check if there's a user-specific choruses file
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     
     # If the user choruses file doesn't exist yet, create it
     if not os.path.exists(user_choruses_file):
@@ -217,11 +219,11 @@ def create_chorus_handler(user_data):
         return jsonify({"error": "At least one evaluator model is required"}), 400
     
     # Create chorus directory if it doesn't exist
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
+    # Using CHORUSES_FOLDER from constants
     os.makedirs(chorus_dir, exist_ok=True)
     
     # Load user's chorus definitions
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     if os.path.exists(user_choruses_file):
         with open(user_choruses_file, 'r') as f:
             choruses = json.load(f)
@@ -254,8 +256,8 @@ def create_chorus_handler(user_data):
 
 def get_chorus_handler(user_data, chorus_id):
     # Get chorus directory and user choruses file
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    # Using CHORUSES_FOLDER from constants
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     
     if not os.path.exists(user_choruses_file):
         return jsonify({"error": "Chorus not found"}), 404
@@ -286,8 +288,8 @@ def update_chorus_handler(user_data, chorus_id):
         return jsonify({"error": "At least one evaluator model is required"}), 400
     
     # Get chorus directory and user choruses file
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    # Using CHORUSES_FOLDER from constants
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     
     if not os.path.exists(user_choruses_file):
         return jsonify({"error": "Chorus not found"}), 404
@@ -325,8 +327,8 @@ def update_chorus_handler(user_data, chorus_id):
 
 def delete_chorus_handler(user_data, chorus_id):
     # Get chorus directory and user choruses file
-    chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-    user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+    # Using CHORUSES_FOLDER from constants
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     
     if not os.path.exists(user_choruses_file):
         return jsonify({"error": "Chorus not found"}), 404
@@ -347,8 +349,8 @@ def delete_chorus_handler(user_data, chorus_id):
         json.dump(choruses, f)
     
     # Also check if any bots are using this chorus and update them
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if os.path.exists(user_bots_file):
         with open(user_bots_file, 'r') as f:

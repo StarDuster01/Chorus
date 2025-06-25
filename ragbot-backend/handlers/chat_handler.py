@@ -23,6 +23,8 @@ from constants import CONVERSATIONS_FOLDER
 from constants import DEFAULT_LLM_MODEL
 from constants import IMAGE_GENERATION_MODEL
 from constants import DATASETS_FOLDER
+from constants import CHORUSES_FOLDER
+from constants import BOTS_FOLDER
 
 # timezone used for timestamping
 UTC = datetime.timezone.utc
@@ -56,6 +58,9 @@ def chat_with_bot_handler(user_data, bot_id):
     # Create a new conversation if no conversation_id provided
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
+    
+    # Define conversation file path early (needed for intent analysis)
+    conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
     
     # Use AI to intelligently detect if this is an image generation request
     is_image_generation_request = False
@@ -197,7 +202,6 @@ Only respond with the JSON object, nothing else."""
         user_message["image_path"] = image_path
     
     # Add message to conversation history
-    conversation_file = os.path.join(CONVERSATIONS_FOLDER, f"{user_data['id']}_{bot_id}_{conversation_id}.json")
     conversation_exists = os.path.exists(conversation_file)
     
     if conversation_exists:
@@ -353,8 +357,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
             }), 200
         
     # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -845,11 +848,8 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
         # Check if using model chorus
         if use_model_chorus:
             # Check if a chorus configuration exists
-            chorus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chorus")
-            os.makedirs(chorus_dir, exist_ok=True)
-            
             # Get the user's chorus definitions file
-            user_choruses_file = os.path.join(chorus_dir, f"{user_data['id']}_choruses.json")
+            user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
             
             # Try to load the specific chorus from the user's choruses
             chorus_config = None
@@ -1791,8 +1791,7 @@ def chat_with_image_handler(user_data, bot_id):
             b64 = base64.b64encode(img_f.read()).decode('utf-8')
 
         # load bot system prompt
-        bots_dir = os.path.join(os.path.dirname(__file__), "bots")
-        with open(os.path.join(bots_dir, f"{user_data['id']}_bots.json")) as bf:
+        with open(os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")) as bf:
             bots = json.load(bf)
         bot = next((b for b in bots if b["id"] == bot_id), None)
         if not bot:

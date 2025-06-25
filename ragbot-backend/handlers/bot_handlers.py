@@ -5,7 +5,7 @@ import datetime
 from datetime import UTC
 from flask import request, jsonify
 from handlers.dataset_handlers import find_dataset_by_id
-from constants import DATASETS_FOLDER
+from constants import DATASETS_FOLDER, BOTS_FOLDER
 
 # Bot handler functions
 def get_bots_handler(user_data):
@@ -17,9 +17,7 @@ def get_bots_handler(user_data):
     Returns:
         tuple: JSON response and status code
     """
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    os.makedirs(bots_dir, exist_ok=True)
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify([]), 200
@@ -80,11 +78,8 @@ def create_bot_handler(user_data):
     }
     
     # Save the bot
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    os.makedirs(bots_dir, exist_ok=True)
-    
     # Check if user already has bots
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if os.path.exists(user_bots_file):
         with open(user_bots_file, 'r') as f:
@@ -108,8 +103,7 @@ def delete_bot_handler(user_data, bot_id):
     Returns:
         tuple: JSON response and status code
     """
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -145,8 +139,8 @@ def get_bot_datasets_handler(user_data, bot_id):
         tuple: JSON response and status code
     """
     # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -260,8 +254,8 @@ def add_dataset_to_bot_handler(user_data, bot_id):
         return jsonify({"error": "Dataset not found"}), 404
     
     # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -306,8 +300,8 @@ def remove_dataset_from_bot_handler(user_data, bot_id, dataset_id):
         tuple: JSON response and status code
     """
     # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
@@ -355,8 +349,8 @@ def set_bot_datasets_handler(user_data, bot_id):
         return jsonify({"error": "dataset_ids must be an array"}), 400
     
     # Get bot info
-    bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
-    user_bots_file = os.path.join(bots_dir, f"{user_data['id']}_bots.json")
+    # Using BOTS_FOLDER from constants
+    user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
         return jsonify({"error": "Bot not found"}), 404
