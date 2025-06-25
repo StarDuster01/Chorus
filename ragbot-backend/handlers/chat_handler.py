@@ -684,7 +684,8 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     ]
                     
                     # Use a more aggressive check for image queries - partial matches and phrases
-                    is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me') or force_image_search
+                    # But respect the AI intent analysis - if it said TEXT_RESPONSE, don't search for images
+                    is_image_query = (any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me') or force_image_search) and not (user_intent == "TEXT_RESPONSE" and not force_image_search)
                     
                     # Debug: Log image query detection decision
                     # print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query} (force_image_search: {force_image_search})", flush=True)
