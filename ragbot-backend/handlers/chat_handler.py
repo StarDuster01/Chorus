@@ -73,9 +73,9 @@ def chat_with_bot_handler(user_data, bot_id):
                 if isinstance(msg['content'], str) and msg['role'] in ['user', 'assistant']
             ])
     
-    # Use AI to determine if the user wants an image generated
+    # Use AI to determine if the user wants an image generated (vs retrieving existing images from dataset)
     try:
-        intent_analysis_prompt = f"""Analyze if the user is requesting an image to be generated, created, drawn, or visualized.
+        intent_analysis_prompt = f"""Analyze if the user is requesting a NEW image to be generated/created/drawn, versus asking to see EXISTING images from a knowledge base/dataset.
 
 Conversation context:
 {conversation_context}
@@ -88,15 +88,26 @@ Respond with a JSON object in this exact format:
     "image_description": "detailed description of what image to generate (only if is_image_request is true)"
 }}
 
-Examples of image requests:
-- "Can you show me what a sunset looks like?"
-- "I'd like to see a cat"
-- "Draw me something beautiful"
-- "What would a futuristic city look like?"
-- "Make an image of a forest"
-- "Generate a picture of..."
-- "Can you create an illustration of..."
-- "I want to see what X looks like"
+GENERATE NEW IMAGE (is_image_request: true):
+- "Can you show me what a sunset looks like?" (general/creative request)
+- "I'd like to see a cat" (generic animal/object)
+- "Draw me something beautiful" (creative request)
+- "What would a futuristic city look like?" (hypothetical/creative)
+- "Make an image of a forest" (explicit generation)
+- "Generate a picture of..." (explicit generation)
+- "Create an illustration of..." (explicit creation)
+- "What does happiness look like?" (abstract concept)
+
+RETRIEVE EXISTING IMAGES (is_image_request: false):
+- "Show me our products" (company-specific)
+- "What does our logo look like?" (company-specific)
+- "Show me the diagram from the presentation" (document-specific)
+- "Display our company policy images" (organization-specific)
+- "Show me the screenshots" (dataset-specific)
+- "What images do you have about X?" (asking about existing content)
+- "Find pictures of our events" (organization-specific)
+
+Key distinction: If the request is about specific organizational content, existing documents, or company-specific material, choose FALSE. If it's a general creative request or hypothetical visualization, choose TRUE.
 
 Only respond with the JSON object, nothing else."""
 
@@ -119,19 +130,21 @@ Only respond with the JSON object, nothing else."""
                 print(f"AI detected image request: {is_image_generation_request}, prompt: {image_generation_prompt}", flush=True)
         except json.JSONDecodeError:
             print(f"Failed to parse intent analysis response: {intent_response.choices[0].message.content}", flush=True)
-            # Fall back to simple keyword detection
+            # Fall back to conservative keyword detection (avoid conflicts with dataset image retrieval)
             message_lower = message.lower().strip()
-            image_keywords = ["show me", "draw", "create an image", "generate", "make an image", "picture of", "what does", "look like", "visualize"]
-            is_image_generation_request = any(keyword in message_lower for keyword in image_keywords)
+            # More specific keywords that clearly indicate NEW image generation (not dataset retrieval)
+            generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture"]
+            is_image_generation_request = any(keyword in message_lower for keyword in generation_keywords)
             if is_image_generation_request:
                 image_generation_prompt = message  # Use original message as fallback
     
     except Exception as intent_error:
         print(f"Error in intent analysis: {str(intent_error)}", flush=True)
-        # Fall back to simple keyword detection
+        # Fall back to conservative keyword detection (avoid conflicts with dataset image retrieval)
         message_lower = message.lower().strip()
-        image_keywords = ["show me", "draw", "create an image", "generate", "make an image", "picture of", "what does", "look like", "visualize"]
-        is_image_generation_request = any(keyword in message_lower for keyword in image_keywords)
+        # More specific keywords that clearly indicate NEW image generation (not dataset retrieval)
+        generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture"]
+        is_image_generation_request = any(keyword in message_lower for keyword in generation_keywords)
         if is_image_generation_request:
             image_generation_prompt = message  # Use original message as fallback
     
