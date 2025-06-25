@@ -445,11 +445,13 @@ const ChatInterface = () => {
         );
       }
       
-      // Create bot response message with source documents if available
-      const botResponseContent = response.source_documents ? (
+      // Create bot response message with source documents and/or generated images
+      const botResponseContent = response.source_documents || response.image_details ? (
         <div>
           <div className="mb-3">{response.response}</div>
-          {response.source_documents.length > 0 && (
+          
+          {/* Source Documents */}
+          {response.source_documents && response.source_documents.length > 0 && (
             <div className="source-documents mt-2 p-2 border-top">
               <div className="text-muted mb-2">Source Documents:</div>
               {response.source_documents.map((doc, index) => (
@@ -467,10 +469,12 @@ const ChatInterface = () => {
             </div>
           )}
           
-          {/* Add support for displaying referenced images */}
+          {/* Generated or Referenced Images */}
           {response.image_details && response.image_details.length > 0 && (
             <div className="source-images mt-3 p-2 border-top">
-              <div className="text-muted mb-2">Referenced Images:</div>
+              <div className="text-muted mb-2">
+                {response.image_generated ? "Generated Image:" : "Referenced Images:"}
+              </div>
               <div className="d-flex flex-wrap gap-3">
                 {response.image_details.map((img, index) => (
                   <div key={index} className="source-image">
@@ -485,10 +489,10 @@ const ChatInterface = () => {
                     >
                       <img 
                         src={img.url} 
-                        alt={img.caption || "Referenced image"} 
+                        alt={img.caption || "Generated/Referenced image"} 
                         style={{ 
                           maxWidth: '100%', 
-                          maxHeight: '200px', 
+                          maxHeight: response.image_generated ? '300px' : '200px',
                           borderRadius: '8px', 
                           boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
                         }}
@@ -497,6 +501,11 @@ const ChatInterface = () => {
                     {img.caption && (
                       <div className="mt-1 small text-muted">
                         {img.caption}
+                      </div>
+                    )}
+                    {response.image_generated && response.image_prompt_used && (
+                      <div className="mt-1 small text-info">
+                        Prompt: {response.image_prompt_used}
                       </div>
                     )}
                   </div>
@@ -513,7 +522,9 @@ const ChatInterface = () => {
         content: botResponseContent,
         timestamp: new Date().toISOString(),
         source_documents: response.source_documents,
-        image_details: response.image_details // Store image details in the message
+        image_details: response.image_details, // Store image details in the message
+        image_generated: response.image_generated, // Track if this is a generated image
+        image_prompt_used: response.image_prompt_used // Store the prompt used for generation
       };
 
       setMessages(prev => [...prev, botMessage]);
@@ -1026,6 +1037,9 @@ const ChatInterface = () => {
                               {/* Display images from bot response if any */}
                               {msg.role === 'assistant' && msg.image_details && msg.image_details.length > 0 && (
                                 <div className="source-images mt-3 p-2 border-top">
+                                  <div className="text-muted mb-2">
+                                    {msg.image_generated ? "Generated Image:" : "Referenced Images:"}
+                                  </div>
                                   <div className="d-flex flex-wrap gap-3">
                                     {msg.image_details.map((img, index) => (
                                       <div key={index} className="source-image">
@@ -1040,10 +1054,10 @@ const ChatInterface = () => {
                                         >
                                           <img 
                                             src={img.url} 
-                                            alt={img.caption || "Referenced image"} 
+                                            alt={img.caption || "Generated/Referenced image"} 
                                             style={{ 
                                               maxWidth: '100%', 
-                                              maxHeight: '200px', 
+                                              maxHeight: msg.image_generated ? '300px' : '200px', 
                                               borderRadius: '8px', 
                                               boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
                                             }}
@@ -1052,6 +1066,11 @@ const ChatInterface = () => {
                                         {img.caption && (
                                           <div className="mt-1 small text-muted">
                                             {img.caption}
+                                          </div>
+                                        )}
+                                        {msg.image_generated && msg.image_prompt_used && (
+                                          <div className="mt-1 small text-info">
+                                            Prompt: {msg.image_prompt_used}
                                           </div>
                                         )}
                                       </div>

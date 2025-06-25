@@ -57,6 +57,84 @@ def chat_with_bot_handler(user_data, bot_id):
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
     
+    # Use AI to intelligently detect if this is an image generation request
+    is_image_generation_request = False
+    image_generation_prompt = ""
+    
+    # Get conversation context for better analysis
+    conversation_context = ""
+    if os.path.exists(conversation_file):
+        with open(conversation_file, 'r') as f:
+            existing_conversation = json.load(f)
+            recent_messages = existing_conversation.get("messages", [])[-5:]  # Last 5 messages for context
+            conversation_context = "\n".join([
+                f"{msg['role']}: {msg['content']}" 
+                for msg in recent_messages 
+                if isinstance(msg['content'], str) and msg['role'] in ['user', 'assistant']
+            ])
+    
+    # Use AI to determine if the user wants an image generated
+    try:
+        intent_analysis_prompt = f"""Analyze if the user is requesting an image to be generated, created, drawn, or visualized.
+
+Conversation context:
+{conversation_context}
+
+Current user message: "{message}"
+
+Respond with a JSON object in this exact format:
+{{
+    "is_image_request": true/false,
+    "image_description": "detailed description of what image to generate (only if is_image_request is true)"
+}}
+
+Examples of image requests:
+- "Can you show me what a sunset looks like?"
+- "I'd like to see a cat"
+- "Draw me something beautiful"
+- "What would a futuristic city look like?"
+- "Make an image of a forest"
+- "Generate a picture of..."
+- "Can you create an illustration of..."
+- "I want to see what X looks like"
+
+Only respond with the JSON object, nothing else."""
+
+        intent_response = openai.chat.completions.create(
+            model=DEFAULT_LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are an expert at analyzing user intent for image generation requests. Always respond with valid JSON only."},
+                {"role": "user", "content": intent_analysis_prompt}
+            ],
+            temperature=0.3,
+            max_tokens=200
+        )
+        
+        # Parse the AI response
+        try:
+            intent_result = json.loads(intent_response.choices[0].message.content.strip())
+            is_image_generation_request = intent_result.get("is_image_request", False)
+            if is_image_generation_request:
+                image_generation_prompt = intent_result.get("image_description", "")
+                print(f"AI detected image request: {is_image_generation_request}, prompt: {image_generation_prompt}", flush=True)
+        except json.JSONDecodeError:
+            print(f"Failed to parse intent analysis response: {intent_response.choices[0].message.content}", flush=True)
+            # Fall back to simple keyword detection
+            message_lower = message.lower().strip()
+            image_keywords = ["show me", "draw", "create an image", "generate", "make an image", "picture of", "what does", "look like", "visualize"]
+            is_image_generation_request = any(keyword in message_lower for keyword in image_keywords)
+            if is_image_generation_request:
+                image_generation_prompt = message  # Use original message as fallback
+    
+    except Exception as intent_error:
+        print(f"Error in intent analysis: {str(intent_error)}", flush=True)
+        # Fall back to simple keyword detection
+        message_lower = message.lower().strip()
+        image_keywords = ["show me", "draw", "create an image", "generate", "make an image", "picture of", "what does", "look like", "visualize"]
+        is_image_generation_request = any(keyword in message_lower for keyword in image_keywords)
+        if is_image_generation_request:
+            image_generation_prompt = message  # Use original message as fallback
+    
     # If image is provided, save it to a temporary file
     if image_data:
         has_image = True
@@ -132,6 +210,134 @@ def chat_with_bot_handler(user_data, bot_id):
     # Save updated conversation
     with open(conversation_file, 'w') as f:
         json.dump(conversation, f)
+    
+    # Handle image generation requests
+    if is_image_generation_request:
+        try:
+            # If no specific prompt, use the original message
+            if not image_generation_prompt:
+                image_generation_prompt = message
+            
+            # Enhance the image prompt for better generation
+            enhancement_system_message = """You are an expert at creating detailed image prompts for AI image generation. 
+Enhance the user's request by adding visual details, artistic style, lighting, mood, and composition while keeping the core intent.
+Make it specific and visually compelling. Respond with ONLY the enhanced prompt text, nothing else."""
+
+            enhance_response = openai.chat.completions.create(
+                model=DEFAULT_LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": enhancement_system_message},
+                    {"role": "user", "content": f"Enhance this image request: {image_generation_prompt}"}
+                ],
+                temperature=0.7,
+                max_tokens=300
+            )
+            
+            enhanced_prompt = enhance_response.choices[0].message.content.strip()
+            
+            # First, respond to the user about what we're going to generate
+            bot_response_content = f"I'll create an image for you! I'm generating: \"{enhanced_prompt}\""
+            
+            print(f"Generating image with enhanced prompt: {enhanced_prompt}", flush=True)
+            
+            # Generate the image using existing image generation logic
+            generation_params = {
+                "model": "gpt-image-1",
+                "prompt": enhanced_prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "quality": "auto",
+                "moderation": "auto"
+            }
+            
+            # Generate image with OpenAI
+            image_response = openai.images.generate(**generation_params)
+            
+            if image_response.data:
+                image_obj = image_response.data[0]
+                
+                # Get the base64 content from OpenAI response
+                if hasattr(image_obj, 'b64_json') and image_obj.b64_json:
+                    image_content = base64.b64decode(image_obj.b64_json)
+                    image_url = None
+                elif hasattr(image_obj, 'url') and image_obj.url:
+                    image_url = image_obj.url
+                    # Download the image
+                    image_download_response = requests.get(image_url)
+                    if image_download_response.status_code != 200:
+                        raise Exception("Failed to download generated image")
+                    image_content = image_download_response.content
+                else:
+                    raise Exception("No image data found in response")
+                
+                # Save the generated image
+                filename = f"generated_{str(uuid.uuid4())}.png"
+                filepath = os.path.join(IMAGE_FOLDER, filename)
+                
+                with open(filepath, 'wb') as f:
+                    f.write(image_content)
+                
+                # Create the URL for accessing the image
+                api_image_url = f"/api/images/{filename}"
+                
+                # Create bot response with the generated image
+                bot_response = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant", 
+                    "content": bot_response_content,
+                    "timestamp": datetime.datetime.now(UTC).isoformat(),
+                    "generated_image": True,
+                    "image_url": api_image_url,
+                    "image_prompt": enhanced_prompt
+                }
+                
+                conversation["messages"].append(bot_response)
+                with open(conversation_file, 'w') as f:
+                    json.dump(conversation, f)
+                
+                # Return response with image details
+                image_details = [{
+                    "index": "Generated Image",
+                    "caption": f"Generated: {enhanced_prompt}",
+                    "url": api_image_url,
+                    "download_url": f"{api_image_url}?download=true",
+                    "id": str(uuid.uuid4()),
+                    "dataset_id": ""
+                }]
+                
+                return jsonify({
+                    "response": bot_response_content,
+                    "conversation_id": conversation_id,
+                    "image_generated": True,
+                    "image_details": image_details,
+                    "image_prompt_used": enhanced_prompt,
+                    "debug": {"original_prompt": image_generation_prompt, "enhanced_prompt": enhanced_prompt} if debug_mode else None
+                }), 200
+            else:
+                raise Exception("No image was generated")
+                
+        except Exception as img_gen_error:
+            print(f"Error generating image: {str(img_gen_error)}", flush=True)
+            # If image generation fails, fall back to regular chat response
+            error_response = f"I tried to generate an image for you, but encountered an error: {str(img_gen_error)}. Let me help you with a text response instead."
+            
+            bot_response = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": error_response,
+                "timestamp": datetime.datetime.now(UTC).isoformat(),
+                "image_generation_failed": True
+            }
+            conversation["messages"].append(bot_response)
+            with open(conversation_file, 'w') as f:
+                json.dump(conversation, f)
+            
+            return jsonify({
+                "response": error_response,
+                "conversation_id": conversation_id,
+                "image_generation_failed": True,
+                "debug": {"error": str(img_gen_error)} if debug_mode else None
+            }), 200
         
     # Get bot info
     bots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bots")
