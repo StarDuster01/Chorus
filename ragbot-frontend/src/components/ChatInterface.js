@@ -216,12 +216,18 @@ const ChatInterface = () => {
       
       // Clear any existing messages and load the conversation messages
       // Add safeguard to handle corrupted message content
-      const cleanMessages = (conversation.messages || []).map(msg => ({
-        ...msg,
-        content: typeof msg.content === 'string' ? msg.content : 
-                 (msg.content && typeof msg.content === 'object' ? JSON.stringify(msg.content) : '')
-      }));
+      const cleanMessages = (conversation.messages || []).map(msg => {
+        console.log('Processing loaded message:', msg.id, 'Content type:', typeof msg.content, 'Content:', msg.content);
+        
+        return {
+          ...msg,
+          content: typeof msg.content === 'string' ? msg.content : 
+                   (msg.content && typeof msg.content === 'object' ? JSON.stringify(msg.content) : 
+                   msg.content || '[Empty message]')
+        };
+      });
       
+      console.log('Loaded conversation with', cleanMessages.length, 'messages');
       setMessages(cleanMessages);
       
       // Hide the conversation list
@@ -464,6 +470,15 @@ const ChatInterface = () => {
         image_generated: response.image_generated, // Track if this is a generated image
         image_prompt_used: response.image_prompt_used // Store the prompt used for generation
       };
+
+      console.log('Creating bot message:', {
+        id: botMessage.id,
+        contentType: typeof botMessage.content,
+        contentLength: botMessage.content ? botMessage.content.length : 0,
+        contentPreview: botMessage.content ? botMessage.content.substring(0, 100) + '...' : 'NO CONTENT',
+        hasImageDetails: !!botMessage.image_details,
+        hasSourceDocs: !!botMessage.source_documents
+      });
 
       setMessages(prev => [...prev, botMessage]);
       
@@ -913,6 +928,9 @@ const ChatInterface = () => {
                   </div>
                 ) : (
                   messages.map((msg, index) => {
+                    // Debug logging
+                    console.log('Rendering message:', msg.id, 'Content type:', typeof msg.content, 'Content:', msg.content);
+                    
                     return (
                     <div 
                       key={msg.id} 
@@ -925,51 +943,69 @@ const ChatInterface = () => {
                         ) : (
                           // Display bot messages with markdown rendering
                           <div className="markdown-content">
-                            <ReactMarkdown 
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                // Apply custom styles to markdown elements
-                                code: ({node, inline, className, children, ...props}) => {
-                                  const style = inline ? markdownStyles.code : markdownStyles.pre;
-                                  return (
-                                    <code
-                                      className={className}
-                                      style={style}
-                                      {...props}
-                                    >
+                            {/* Debug display - remove after fixing */}
+                            {process.env.NODE_ENV === 'development' && (
+                              <div style={{fontSize: '10px', color: 'red', marginBottom: '5px'}}>
+                                DEBUG: {typeof msg.content} - {msg.content ? 'HAS_CONTENT' : 'NO_CONTENT'}
+                              </div>
+                            )}
+                            
+                            {/* Try to render with ReactMarkdown first */}
+                            {msg.content && typeof msg.content === 'string' ? (
+                              <ReactMarkdown 
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  // Apply custom styles to markdown elements
+                                  code: ({node, inline, className, children, ...props}) => {
+                                    const style = inline ? markdownStyles.code : markdownStyles.pre;
+                                    return (
+                                      <code
+                                        className={className}
+                                        style={style}
+                                        {...props}
+                                      >
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+                                  pre: ({node, children, ...props}) => (
+                                    <pre style={markdownStyles.pre} {...props}>
                                       {children}
-                                    </code>
-                                  );
-                                },
-                                pre: ({node, children, ...props}) => (
-                                  <pre style={markdownStyles.pre} {...props}>
-                                    {children}
-                                  </pre>
-                                ),
-                                blockquote: ({node, children, ...props}) => (
-                                  <blockquote style={markdownStyles.blockquote} {...props}>
-                                    {children}
-                                  </blockquote>
-                                ),
-                                table: ({node, children, ...props}) => (
-                                  <table style={markdownStyles.table} {...props}>
-                                    {children}
-                                  </table>
-                                ),
-                                th: ({node, children, ...props}) => (
-                                  <th style={markdownStyles.th} {...props}>
-                                    {children}
-                                  </th>
-                                ),
-                                td: ({node, children, ...props}) => (
-                                  <td style={markdownStyles.td} {...props}>
-                                    {children}
-                                  </td>
-                                )
-                              }}
-                            >
-                              {typeof msg.content === 'string' ? msg.content : ''}
-                            </ReactMarkdown>
+                                    </pre>
+                                  ),
+                                  blockquote: ({node, children, ...props}) => (
+                                    <blockquote style={markdownStyles.blockquote} {...props}>
+                                      {children}
+                                    </blockquote>
+                                  ),
+                                  table: ({node, children, ...props}) => (
+                                    <table style={markdownStyles.table} {...props}>
+                                      {children}
+                                    </table>
+                                  ),
+                                  th: ({node, children, ...props}) => (
+                                    <th style={markdownStyles.th} {...props}>
+                                      {children}
+                                    </th>
+                                  ),
+                                  td: ({node, children, ...props}) => (
+                                    <td style={markdownStyles.td} {...props}>
+                                      {children}
+                                    </td>
+                                  )
+                                }}
+                              >
+                                {msg.content}
+                              </ReactMarkdown>
+                            ) : (
+                              // Fallback for non-string content or empty content
+                              <div style={{color: 'red', fontStyle: 'italic'}}>
+                                {msg.content ? 
+                                  `[Invalid content type: ${typeof msg.content}] ${JSON.stringify(msg.content)}` : 
+                                  '[No content]'
+                                }
+                              </div>
+                            )}
                             
                             {/* Display images from bot response if any */}
                             {msg.role === 'assistant' && msg.image_details && msg.image_details.length > 0 && (
