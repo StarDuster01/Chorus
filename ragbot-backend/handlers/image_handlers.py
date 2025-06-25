@@ -394,7 +394,7 @@ Respond with ONLY the enhanced prompt text, nothing else. No explanations or add
                 {"role": "user", "content": f"Enhance this image prompt: {original_prompt}"}
             ],
             temperature=0.7,
-            max_tokens=500
+            max_completion_tokens=500
         )
         
         enhanced_prompt = response.choices[0].message.content.strip()

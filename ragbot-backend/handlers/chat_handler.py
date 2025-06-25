@@ -150,7 +150,7 @@ Only respond with the JSON object, nothing else."""
                 {"role": "user", "content": intent_analysis_prompt}
             ],
             temperature=0.3,
-            max_tokens=200
+            max_completion_tokens=200
         )
         
         # Parse the AI response
@@ -312,7 +312,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     {"role": "user", "content": f"Enhance this image request: {image_generation_prompt}"}
                 ],
                 temperature=0.7,
-                max_tokens=300
+                max_completion_tokens=300
             )
             
             enhanced_prompt = enhance_response.choices[0].message.content.strip()
@@ -485,7 +485,7 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
             response = openai.chat.completions.create(
                 model=DEFAULT_LLM_MODEL,
                 messages=messages,
-                max_tokens=1024
+                max_completion_tokens=1024
             )
             
             response_text = response.choices[0].message.content
@@ -1898,7 +1898,7 @@ def chat_with_image_handler(user_data, bot_id):
         resp = openai.chat.completions.create(
             model="gpt-4o",
             messages=payload,
-            max_tokens=1024
+            max_completion_tokens=1024
         )
         reply = resp.choices[0].message.content
 
