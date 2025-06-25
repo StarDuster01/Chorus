@@ -175,8 +175,8 @@ const ChatInterface = () => {
           // Load available chorus configurations
           loadChorusConfigurations();
           
-          // Load conversation history
-          loadConversations();
+          // Load conversation history - TEMPORARILY DISABLED TO AVOID CORRUPTED DATA
+          // loadConversations();
           
           // Load bot datasets
           loadBotDatasets();
@@ -215,7 +215,14 @@ const ChatInterface = () => {
       setCurrentConversationId(conversationId);
       
       // Clear any existing messages and load the conversation messages
-      setMessages(conversation.messages || []);
+      // Add safeguard to handle corrupted message content
+      const cleanMessages = (conversation.messages || []).map(msg => ({
+        ...msg,
+        content: typeof msg.content === 'string' ? msg.content : 
+                 (msg.content && typeof msg.content === 'object' ? JSON.stringify(msg.content) : '')
+      }));
+      
+      setMessages(cleanMessages);
       
       // Hide the conversation list
       setShowConversations(false);
@@ -975,7 +982,11 @@ const ChatInterface = () => {
                     <p className="small">This bot uses RAG (Retrieval Augmented Generation) to answer your questions based on specific documents.</p>
                   </div>
                 ) : (
-                  messages.map(msg => (
+                  messages.map((msg, index) => {
+                    // Debug logging
+                    console.log('Message content:', msg.content, 'Type:', typeof msg.content);
+                    
+                    return (
                     <div 
                       key={msg.id} 
                       className={`message ${msg.role === 'user' ? 'user-message' : 'bot-message'}`}
@@ -983,7 +994,7 @@ const ChatInterface = () => {
                       <div className="message-content">
                         {msg.role === 'user' ? (
                           // Display user messages normally (no markdown processing)
-                          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
+                          <div>{typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}</div>
                         ) : (
                           // Display bot messages with markdown rendering
                           <div className="markdown-content">
@@ -1030,7 +1041,7 @@ const ChatInterface = () => {
                                 )
                               }}
                             >
-                              {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}
+                              {typeof msg.content === 'string' ? msg.content : ''}
                             </ReactMarkdown>
                             
                             {/* Display images from bot response if any */}
@@ -1099,7 +1110,8 @@ const ChatInterface = () => {
                         {formatTime(msg.timestamp)}
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
                 
                 {loading && (
