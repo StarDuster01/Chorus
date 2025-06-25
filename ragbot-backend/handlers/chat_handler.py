@@ -166,13 +166,41 @@ Remember:
         if not DEFAULT_LLM_MODEL.startswith('o3-'):
             intent_params["temperature"] = 0.3
             
-        intent_response = openai.chat.completions.create(**intent_params)
+        # Try intent analysis with retry mechanism
+        max_retries = 2
+        intent_response = None
         
-        # Debug: Print the raw response from intent analysis
-        raw_response = intent_response.choices[0].message.content
-        print(f"INTENT ANALYSIS DEBUG - Raw response length: {len(raw_response) if raw_response else 0}", flush=True)
-        print(f"INTENT ANALYSIS DEBUG - Raw response: '{raw_response}'", flush=True)
-        print(f"INTENT ANALYSIS DEBUG - Response type: {type(raw_response)}", flush=True)
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"INTENT ANALYSIS DEBUG - Attempt {attempt + 1}/{max_retries + 1}", flush=True)
+                intent_response = openai.chat.completions.create(**intent_params)
+                
+                # Check if we got a valid response
+                raw_response = intent_response.choices[0].message.content
+                if raw_response and raw_response.strip():
+                    # Debug: Print the raw response from intent analysis
+                    print(f"INTENT ANALYSIS DEBUG - Raw response length: {len(raw_response) if raw_response else 0}", flush=True)
+                    print(f"INTENT ANALYSIS DEBUG - Raw response: '{raw_response}'", flush=True)
+                    print(f"INTENT ANALYSIS DEBUG - Response type: {type(raw_response)}", flush=True)
+                    break  # Success, exit retry loop
+                else:
+                    print(f"INTENT ANALYSIS DEBUG - Attempt {attempt + 1} returned empty response", flush=True)
+                    if attempt < max_retries:
+                        # Try with a different model if available
+                        if DEFAULT_LLM_MODEL.startswith('o3-') and attempt == 0:
+                            print("INTENT ANALYSIS DEBUG - Switching to GPT-4.1 for retry", flush=True)
+                            intent_params["model"] = "gpt-4.1-2025-04-14"
+                            intent_params["temperature"] = 0.3
+                        continue
+                    else:
+                        print("INTENT ANALYSIS DEBUG - All attempts failed, using fallback", flush=True)
+                        raise Exception("Intent analysis returned empty response after all retries")
+                        
+            except Exception as retry_error:
+                print(f"INTENT ANALYSIS DEBUG - Attempt {attempt + 1} failed: {str(retry_error)}", flush=True)
+                if attempt == max_retries:
+                    raise retry_error
+                continue
         
         # Parse the AI response
         try:
