@@ -118,7 +118,7 @@ Only respond with the JSON object, nothing else."""
                 {"role": "user", "content": intent_analysis_prompt}
             ],
             temperature=0.3,
-            max_tokens=200
+            max_tokens=500
         )
         
         # Parse the AI response
