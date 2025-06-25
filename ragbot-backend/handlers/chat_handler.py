@@ -154,19 +154,16 @@ Remember:
 
         # Handle temperature for o3 models
         intent_params = {
-            "model": DEFAULT_LLM_MODEL,
+            "model": "gpt-4.1-2025-04-14",  # Use reliable model for intent analysis
             "messages": [
                 {"role": "system", "content": "You are an expert at analyzing user intent to determine if they want to generate new images, retrieve existing images, or get text responses. Always respond with valid JSON only."},
                 {"role": "user", "content": intent_analysis_prompt}
             ],
-            "max_completion_tokens": 200
+            "max_completion_tokens": 200,
+            "temperature": 0.3
         }
-        
-        # Only add temperature for non-o3 models
-        if not DEFAULT_LLM_MODEL.startswith('o3-'):
-            intent_params["temperature"] = 0.3
             
-        # Try intent analysis with retry mechanism
+        # Try intent analysis with simplified retry (GPT-4.1 is reliable)
         max_retries = 2
         intent_response = None
         
@@ -381,17 +378,14 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
 
             # Handle temperature for o3 models
             enhance_params = {
-                "model": DEFAULT_LLM_MODEL,
+                "model": "gpt-4.1-2025-04-14",  # Use reliable model for prompt enhancement
                 "messages": [
                     {"role": "system", "content": enhancement_system_message},
                     {"role": "user", "content": f"Enhance this image request: {image_generation_prompt}"}
                 ],
-                "max_completion_tokens": 300
+                "max_completion_tokens": 300,
+                "temperature": 0.7
             }
-            
-            # Only add temperature for non-o3 models
-            if not DEFAULT_LLM_MODEL.startswith('o3-'):
-                enhance_params["temperature"] = 0.7
                 
             enhance_response = openai.chat.completions.create(**enhance_params)
             

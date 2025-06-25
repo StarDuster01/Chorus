@@ -131,11 +131,12 @@ class GlobalModelManager:
 global_model_manager = GlobalModelManager()
 
 class ImageProcessor:
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, auto_load_all: bool = False):
         """Initialize the image processor with models for embedding and captioning
         
         Args:
             data_dir: Base directory for saving indices and metadata
+            auto_load_all: Whether to automatically load all existing datasets (default: False for efficiency)
         """
         self.data_dir = data_dir
         self.image_indices = {}  # Dataset ID -> FAISS index
@@ -145,8 +146,9 @@ class ImageProcessor:
         self.indices_dir = os.path.join(data_dir, "image_indices")
         os.makedirs(self.indices_dir, exist_ok=True)
         
-        # Load indices for existing datasets
-        self._load_existing_indices()
+        # Only load all indices if explicitly requested (for backward compatibility)
+        if auto_load_all:
+            self._load_existing_indices()
     
     def _load_models(self):
         """Use pre-loaded global models"""
@@ -157,6 +159,63 @@ class ImageProcessor:
         """Legacy method - models are now managed globally"""
         pass
     
+    def _load_specific_dataset(self, dataset_id: str):
+        """Load FAISS index and metadata for a specific dataset only
+        
+        Args:
+            dataset_id: ID of the dataset to load
+        """
+        if not os.path.exists(self.indices_dir):
+            return
+            
+        metadata_file = os.path.join(self.indices_dir, f"{dataset_id}_metadata.json")
+        index_path = os.path.join(self.indices_dir, f"{dataset_id}_index.faiss")
+        
+        try:
+            # Load metadata first
+            if os.path.exists(metadata_file):
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                # Ensure each image has the correct dataset_id
+                valid_metadata = []
+                for img_meta in metadata:
+                    if not img_meta.get('dataset_id'):
+                        img_meta['dataset_id'] = dataset_id
+                    # Only include images that belong to this dataset
+                    if img_meta.get('dataset_id') == dataset_id:
+                        valid_metadata.append(img_meta)
+                
+                # Store metadata
+                self.image_metadata[dataset_id] = valid_metadata
+                
+                # Try to load index if it exists
+                if os.path.exists(index_path):
+                    cpu_index = faiss.read_index(index_path)
+                    
+                    # Move to GPU if available
+                    if USE_GPU_FAISS and global_model_manager.gpu_resources:
+                        try:
+                            gpu_index = faiss.index_cpu_to_gpu(
+                                global_model_manager.gpu_resources, 0, cpu_index
+                            )
+                            self.image_indices[dataset_id] = gpu_index
+                            print(f"Loaded GPU image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                        except Exception as e:
+                            print(f"Failed to load GPU index, using CPU: {str(e)}")
+                            self.image_indices[dataset_id] = cpu_index
+                            print(f"Loaded CPU image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                    else:
+                        self.image_indices[dataset_id] = cpu_index
+                        print(f"Loaded CPU image index for dataset {dataset_id} with {len(valid_metadata)} images")
+                else:
+                    print(f"Warning: Metadata found for dataset {dataset_id} but no index file")
+            else:
+                print(f"No metadata file found for dataset {dataset_id}")
+                
+        except Exception as e:
+            print(f"Error loading data for {dataset_id}: {str(e)}")
+
     def _load_existing_indices(self):
         """Load existing FAISS indices and metadata for datasets"""
         if not os.path.exists(self.indices_dir):
@@ -492,8 +551,8 @@ class ImageProcessor:
             List[Dict]: List of image metadata for matching images
         """
         # Always reload the latest index and metadata from disk before searching
-        print(f"[Image Search] Reloading index and metadata for dataset {dataset_id} before search...")
-        self._load_existing_indices()
+        print(f"[Image Search] Loading index and metadata for dataset {dataset_id}...")
+        self._load_specific_dataset(dataset_id)
         # Check if dataset exists
         if dataset_id not in self.image_indices or dataset_id not in self.image_metadata:
             print(f"[Image Search] Dataset {dataset_id} not found in indices or metadata after reload.")
@@ -709,7 +768,26 @@ class ImageProcessor:
             return True
         except Exception as e:
             print(f"Error deleting dataset {dataset_id}: {str(e)}")
-            return False 
+            return False
+
+    def load_bot_datasets(self, dataset_ids: List[str]):
+        """Load only the datasets that a specific bot has access to
+        
+        Args:
+            dataset_ids: List of dataset IDs to load
+        """
+        print(f"Loading image indices for {len(dataset_ids)} bot datasets...")
+        for dataset_id in dataset_ids:
+            if dataset_id not in self.image_indices:
+                self._load_specific_dataset(dataset_id)
+        
+        if dataset_ids:
+            print(f"Loaded image metadata for bot datasets:")
+            for dataset_id in dataset_ids:
+                if dataset_id in self.image_metadata:
+                    print(f"  - Dataset {dataset_id}: {len(self.image_metadata[dataset_id])} images")
+                else:
+                    print(f"  - Dataset {dataset_id}: not found")
 
 # Default ImageProcessor instance for handlers
 _default_data_dir = os.path.dirname(os.path.abspath(__file__))
