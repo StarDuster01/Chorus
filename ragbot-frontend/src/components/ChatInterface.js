@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Container, Row, Col, Form, Button, Card, Alert, Dropdown, Modal, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import botService from '../services/botService';
 import LoadingAnimation from './LoadingAnimation';
 import TesseractLoader from './TesseractLoader';
@@ -990,6 +991,7 @@ const ChatInterface = () => {
                           ) : (
                             <div className="markdown-content">
                               <ReactMarkdown 
+                                remarkPlugins={[remarkGfm]}
                                 components={{
                                   // Apply custom styles to markdown elements
                                   code: ({node, inline, className, children, ...props}) => {
