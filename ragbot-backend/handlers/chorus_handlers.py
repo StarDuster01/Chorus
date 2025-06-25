@@ -34,7 +34,6 @@ def get_chorus_config_handler(user_data, bot_id):
     
     # Get the user's chorus definitions
     # Using CHORUSES_FOLDER from constants
-    os.makedirs(chorus_dir, exist_ok=True)
     
     user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
     if not os.path.exists(user_choruses_file):
@@ -82,7 +81,6 @@ def save_chorus_config_handler(user_data, bot_id):
     try:
         # Create chorus directory if it doesn't exist
         # Using CHORUSES_FOLDER from constants
-        os.makedirs(chorus_dir, exist_ok=True)
         
         # Load or create user's chorus list
         user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
@@ -188,7 +186,6 @@ def set_bot_chorus_handler(user_data, bot_id):
 def list_choruses_handler(user_data):
     # Get all chorus configurations
     # Using CHORUSES_FOLDER from constants
-    os.makedirs(chorus_dir, exist_ok=True)
     
     # First check if there's a user-specific choruses file
     user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
@@ -220,7 +217,6 @@ def create_chorus_handler(user_data):
     
     # Create chorus directory if it doesn't exist
     # Using CHORUSES_FOLDER from constants
-    os.makedirs(chorus_dir, exist_ok=True)
     
     # Load user's chorus definitions
     user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")

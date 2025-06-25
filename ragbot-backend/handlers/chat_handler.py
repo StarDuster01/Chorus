@@ -65,6 +65,7 @@ def chat_with_bot_handler(user_data, bot_id):
     # Use AI to intelligently detect if this is an image generation request
     is_image_generation_request = False
     image_generation_prompt = ""
+    force_image_search = False
     
     # Get conversation context for better analysis
     conversation_context = ""
@@ -80,78 +81,142 @@ def chat_with_bot_handler(user_data, bot_id):
     
     # Use AI to determine if the user wants an image generated (vs retrieving existing images from dataset)
     try:
-        intent_analysis_prompt = f"""Analyze if the user is requesting a NEW image to be generated/created/drawn, versus asking to see EXISTING images from a knowledge base/dataset.
+        intent_analysis_prompt = f"""You are analyzing the user's intent to determine what type of response they want. There are THREE possible pathways:
+
+Consider the conversation context and the specific wording of their request:
 
 Conversation context:
 {conversation_context}
 
 Current user message: "{message}"
 
+**THREE RESPONSE TYPES:**
+
+1. **GENERATE_IMAGE**: User wants a new image created/generated
+2. **RETRIEVE_IMAGES**: User wants to see existing images from the dataset
+3. **TEXT_RESPONSE**: User wants a regular text-based answer (default)
+
+**DECISION CRITERIA:**
+
+**GENERATE_IMAGE** - Choose when:
+- Explicit creation words: "Create", "Generate", "Draw", "Make", "Paint", "Design"
+- Artistic/creative requests: "What would X look like?", "Show me a picture of [abstract/creative concept]"
+- Hypothetical visualizations: "Imagine", "Visualize", "Illustrate"
+
+**RETRIEVE_IMAGES** - Choose when:
+- Asking to see existing content: "Show me", "Display", "Find images of"
+- Requesting specific products/items that likely exist in datasets
+- Company/organizational visual content requests
+- "What images do you have about..."
+
+**TEXT_RESPONSE** - Choose when:
+- General questions without image intent
+- Asking for information, explanations, help
+- Text-based queries about data or facts
+- Any request that doesn't clearly indicate wanting images
+
+**EXAMPLES:**
+
+GENERATE_IMAGE:
+- "Draw me a sunset"
+- "Create an image of a dragon"
+- "What would a futuristic car look like?"
+- "Generate a picture of happiness"
+
+RETRIEVE_IMAGES:
+- "Show me our products"
+- "Display the company logos"
+- "Find images of [specific items]"
+- "What pictures do you have of [topic]?"
+
+TEXT_RESPONSE:
+- "What is our return policy?"
+- "Tell me about nutrition facts"
+- "How do I cook this?"
+- "Explain the benefits of..."
+
 Respond with a JSON object in this exact format:
 {{
-    "is_image_request": true/false,
-    "image_description": "detailed description of what image to generate (only if is_image_request is true)"
+    "intent": "GENERATE_IMAGE" | "RETRIEVE_IMAGES" | "TEXT_RESPONSE",
+    "image_description": "detailed description (only if intent is GENERATE_IMAGE)"
 }}
-
-GENERATE NEW IMAGE (is_image_request: true):
-- "Can you show me what a sunset looks like?" (general/creative request)
-- "I'd like to see a cat" (generic animal/object)
-- "Draw me something beautiful" (creative request)
-- "What would a futuristic city look like?" (hypothetical/creative)
-- "Make an image of a forest" (explicit generation)
-- "Generate a picture of..." (explicit generation)
-- "Create an illustration of..." (explicit creation)
-- "What does happiness look like?" (abstract concept)
-
-RETRIEVE EXISTING IMAGES (is_image_request: false):
-- "Show me our products" (company-specific)
-- "What does our logo look like?" (company-specific)
-- "Show me the diagram from the presentation" (document-specific)
-- "Display our company policy images" (organization-specific)
-- "Show me the screenshots" (dataset-specific)
-- "What images do you have about X?" (asking about existing content)
-- "Find pictures of our events" (organization-specific)
-
-Key distinction: If the request is about specific organizational content, existing documents, or company-specific material, choose FALSE. If it's a general creative request or hypothetical visualization, choose TRUE.
 
 Only respond with the JSON object, nothing else."""
 
         intent_response = openai.chat.completions.create(
             model=DEFAULT_LLM_MODEL,
             messages=[
-                {"role": "system", "content": "You are an expert at analyzing user intent for image generation requests. Always respond with valid JSON only."},
+                {"role": "system", "content": "You are an expert at analyzing user intent to determine if they want to generate new images, retrieve existing images, or get text responses. Always respond with valid JSON only."},
                 {"role": "user", "content": intent_analysis_prompt}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=200
         )
         
         # Parse the AI response
         try:
             intent_result = json.loads(intent_response.choices[0].message.content.strip())
-            is_image_generation_request = intent_result.get("is_image_request", False)
-            if is_image_generation_request:
+            user_intent = intent_result.get("intent", "TEXT_RESPONSE")
+            
+            if user_intent == "GENERATE_IMAGE":
+                is_image_generation_request = True
+                force_image_search = False
                 image_generation_prompt = intent_result.get("image_description", "")
-                print(f"AI detected image request: {is_image_generation_request}, prompt: {image_generation_prompt}", flush=True)
+                print(f"AI detected intent: {user_intent}, prompt: {image_generation_prompt}", flush=True)
+            elif user_intent == "RETRIEVE_IMAGES":
+                is_image_generation_request = False
+                # Force image search in RAG process by treating as image query
+                force_image_search = True
+                print(f"AI detected intent: {user_intent} - will search dataset for existing images", flush=True)
+            else:  # TEXT_RESPONSE
+                is_image_generation_request = False
+                force_image_search = False
+                print(f"AI detected intent: {user_intent} - will provide regular text response", flush=True)
         except json.JSONDecodeError:
             print(f"Failed to parse intent analysis response: {intent_response.choices[0].message.content}", flush=True)
             # Fall back to conservative keyword detection (avoid conflicts with dataset image retrieval)
             message_lower = message.lower().strip()
-            # More specific keywords that clearly indicate NEW image generation (not dataset retrieval)
-            generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture"]
-            is_image_generation_request = any(keyword in message_lower for keyword in generation_keywords)
-            if is_image_generation_request:
+            # Very specific keywords that clearly indicate NEW image generation
+            generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture", "paint me", "illustrate"]
+            # Default to retrieval for "show me" style requests
+            retrieval_indicators = ["show me", "display", "find", "what do you have"]
+            has_retrieval_indicators = any(indicator in message_lower for indicator in retrieval_indicators)
+            has_generation_keywords = any(keyword in message_lower for keyword in generation_keywords)
+            
+            # Determine intent based on keywords
+            if has_generation_keywords and not has_retrieval_indicators:
+                is_image_generation_request = True
+                force_image_search = False
                 image_generation_prompt = message  # Use original message as fallback
+            elif has_retrieval_indicators:
+                is_image_generation_request = False
+                force_image_search = True  # Force image search for retrieval requests
+            else:
+                is_image_generation_request = False
+                force_image_search = False  # Regular text response
     
     except Exception as intent_error:
         print(f"Error in intent analysis: {str(intent_error)}", flush=True)
         # Fall back to conservative keyword detection (avoid conflicts with dataset image retrieval)
         message_lower = message.lower().strip()
-        # More specific keywords that clearly indicate NEW image generation (not dataset retrieval)
-        generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture"]
-        is_image_generation_request = any(keyword in message_lower for keyword in generation_keywords)
-        if is_image_generation_request:
+        # Very specific keywords that clearly indicate NEW image generation
+        generation_keywords = ["draw me", "create an image", "generate an image", "make an image", "create a picture", "generate a picture", "paint me", "illustrate"]
+        # Default to retrieval for "show me" style requests
+        retrieval_indicators = ["show me", "display", "find", "what do you have"]
+        has_retrieval_indicators = any(indicator in message_lower for indicator in retrieval_indicators)
+        has_generation_keywords = any(keyword in message_lower for keyword in generation_keywords)
+        
+        # Determine intent based on keywords
+        if has_generation_keywords and not has_retrieval_indicators:
+            is_image_generation_request = True
+            force_image_search = False
             image_generation_prompt = message  # Use original message as fallback
+        elif has_retrieval_indicators:
+            is_image_generation_request = False
+            force_image_search = True  # Force image search for retrieval requests
+        else:
+            is_image_generation_request = False
+            force_image_search = False  # Regular text response
     
     # If image is provided, save it to a temporary file
     if image_data:
@@ -254,6 +319,18 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
             
             # First, respond to the user about what we're going to generate
             bot_response_content = f"I'll create an image for you! I'm generating: \"{enhanced_prompt}\""
+            
+            # Create and save the notification message first
+            notification_message = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant", 
+                "content": bot_response_content,
+                "timestamp": datetime.datetime.now(UTC).isoformat(),
+                "image_generation_notification": True
+            }
+            conversation["messages"].append(notification_message)
+            with open(conversation_file, 'w') as f:
+                json.dump(conversation, f)
             
             print(f"Generating image with enhanced prompt: {enhanced_prompt}", flush=True)
             
@@ -520,13 +597,15 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     ]
                     
                     # Use a more aggressive check for image queries - partial matches and phrases
-                    is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me')
+                    is_image_query = any(term in message.lower() for term in image_query_terms) or message.lower().strip().startswith('show me') or force_image_search
                     
                     # Debug: Log image query detection decision
-                    print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query}", flush=True)
+                    print(f"IMAGE SEARCH DEBUG: Query '{message}' - Is image query? {is_image_query} (force_image_search: {force_image_search})", flush=True)
                     if is_image_query:
                         matching_terms = [term for term in image_query_terms if term in message.lower()]
                         print(f"IMAGE SEARCH DEBUG: Matched terms: {matching_terms}", flush=True)
+                        if force_image_search:
+                            print(f"IMAGE SEARCH DEBUG: Forced image search due to RETRIEVE_IMAGES intent", flush=True)
                     
                     # Check dataset type and image count from metadata first
                     datasets_dir = DATASETS_FOLDER
@@ -549,7 +628,8 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
                     
                     # Skip image retrieval if this is not an image query AND dataset has no images
                     # But always mark dataset as having data if images exist, even for non-image queries
-                    if not is_image_query and not (has_images or metadata_count > 0):
+                    # Never skip if force_image_search is True
+                    if not is_image_query and not (has_images or metadata_count > 0) and not force_image_search:
                         print(f"IMAGE SEARCH DEBUG: Skipping image retrieval for non-image query with no images: '{message}'", flush=True)
                         continue
                     
