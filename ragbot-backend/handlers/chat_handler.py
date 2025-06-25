@@ -168,17 +168,30 @@ Remember:
             
         intent_response = openai.chat.completions.create(**intent_params)
         
+        # Debug: Print the raw response from intent analysis
+        raw_response = intent_response.choices[0].message.content
+        print(f"INTENT ANALYSIS DEBUG - Raw response length: {len(raw_response) if raw_response else 0}", flush=True)
+        print(f"INTENT ANALYSIS DEBUG - Raw response: '{raw_response}'", flush=True)
+        print(f"INTENT ANALYSIS DEBUG - Response type: {type(raw_response)}", flush=True)
+        
         # Parse the AI response
         try:
-            response_content = intent_response.choices[0].message.content.strip()
+            response_content = raw_response.strip() if raw_response else ""
+            
+            # Check if response is empty
+            if not response_content:
+                print("INTENT ANALYSIS DEBUG - Response is empty, falling back to keyword detection", flush=True)
+                raise json.JSONDecodeError("Empty response", "", 0)
             
             # Try to extract JSON from the response - sometimes AI adds extra text
             json_start = response_content.find('{')
             json_end = response_content.rfind('}') + 1
             if json_start >= 0 and json_end > json_start:
                 json_content = response_content[json_start:json_end]
+                print(f"INTENT ANALYSIS DEBUG - Extracted JSON: '{json_content}'", flush=True)
             else:
                 json_content = response_content
+                print(f"INTENT ANALYSIS DEBUG - Using full response as JSON: '{json_content}'", flush=True)
             
             intent_result = json.loads(json_content)
             user_intent = intent_result.get("intent", "TEXT_RESPONSE")
@@ -325,6 +338,13 @@ Remember:
             # If no specific prompt, use the original message
             if not image_generation_prompt:
                 image_generation_prompt = message
+                
+            # Validate that we have a non-empty prompt
+            if not image_generation_prompt or image_generation_prompt.strip() == "":
+                print("IMAGE GENERATION DEBUG - Empty prompt detected, falling back to text response", flush=True)
+                raise Exception("Empty image generation prompt")
+            
+            print(f"IMAGE GENERATION DEBUG - Using prompt: '{image_generation_prompt}'", flush=True)
             
             # Enhance the image prompt for better generation
             enhancement_system_message = """You are an expert at creating detailed image prompts for AI image generation. 
@@ -348,6 +368,18 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
             enhance_response = openai.chat.completions.create(**enhance_params)
             
             enhanced_prompt = enhance_response.choices[0].message.content.strip()
+            
+            print(f"IMAGE GENERATION DEBUG - Enhanced prompt: '{enhanced_prompt}'", flush=True)
+            print(f"IMAGE GENERATION DEBUG - Enhanced prompt length: {len(enhanced_prompt) if enhanced_prompt else 0}", flush=True)
+            
+            # Validate enhanced prompt is not empty
+            if not enhanced_prompt or enhanced_prompt.strip() == "":
+                print("IMAGE GENERATION DEBUG - Enhanced prompt is empty, using original prompt", flush=True)
+                enhanced_prompt = image_generation_prompt
+            
+            # Final validation
+            if not enhanced_prompt or enhanced_prompt.strip() == "":
+                raise Exception("Both original and enhanced prompts are empty")
             
             # First, respond to the user about what we're going to generate
             bot_response_content = f"I'll create an image for you! I'm generating: \"{enhanced_prompt}\""
