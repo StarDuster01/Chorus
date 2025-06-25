@@ -982,106 +982,102 @@ const ChatInterface = () => {
                     >
                       <div className="message-content">
                         {msg.role === 'user' ? (
-                          // Display user messages normally
-                          typeof msg.content === 'object' ? msg.content : msg.content
+                          // Display user messages normally (no markdown processing)
+                          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
                         ) : (
                           // Display bot messages with markdown rendering
-                          typeof msg.content === 'object' ? (
-                            msg.content
-                          ) : (
-                            <div className="markdown-content">
-                              <ReactMarkdown 
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                  // Apply custom styles to markdown elements
-                                  code: ({node, inline, className, children, ...props}) => {
-                                    const style = inline ? markdownStyles.code : markdownStyles.pre;
-                                    return (
-                                      <code
-                                        className={className}
-                                        style={style}
-                                        {...props}
-                                      >
-                                        {children}
-                                      </code>
-                                    );
-                                  },
-                                  pre: ({node, children, ...props}) => (
-                                    <pre style={markdownStyles.pre} {...props}>
+                          <div className="markdown-content">
+                            <ReactMarkdown 
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                // Apply custom styles to markdown elements
+                                code: ({node, inline, className, children, ...props}) => {
+                                  const style = inline ? markdownStyles.code : markdownStyles.pre;
+                                  return (
+                                    <code
+                                      className={className}
+                                      style={style}
+                                      {...props}
+                                    >
                                       {children}
-                                    </pre>
-                                  ),
-                                  blockquote: ({node, children, ...props}) => (
-                                    <blockquote style={markdownStyles.blockquote} {...props}>
-                                      {children}
-                                    </blockquote>
-                                  ),
-                                  table: ({node, children, ...props}) => (
-                                    <table style={markdownStyles.table} {...props}>
-                                      {children}
-                                    </table>
-                                  ),
-                                  th: ({node, children, ...props}) => (
-                                    <th style={markdownStyles.th} {...props}>
-                                      {children}
-                                    </th>
-                                  ),
-                                  td: ({node, children, ...props}) => (
-                                    <td style={markdownStyles.td} {...props}>
-                                      {children}
-                                    </td>
-                                  )
-                                }}
-                              >
-                                {msg.content}
-                              </ReactMarkdown>
-                              
-                              {/* Display images from bot response if any */}
-                              {msg.role === 'assistant' && msg.image_details && msg.image_details.length > 0 && (
-                                <div className="source-images mt-3 p-2 border-top">
-                                  <div className="text-muted mb-2">
-                                    {msg.image_generated ? "Generated Image:" : "Referenced Images:"}
-                                  </div>
-                                  <div className="d-flex flex-wrap gap-3">
-                                    {msg.image_details.map((img, index) => (
-                                      <div key={index} className="source-image">
-                                        <div className="mb-1 text-center small fw-bold">
-                                          {img.index}
-                                        </div>
-                                        <a 
-                                          href={img.download_url || img.url} 
-                                          target="_blank" 
-                                          rel="noreferrer"
-                                          title={img.caption || "View full image"}
-                                        >
-                                          <img 
-                                            src={img.url} 
-                                            alt={img.caption || "Generated/Referenced image"} 
-                                            style={{ 
-                                              maxWidth: '100%', 
-                                              maxHeight: msg.image_generated ? '300px' : '200px', 
-                                              borderRadius: '8px', 
-                                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
-                                            }}
-                                          />
-                                        </a>
-                                        {img.caption && (
-                                          <div className="mt-1 small text-muted">
-                                            {img.caption}
-                                          </div>
-                                        )}
-                                        {msg.image_generated && msg.image_prompt_used && (
-                                          <div className="mt-1 small text-info">
-                                            Prompt: {msg.image_prompt_used}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
+                                    </code>
+                                  );
+                                },
+                                pre: ({node, children, ...props}) => (
+                                  <pre style={markdownStyles.pre} {...props}>
+                                    {children}
+                                  </pre>
+                                ),
+                                blockquote: ({node, children, ...props}) => (
+                                  <blockquote style={markdownStyles.blockquote} {...props}>
+                                    {children}
+                                  </blockquote>
+                                ),
+                                table: ({node, children, ...props}) => (
+                                  <table style={markdownStyles.table} {...props}>
+                                    {children}
+                                  </table>
+                                ),
+                                th: ({node, children, ...props}) => (
+                                  <th style={markdownStyles.th} {...props}>
+                                    {children}
+                                  </th>
+                                ),
+                                td: ({node, children, ...props}) => (
+                                  <td style={markdownStyles.td} {...props}>
+                                    {children}
+                                  </td>
+                                )
+                              }}
+                            >
+                              {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}
+                            </ReactMarkdown>
+                            
+                            {/* Display images from bot response if any */}
+                            {msg.role === 'assistant' && msg.image_details && msg.image_details.length > 0 && (
+                              <div className="source-images mt-3 p-2 border-top">
+                                <div className="text-muted mb-2">
+                                  {msg.image_generated ? "Generated Image:" : "Referenced Images:"}
                                 </div>
-                              )}
-                            </div>
-                          )
+                                <div className="d-flex flex-wrap gap-3">
+                                  {msg.image_details.map((img, index) => (
+                                    <div key={index} className="source-image">
+                                      <div className="mb-1 text-center small fw-bold">
+                                        {img.index}
+                                      </div>
+                                      <a 
+                                        href={img.download_url || img.url} 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        title={img.caption || "View full image"}
+                                      >
+                                        <img 
+                                          src={img.url} 
+                                          alt={img.caption || "Generated/Referenced image"} 
+                                          style={{ 
+                                            maxWidth: '100%', 
+                                            maxHeight: msg.image_generated ? '300px' : '200px', 
+                                            borderRadius: '8px', 
+                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
+                                          }}
+                                        />
+                                      </a>
+                                      {img.caption && (
+                                        <div className="mt-1 small text-muted">
+                                          {img.caption}
+                                        </div>
+                                      )}
+                                      {msg.image_generated && msg.image_prompt_used && (
+                                        <div className="mt-1 small text-info">
+                                          Prompt: {msg.image_prompt_used}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
                         {msg.role === 'assistant' && msg.source_documents && msg.source_documents.length > 0 && (
                           <div className="source-documents mt-2">
