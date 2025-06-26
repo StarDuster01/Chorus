@@ -386,6 +386,14 @@ Keep the original intent and subject matter, but make it much more detailed and 
 Respond with ONLY the enhanced prompt text, nothing else. No explanations or additional text."""
 
         print(f"Calling {DEFAULT_LLM_MODEL} for enhancement...")
+        
+        # Handle temperature for models that don't support custom temperature
+        enhancement_temperature = 0.7
+        
+        # Some OpenAI models only support default temperature
+        if DEFAULT_LLM_MODEL.startswith('o3-') or DEFAULT_LLM_MODEL.startswith('gpt-4.1-'):
+            enhancement_temperature = 1.0  # These models only support default temperature
+        
         # Call the LLM to enhance the prompt
         response = openai.chat.completions.create(
             model=DEFAULT_LLM_MODEL,
@@ -393,7 +401,7 @@ Respond with ONLY the enhanced prompt text, nothing else. No explanations or add
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": f"Enhance this image prompt: {original_prompt}"}
             ],
-            temperature=0.7,
+            temperature=enhancement_temperature,
             max_completion_tokens=500
         )
         

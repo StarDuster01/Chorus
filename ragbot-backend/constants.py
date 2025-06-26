@@ -1,5 +1,5 @@
 import os
-DEFAULT_LLM_MODEL = "o3-2025-04-16"
+DEFAULT_LLM_MODEL = "gpt-4.1-2025-04-14"
 IMAGE_GENERATION_MODEL = "gpt-image-1"  
 VECTOR_DIMENSION = 512
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
