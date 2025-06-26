@@ -1017,19 +1017,18 @@ Make it specific and visually compelling. Respond with ONLY the enhanced prompt 
         # Check if using model chorus
         if use_model_chorus:
             # Check if a chorus configuration exists
-            # Get the user's chorus definitions file
-            user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-            
-            # Try to load the specific chorus from the user's choruses
             chorus_config = None
             
-            if os.path.exists(user_choruses_file) and specific_chorus_id:
+            if specific_chorus_id:
                 try:
-                    with open(user_choruses_file, 'r') as f:
-                        choruses = json.load(f)
-                        
+                    # First check default choruses
+                    from handlers.chorus_handlers import _get_default_choruses, _get_user_choruses
+                    
+                    # Get all available choruses (default + user)
+                    all_choruses = _get_default_choruses() + _get_user_choruses(user_data['id'])
+                    
                     # Find the requested chorus
-                    chorus_config = next((c for c in choruses if c["id"] == specific_chorus_id), None)
+                    chorus_config = next((c for c in all_choruses if c["id"] == specific_chorus_id), None)
                     
                     if debug_mode and chorus_config:
                         print(f"Using chorus configuration: {chorus_config.get('name', 'Unnamed')}", flush=True)
