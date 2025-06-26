@@ -153,15 +153,22 @@ Remember:
 - Only include "image_description" if intent is "GENERATE_IMAGE"
 - Respond with ONLY the JSON object, nothing else."""
 
-        # Handle temperature for o3 models
+        # Handle temperature for o3 and gpt-4.1 models that don't support custom temperature
+        intent_model = "gpt-4.1-2025-04-14"
+        intent_temperature = 0.3
+        
+        # Some OpenAI models only support default temperature
+        if intent_model.startswith('o3-') or intent_model.startswith('gpt-4.1-'):
+            intent_temperature = 1.0  # These models only support default temperature
+        
         intent_params = {
-            "model": "gpt-4.1-2025-04-14",  # Use reliable model for intent analysis
+            "model": intent_model,
             "messages": [
                 {"role": "system", "content": "You are an expert at analyzing user intent to determine if they want to generate new images, retrieve existing images, or get text responses. Always respond with valid JSON only."},
                 {"role": "user", "content": intent_analysis_prompt}
             ],
             "max_completion_tokens": 200,
-            "temperature": 0.3
+            "temperature": intent_temperature
         }
             
         # Try intent analysis with simplified retry (GPT-4.1 is reliable)
@@ -188,7 +195,7 @@ Remember:
                         if DEFAULT_LLM_MODEL.startswith('o3-') and attempt == 0:
                             print("INTENT ANALYSIS DEBUG - Switching to GPT-4.1 for retry", flush=True)
                             intent_params["model"] = "gpt-4.1-2025-04-14"
-                            intent_params["temperature"] = 0.3
+                            intent_params["temperature"] = 1.0  # gpt-4.1 only supports default temperature
                         continue
                     else:
                         print("INTENT ANALYSIS DEBUG - All attempts failed, using fallback", flush=True)
@@ -377,15 +384,22 @@ Remember:
 Enhance the user's request by adding visual details, artistic style, lighting, mood, and composition while keeping the core intent.
 Make it specific and visually compelling. Respond with ONLY the enhanced prompt text, nothing else."""
 
-            # Handle temperature for o3 models
+            # Handle temperature for o3 and gpt-4.1 models that don't support custom temperature
+            enhance_model = "gpt-4.1-2025-04-14"
+            enhance_temperature = 0.7
+            
+            # Some OpenAI models only support default temperature
+            if enhance_model.startswith('o3-') or enhance_model.startswith('gpt-4.1-'):
+                enhance_temperature = 1.0  # These models only support default temperature
+            
             enhance_params = {
-                "model": "gpt-4.1-2025-04-14",  # Use reliable model for prompt enhancement
+                "model": enhance_model,
                 "messages": [
                     {"role": "system", "content": enhancement_system_message},
                     {"role": "user", "content": f"Enhance this image request: {image_generation_prompt}"}
                 ],
                 "max_completion_tokens": 300,
-                "temperature": 0.7
+                "temperature": enhance_temperature
             }
                 
             enhance_response = openai.chat.completions.create(**enhance_params)
