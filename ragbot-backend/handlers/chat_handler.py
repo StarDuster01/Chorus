@@ -9,6 +9,7 @@ import datetime
 import openai
 import anthropic
 import requests
+import threading
 
 # your ChromaDB client and image‐RAG processor
 import chroma_client

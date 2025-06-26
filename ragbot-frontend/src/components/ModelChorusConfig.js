@@ -492,8 +492,8 @@ const ModelChorusConfig = () => {
               />
               <Form.Text className="text-muted">
                 {modelType === 'response' ? 
-                  'How many instances of this model to include in the chorus. Higher weight means more influence.' : 
-                  'Weight determines how many votes this evaluator gets. Higher weight gives this model more influence.'}
+                  'How many times this model will be queried for responses. Higher weight = more API calls but more diverse responses.' : 
+                  'How many times this evaluator will vote on each response. Higher weight = more voting influence.'}
               </Form.Text>
             </Form.Group>
           </Form>

@@ -302,7 +302,7 @@ const ModelChorusManagement = () => {
             <li><strong>Response Models:</strong> Generate candidate answers to user queries</li>
             <li><strong>Evaluator Models:</strong> Vote on which response is most accurate and helpful</li>
             <li><strong>Multi-provider:</strong> Mix and match models from OpenAI, Anthropic, Groq, and Mistral</li>
-            <li><strong>Configurable Weights:</strong> Give more influence to specific models based on their quality</li>
+                            <li><strong>Configurable Weights:</strong> Control how many times each model is queried (response models) or votes (evaluator models)</li>
           </ul>
           
           <p>
