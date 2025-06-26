@@ -1,0 +1,179 @@
+[
+  {
+    "id": "default-basic-chorus",
+    "name": "Basic Chorus",
+    "description": "Good for simple questions, summarization, and quick tasks. Uses fast and cheap models.",
+    "is_default": true,
+    "response_models": [
+      {
+        "id": "resp-basic-1",
+        "provider": "Groq",
+        "model": "llama-3.1-8b-instant",
+        "temperature": 0.7,
+        "weight": 1
+      }
+    ],
+    "evaluator_models": [
+      {
+        "id": "eval-basic-1",
+        "provider": "OpenAI",
+        "model": "gpt-4.1-nano-2025-04-14",
+        "temperature": 0.2,
+        "weight": 1
+      }
+    ],
+    "use_diverse_rag": false
+  },
+  {
+    "id": "default-balanced-chorus",
+    "name": "Balanced Chorus",
+    "description": "A balanced configuration for a mix of performance and cost, suitable for most standard tasks.",
+    "is_default": true,
+    "response_models": [
+      {
+        "id": "resp-balanced-1",
+        "provider": "Groq",
+        "model": "llama-3.1-8b-instant",
+        "temperature": 0.7,
+        "weight": 2
+      },
+      {
+        "id": "resp-balanced-2",
+        "provider": "Anthropic",
+        "model": "claude-3-7-sonnet-latest",
+        "temperature": 0.7,
+        "weight": 1
+      },
+      {
+        "id": "resp-balanced-3",
+        "provider": "OpenAI",
+        "model": "gpt-4.1-nano-2025-04-14",
+        "temperature": 0.7,
+        "weight": 1
+      }
+    ],
+    "evaluator_models": [
+      {
+        "id": "eval-balanced-1",
+        "provider": "OpenAI",
+        "model": "o3-2025-04-16",
+        "temperature": 0.2,
+        "weight": 1
+      },
+      {
+        "id": "eval-balanced-2",
+        "provider": "Anthropic",
+        "model": "claude-3-7-sonnet-latest",
+        "temperature": 0.2,
+        "weight": 1
+      }
+    ],
+    "use_diverse_rag": true
+  },
+  {
+    "id": "default-advanced-chorus",
+    "name": "Advanced Chorus",
+    "description": "For complex problems requiring strong reasoning. Uses more powerful and creative models.",
+    "is_default": true,
+    "response_models": [
+      {
+        "id": "resp-advanced-1",
+        "provider": "Groq",
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.7,
+        "weight": 4
+      },
+      {
+        "id": "resp-advanced-2",
+        "provider": "Anthropic",
+        "model": "claude-3-7-sonnet-latest",
+        "temperature": 0.7,
+        "weight": 3
+      },
+      {
+        "id": "resp-advanced-3",
+        "provider": "OpenAI",
+        "model": "o3-2025-04-16",
+        "temperature": 0.7,
+        "weight": 3
+      }
+    ],
+    "evaluator_models": [
+      {
+        "id": "eval-advanced-1",
+        "provider": "OpenAI",
+        "model": "o3-2025-04-16",
+        "temperature": 0.2,
+        "weight": 5
+      },
+      {
+        "id": "eval-advanced-2",
+        "provider": "Anthropic",
+        "model": "claude-3-7-sonnet-latest",
+        "temperature": 0.2,
+        "weight": 3
+      },
+      {
+        "id": "eval-advanced-3",
+        "provider": "Groq",
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.2,
+        "weight": 2
+      }
+    ],
+    "use_diverse_rag": true
+  },
+  {
+    "id": "default-max-reasoning-chorus",
+    "name": "Maximum Reasoning Chorus",
+    "description": "For the most demanding tasks requiring deep reasoning and analysis. Warning: Expensive to run.",
+    "is_default": true,
+    "response_models": [
+      {
+        "id": "resp-max-1",
+        "provider": "Groq",
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.6,
+        "weight": 5
+      },
+      {
+        "id": "resp-max-2",
+        "provider": "Anthropic",
+        "model": "claude-3-7-sonnet-latest",
+        "temperature": 0.6,
+        "weight": 4
+      },
+      {
+        "id": "resp-max-3",
+        "provider": "OpenAI",
+        "model": "o3-2025-04-16",
+        "temperature": 0.6,
+        "weight": 4
+      }
+    ],
+    "evaluator_models": [
+      {
+        "id": "eval-max-1",
+        "provider": "OpenAI",
+        "model": "o3-2025-04-16",
+        "temperature": 0.1,
+        "weight": 5
+      },
+      {
+        "id": "eval-max-2",
+        "provider": "Anthropic",
+        "model": "claude-3-7-sonnet-latest",
+        "temperature": 0.1,
+        "weight": 4
+      },
+      {
+        "id": "eval-max-3",
+        "provider": "Groq",
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.1,
+        "weight": 3
+      }
+    ],
+    "use_diverse_rag": true
+  }
+] 

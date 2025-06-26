@@ -7,9 +7,39 @@ from flask import jsonify, request
 
 from constants import CHORUSES_FOLDER, BOTS_FOLDER
 
+# Helper functions for chorus management
+def _get_default_choruses():
+    """Loads the default chorus configurations."""
+    default_choruses = []
+    # Adjusted path to be relative to the script's location
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    default_choruses_file = os.path.join(base_dir, '..', 'default_choruses.json')
+    if os.path.exists(default_choruses_file):
+        try:
+            with open(default_choruses_file, 'r') as f:
+                default_choruses = json.load(f)
+        except (IOError, json.JSONDecodeError) as e:
+            print(f"Error reading default choruses: {e}", flush=True)
+    return default_choruses
+
+def _get_user_choruses(user_id):
+    """Loads a user's specific chorus configurations."""
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_id}_choruses.json")
+    if not os.path.exists(user_choruses_file):
+        return []
+    try:
+        with open(user_choruses_file, 'r') as f:
+            return json.load(f)
+    except (IOError, json.JSONDecodeError):
+        return []
+
+def _save_user_choruses(user_id, choruses):
+    """Saves a user's chorus configurations."""
+    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_id}_choruses.json")
+    with open(user_choruses_file, 'w') as f:
+        json.dump(choruses, f, indent=2)
+
 def get_chorus_config_handler(user_data, bot_id):
-    # Check if bot exists and belongs to user
-    # Using BOTS_FOLDER from constants
     user_bots_file = os.path.join(BOTS_FOLDER, f"{user_data['id']}_bots.json")
     
     if not os.path.exists(user_bots_file):
@@ -18,32 +48,18 @@ def get_chorus_config_handler(user_data, bot_id):
     with open(user_bots_file, 'r') as f:
         bots = json.load(f)
         
-    bot = None
-    for b in bots:
-        if b["id"] == bot_id:
-            bot = b
-            break
-            
+    bot = next((b for b in bots if b["id"] == bot_id), None)
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
     
-    # Check for chorus_id in the bot
-    chorus_id = bot.get("chorus_id", "")
+    chorus_id = bot.get("chorus_id")
     if not chorus_id:
         return jsonify({"error": "No chorus configuration found for this bot"}), 404
     
-    # Get the user's chorus definitions
-    # Using CHORUSES_FOLDER from constants
+    # Check both default and user choruses
+    all_choruses = _get_default_choruses() + _get_user_choruses(user_data['id'])
+    chorus = next((c for c in all_choruses if c["id"] == chorus_id), None)
     
-    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-    if not os.path.exists(user_choruses_file):
-        return jsonify({"error": "No chorus configurations found"}), 404
-    
-    # Load the user's choruses and find the one with the matching ID
-    with open(user_choruses_file, 'r') as f:
-        choruses = json.load(f)
-    
-    chorus = next((c for c in choruses if c["id"] == chorus_id), None)
     if not chorus:
         return jsonify({"error": f"Chorus configuration with ID {chorus_id} not found"}), 404
     
@@ -83,13 +99,7 @@ def save_chorus_config_handler(user_data, bot_id):
         # Using CHORUSES_FOLDER from constants
         
         # Load or create user's chorus list
-        user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-        
-        if os.path.exists(user_choruses_file):
-            with open(user_choruses_file, 'r') as f:
-                choruses = json.load(f)
-        else:
-            choruses = []
+        user_choruses = _get_user_choruses(user_data['id'])
         
         # Generate a unique ID for the chorus
         chorus_id = str(uuid.uuid4())
@@ -108,11 +118,10 @@ def save_chorus_config_handler(user_data, bot_id):
         }
         
         # Add the chorus
-        choruses.append(chorus_data)
+        user_choruses.append(chorus_data)
         
         # Save the updated choruses
-        with open(user_choruses_file, 'w') as f:
-            json.dump(choruses, f)
+        _save_user_choruses(user_data['id'], user_choruses)
             
         # Update the bot to use this chorus
         bots[bot_index]["chorus_id"] = chorus_id
@@ -159,17 +168,10 @@ def set_bot_chorus_handler(user_data, bot_id):
     # Empty string means unassign any chorus
     if chorus_id:
         # Verify that the chorus exists if an ID was provided
-        # Using CHORUSES_FOLDER from constants
-        user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-        
-        if os.path.exists(user_choruses_file):
-            with open(user_choruses_file, 'r') as f:
-                choruses = json.load(f)
-                
-            # Find the chorus by ID
-            chorus = next((c for c in choruses if c["id"] == chorus_id), None)
-            if not chorus:
-                return jsonify({"error": f"Chorus with ID {chorus_id} not found"}), 404
+        all_choruses = _get_default_choruses() + _get_user_choruses(user_data['id'])
+        chorus = next((c for c in all_choruses if c["id"] == chorus_id), None)
+        if not chorus:
+            return jsonify({"error": f"Chorus with ID {chorus_id} not found"}), 404
     
     # Update the bot with the new chorus ID
     bots[bot_index]["chorus_id"] = chorus_id
@@ -184,22 +186,19 @@ def set_bot_chorus_handler(user_data, bot_id):
     }), 200
 
 def list_choruses_handler(user_data):
-    # Get all chorus configurations
-    # Using CHORUSES_FOLDER from constants
+    """Returns a list of all available choruses (default + user-specific)."""
+    default_choruses = _get_default_choruses()
+    user_choruses = _get_user_choruses(user_data['id'])
     
-    # First check if there's a user-specific choruses file
+    # Ensure the user chorus file exists, creating it if necessary
     user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-    
-    # If the user choruses file doesn't exist yet, create it
     if not os.path.exists(user_choruses_file):
-        with open(user_choruses_file, 'w') as f:
-            json.dump([], f)
+        _save_user_choruses(user_data['id'], [])
+
+    # Combine lists, ensuring no duplicates from defaults
+    final_choruses = default_choruses + user_choruses
     
-    # Load user's chorus definitions
-    with open(user_choruses_file, 'r') as f:
-        choruses = json.load(f)
-    
-    return jsonify(choruses), 200
+    return jsonify(final_choruses), 200
 
 def create_chorus_handler(user_data):
     # Get chorus data from request
@@ -215,16 +214,7 @@ def create_chorus_handler(user_data):
     if not data.get('evaluator_models') or not isinstance(data.get('evaluator_models'), list) or len(data.get('evaluator_models')) == 0:
         return jsonify({"error": "At least one evaluator model is required"}), 400
     
-    # Create chorus directory if it doesn't exist
-    # Using CHORUSES_FOLDER from constants
-    
-    # Load user's chorus definitions
-    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-    if os.path.exists(user_choruses_file):
-        with open(user_choruses_file, 'r') as f:
-            choruses = json.load(f)
-    else:
-        choruses = []
+    user_choruses = _get_user_choruses(user_data['id'])
     
     # Generate a unique ID for the chorus
     chorus_id = str(uuid.uuid4())
@@ -242,34 +232,28 @@ def create_chorus_handler(user_data):
         "created_by": user_data['username']
     }
     
-    choruses.append(chorus)
+    user_choruses.append(chorus)
     
     # Save updated chorus list
-    with open(user_choruses_file, 'w') as f:
-        json.dump(choruses, f)
+    _save_user_choruses(user_data['id'], user_choruses)
     
     return jsonify(chorus), 201
 
 def get_chorus_handler(user_data, chorus_id):
-    # Get chorus directory and user choruses file
-    # Using CHORUSES_FOLDER from constants
-    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
+    """Gets a single chorus by its ID, checking both default and user choruses."""
+    all_choruses = _get_default_choruses() + _get_user_choruses(user_data['id'])
+    chorus = next((c for c in all_choruses if c["id"] == chorus_id), None)
     
-    if not os.path.exists(user_choruses_file):
-        return jsonify({"error": "Chorus not found"}), 404
-    
-    # Load user's chorus definitions
-    with open(user_choruses_file, 'r') as f:
-        choruses = json.load(f)
-    
-    # Find the requested chorus
-    chorus = next((c for c in choruses if c["id"] == chorus_id), None)
     if not chorus:
         return jsonify({"error": "Chorus not found"}), 404
     
     return jsonify(chorus), 200
 
 def update_chorus_handler(user_data, chorus_id):
+    # Prevent updating default choruses
+    if any(c['id'] == chorus_id for c in _get_default_choruses()):
+        return jsonify({"error": "Default choruses cannot be modified."}), 403
+        
     # Get chorus data from request
     data = request.json
     
@@ -283,24 +267,15 @@ def update_chorus_handler(user_data, chorus_id):
     if not data.get('evaluator_models') or not isinstance(data.get('evaluator_models'), list) or len(data.get('evaluator_models')) == 0:
         return jsonify({"error": "At least one evaluator model is required"}), 400
     
-    # Get chorus directory and user choruses file
-    # Using CHORUSES_FOLDER from constants
-    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-    
-    if not os.path.exists(user_choruses_file):
-        return jsonify({"error": "Chorus not found"}), 404
-    
-    # Load user's chorus definitions
-    with open(user_choruses_file, 'r') as f:
-        choruses = json.load(f)
+    user_choruses = _get_user_choruses(user_data['id'])
     
     # Find and update the chorus
-    chorus_index = next((i for i, c in enumerate(choruses) if c["id"] == chorus_id), None)
+    chorus_index = next((i for i, c in enumerate(user_choruses) if c["id"] == chorus_id), None)
     if chorus_index is None:
         return jsonify({"error": "Chorus not found"}), 404
     
     # Update the chorus with new data, preserving the ID and creation date
-    chorus = choruses[chorus_index]
+    chorus = user_choruses[chorus_index]
     updated_chorus = {
         "id": chorus["id"],
         "name": data.get('name'),
@@ -313,36 +288,29 @@ def update_chorus_handler(user_data, chorus_id):
         "created_by": chorus.get("created_by", user_data['username'])
     }
     
-    choruses[chorus_index] = updated_chorus
+    user_choruses[chorus_index] = updated_chorus
     
     # Save updated chorus list
-    with open(user_choruses_file, 'w') as f:
-        json.dump(choruses, f)
+    _save_user_choruses(user_data['id'], user_choruses)
     
     return jsonify(updated_chorus), 200
 
 def delete_chorus_handler(user_data, chorus_id):
-    # Get chorus directory and user choruses file
-    # Using CHORUSES_FOLDER from constants
-    user_choruses_file = os.path.join(CHORUSES_FOLDER, f"{user_data['id']}_choruses.json")
-    
-    if not os.path.exists(user_choruses_file):
-        return jsonify({"error": "Chorus not found"}), 404
-    
-    # Load user's chorus definitions
-    with open(user_choruses_file, 'r') as f:
-        choruses = json.load(f)
+    # Prevent deleting default choruses
+    if any(c['id'] == chorus_id for c in _get_default_choruses()):
+        return jsonify({"error": "Default choruses cannot be deleted."}), 403
+        
+    user_choruses = _get_user_choruses(user_data['id'])
     
     # Find and remove the chorus
-    original_length = len(choruses)
-    choruses = [c for c in choruses if c["id"] != chorus_id]
+    original_length = len(user_choruses)
+    user_choruses = [c for c in user_choruses if c["id"] != chorus_id]
     
-    if len(choruses) == original_length:
+    if len(user_choruses) == original_length:
         return jsonify({"error": "Chorus not found"}), 404
     
     # Save updated chorus list
-    with open(user_choruses_file, 'w') as f:
-        json.dump(choruses, f)
+    _save_user_choruses(user_data['id'], user_choruses)
     
     # Also check if any bots are using this chorus and update them
     # Using BOTS_FOLDER from constants
