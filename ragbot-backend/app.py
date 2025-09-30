@@ -990,12 +990,36 @@ def chat_with_bot(user_data, bot_id):
                 except Exception as context_error:
                     print(f"IMAGE GENERATION: Error gathering context: {str(context_error)}", flush=True)
             
-            # Enhance the prompt with context if available
+            # Enhance the prompt with context and source image info if available
             enhanced_prompt = base_prompt
+            
+            # Build enhancement context
+            enhancement_context = ""
             if context_for_prompt:
+                enhancement_context += f"\n\nRelevant context from knowledge base:\n{context_for_prompt}"
+            
+            if source_image_path and source_image_caption:
+                enhancement_context += f"\n\nSource image being modified: {source_image_caption}"
+            
+            if enhancement_context:
                 try:
-                    # Use LLM to enhance the prompt with relevant context
-                    enhancement_system_message = """You are an expert at creating detailed image generation prompts.
+                    # Use LLM to enhance the prompt with relevant context and source image info
+                    if source_image_path:
+                        enhancement_system_message = """You are an expert at creating detailed image generation prompts for modifying existing images.
+You will be given:
+1. A description of the source image
+2. The user's requested modifications
+3. Optional context from their knowledge base
+
+Your task is to create a detailed prompt that:
+1. Describes the source image accurately
+2. Applies the user's requested changes
+3. Maintains consistency with the original while making the specified modifications
+4. Includes technical details about style, lighting, and composition
+
+Respond with ONLY the enhanced prompt text, nothing else."""
+                    else:
+                        enhancement_system_message = """You are an expert at creating detailed image generation prompts.
 You will be given a user's image request and relevant context from their knowledge base.
 Your task is to create a detailed, vivid image generation prompt that:
 1. Incorporates the user's original intent
@@ -1005,11 +1029,13 @@ Your task is to create a detailed, vivid image generation prompt that:
 
 Respond with ONLY the enhanced prompt text, nothing else."""
 
+                    user_message = f"User's request: {base_prompt}{enhancement_context}\n\nCreate an enhanced image generation prompt:"
+
                     enhancement_response = openai.chat.completions.create(
                         model=DEFAULT_LLM_MODEL,
                         messages=[
                             {"role": "system", "content": enhancement_system_message},
-                            {"role": "user", "content": f"User's request: {base_prompt}\n\nRelevant context from knowledge base:\n{context_for_prompt}\n\nCreate an enhanced image generation prompt:"}
+                            {"role": "user", "content": user_message}
                         ],
                         temperature=0.7,
                         max_tokens=300
@@ -1028,37 +1054,66 @@ Respond with ONLY the enhanced prompt text, nothing else."""
             
             try:
                 if source_image_path:
-                    # ========== IMAGE EDIT MODE ==========
-                    print(f"IMAGE GENERATION: Using EDIT API with source image: {source_image_path}", flush=True)
-                    print(f"IMAGE GENERATION: Edit prompt: '{enhanced_prompt}'", flush=True)
+                    # ========== IMAGE VARIATION MODE ==========
+                    # Using OpenAI's create_variation API which takes the actual source image
+                    # Note: This API creates variations but doesn't support text prompts for guided changes
+                    print(f"IMAGE GENERATION: Creating variation of source image: {source_image_path}", flush=True)
+                    print(f"IMAGE GENERATION: Source: '{source_image_caption}'", flush=True)
+                    print(f"IMAGE GENERATION: User requested: '{base_prompt}'", flush=True)
                     
-                    # OpenAI's edit API requires PNG format
-                    # Convert image to PNG if needed
+                    # Prepare the source image for the variation API
                     temp_png_path = None
                     try:
                         with Image.open(source_image_path) as img:
-                            # Convert to RGBA (required for edit API)
+                            # Convert to RGBA (variation API accepts RGBA PNG)
                             if img.mode != 'RGBA':
-                                img = img.convert('RGBA')
+                                # If no alpha, add one
+                                if img.mode == 'RGB':
+                                    # Add alpha channel
+                                    img = img.convert('RGBA')
+                                elif img.mode in ('L', 'LA', 'P'):
+                                    img = img.convert('RGBA')
                             
-                            # Save as temporary PNG
-                            temp_png_path = os.path.join(IMAGE_FOLDER, f"temp_edit_{str(uuid.uuid4())}.png")
-                            img.save(temp_png_path, 'PNG')
-                            print(f"IMAGE GENERATION: Converted source to PNG: {temp_png_path}", flush=True)
+                            # Save as PNG (required format)
+                            temp_png_path = os.path.join(IMAGE_FOLDER, f"temp_variation_{str(uuid.uuid4())}.png")
+                            
+                            # Resize if needed (max 4MB, recommended < 1024x1024)
+                            max_size = 1024
+                            if img.width > max_size or img.height > max_size:
+                                print(f"IMAGE GENERATION: Resizing from {img.width}x{img.height} to fit {max_size}x{max_size}", flush=True)
+                                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                            
+                            img.save(temp_png_path, 'PNG', optimize=True)
+                            
+                            # Check file size
+                            file_size = os.path.getsize(temp_png_path)
+                            if file_size > 4 * 1024 * 1024:  # 4MB limit
+                                print(f"IMAGE GENERATION: File too large ({file_size} bytes), reducing quality...", flush=True)
+                                # Resize more aggressively
+                                scale = 0.8
+                                while file_size > 4 * 1024 * 1024 and scale > 0.3:
+                                    new_size = (int(img.width * scale), int(img.height * scale))
+                                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                                    img.save(temp_png_path, 'PNG', optimize=True, quality=85)
+                                    file_size = os.path.getsize(temp_png_path)
+                                    scale -= 0.1
+                            
+                            print(f"IMAGE GENERATION: Prepared image: {temp_png_path} ({file_size} bytes)", flush=True)
                     except Exception as convert_error:
-                        print(f"IMAGE GENERATION: Error converting image: {str(convert_error)}", flush=True)
-                        openai.api_key = original_api_key  # Restore API key
+                        print(f"IMAGE GENERATION: Error preparing image: {str(convert_error)}", flush=True)
+                        openai.api_key = original_api_key
                         return jsonify({"error": f"Failed to prepare source image: {str(convert_error)}"}), 500
                     
                     try:
-                        # Call OpenAI's edit API
+                        # Call OpenAI's create_variation API with the actual source image
+                        print(f"IMAGE GENERATION: Calling create_variation API...", flush=True)
                         with open(temp_png_path, 'rb') as image_file:
-                            image_generation_response = openai.images.edit(
+                            image_generation_response = openai.images.create_variation(
                                 image=image_file,
-                                prompt=enhanced_prompt,
                                 n=1,
                                 size="1024x1024"
                             )
+                        print(f"IMAGE GENERATION: Successfully created variation", flush=True)
                     finally:
                         # Clean up temp file
                         if temp_png_path and os.path.exists(temp_png_path):
