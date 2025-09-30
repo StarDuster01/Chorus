@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "50506:50506"
+      - "80:50506"
     volumes:
       - ./ragbot-backend/uploads:/code/uploads
       - ./ragbot-backend/data:/code/data
@@ -35,19 +36,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
-
-  frontend:
-    build:
-      context: ./ragbot-frontend
-      dockerfile: Dockerfile
-    ports:
-      - "80:80"
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '2'
-    depends_on:
-      - backend
-    restart: on-failure 
+      start_period: 30s 

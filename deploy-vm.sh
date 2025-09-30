@@ -139,6 +139,19 @@ echo ""
 echo "  Running docker-compose down..."
 docker-compose down 2>/dev/null || true
 
+# Kill any lingering processes on port 50506
+echo "  Checking for processes on port 50506..."
+PIDS=$(sudo lsof -ti:50506 2>/dev/null)
+if [ ! -z "$PIDS" ]; then
+    echo "  Found processes: $PIDS, killing them..."
+    sudo kill -9 $PIDS 2>/dev/null || true
+    sleep 1
+fi
+
+# Prune any dangling Docker resources
+echo "  Cleaning up Docker resources..."
+docker system prune -f 2>/dev/null || true
+
 echo "  ✓ Containers stopped and removed"
 echo ""
 

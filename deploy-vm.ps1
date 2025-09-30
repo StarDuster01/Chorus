@@ -140,6 +140,24 @@ Write-Host ""
 Write-Host "  Running docker-compose down..." -ForegroundColor White
 docker-compose down 2>$null
 
+# Check for processes on port 50506 (Windows)
+Write-Host "  Checking for processes on port 50506..." -ForegroundColor White
+$netstat = netstat -ano | Select-String ":50506"
+if ($netstat) {
+    $pids = $netstat | ForEach-Object { ($_ -split '\s+')[-1] } | Select-Object -Unique
+    foreach ($pid in $pids) {
+        if ($pid -match '^\d+$') {
+            Write-Host "  Found process: $pid, killing it..." -ForegroundColor White
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Seconds 1
+}
+
+# Prune any dangling Docker resources
+Write-Host "  Cleaning up Docker resources..." -ForegroundColor White
+docker system prune -f 2>$null
+
 Write-Host "  ✓ Containers stopped and removed" -ForegroundColor Green
 Write-Host ""
 
