@@ -188,8 +188,9 @@ a:hover {
 
 .chat-wrapper {
   display: flex;
-  height: calc(100vh - 150px);
-  margin-top: 20px;
+  height: calc(100vh - 120px);
+  margin-top: 10px;
+  position: relative;
 }
 
 .chat-main {
@@ -205,6 +206,20 @@ a:hover {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+/* Resizer between debug and chat */
+.panel-resizer {
+  width: 6px;
+  cursor: col-resize;
+  background: rgba(46, 139, 87, 0.1);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.panel-resizer:hover,
+.panel-resizer.dragging {
+  background: rgba(46, 139, 87, 0.35);
 }
 
 .chat-messages {

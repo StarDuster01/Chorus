@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Container, Row, Col, Form, Button, Card, Alert, Dropdown, Modal, Badge, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
@@ -139,6 +139,45 @@ const ChatInterface = () => {
   const [botDatasets, setBotDatasets] = useState([]);
   const [showDatasetsDropdown, setShowDatasetsDropdown] = useState(false);
   const [loadingDatasets, setLoadingDatasets] = useState(false);
+
+  // Resizable split between debug panel and chat area
+  const wrapperRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [chatSplitRatio, setChatSplitRatio] = useState(() => {
+    const saved = localStorage.getItem('chatSplitRatio');
+    const parsed = saved ? parseFloat(saved) : 0.67; // chat width ratio (0-1)
+    return isNaN(parsed) ? 0.67 : Math.min(0.9, Math.max(0.4, parsed));
+  });
+
+  const startDrag = useCallback((e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e) => {
+      if (!wrapperRef.current) return;
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left; // position within wrapper
+      const ratio = x / rect.width; // left side (debug) width ratio
+      // We control chat width ratio; chat is on the right in current layout
+      const debugRatio = Math.min(0.6, Math.max(0.15, ratio));
+      const chatRatio = 1 - debugRatio; // remaining for chat area
+      const clamped = Math.min(0.85, Math.max(0.4, chatRatio));
+      setChatSplitRatio(clamped);
+    };
+    const handleUp = () => {
+      setIsDragging(false);
+      localStorage.setItem('chatSplitRatio', String(chatSplitRatio));
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp, { once: true });
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [isDragging, chatSplitRatio]);
 
   useEffect(() => {
     // Fetch bot details
@@ -847,10 +886,10 @@ const ChatInterface = () => {
       )}
       
       {bot ? (
-        <div className="chat-wrapper">
+        <div className="chat-wrapper" ref={wrapperRef}>
           {/* Debug Panel - Left Side (when in debug mode) */}
           {debugMode && (
-            <div className="debug-panel">
+            <div className="debug-panel" style={{ width: `${(1 - chatSplitRatio) * 100}%` }}>
               <Card className="border-0 shadow-sm h-100">
                 <Card.Header className="d-flex justify-content-between align-items-center">
                   <h5 className="mb-0"><FaBug className="me-2" />Debug Mode</h5>
@@ -920,9 +959,16 @@ const ChatInterface = () => {
               </Card>
             </div>
           )}
-          
+          {/* Resizer (visible when debug mode on) */}
+          {debugMode && (
+            <div 
+              className={`panel-resizer ${isDragging ? 'dragging' : ''}`}
+              onMouseDown={startDrag}
+            />
+          )}
+
           {/* Chat Main Area */}
-          <div className="chat-main">
+          <div className="chat-main" style={{ width: debugMode ? `${chatSplitRatio * 100}%` : '100%' }}>
             <Card className="chat-container border-0 shadow-sm h-100">
               <Card.Header className="d-flex justify-content-between align-items-center">
                 <div className="d-flex align-items-center">
