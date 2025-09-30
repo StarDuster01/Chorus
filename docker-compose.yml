@@ -13,10 +13,10 @@ services:
       - ./ragbot-backend/datasets:/code/datasets
       - ./ragbot-backend/bots:/code/bots
       - ./ragbot-backend/image_indices:/code/image_indices
+      - ../ChorusAllData2:/mnt/ChorusAllData2
     environment:
       - PORT=50506
-      # Uncomment and set to use external data directory (e.g., /mnt/ChorusAllData2)
-      # - EXTERNAL_DATA_DIR=/mnt/ChorusAllData2
+      - EXTERNAL_DATA_DIR=/mnt/ChorusAllData2
     env_file:
       - ./ragbot-backend/.env
     deploy:
