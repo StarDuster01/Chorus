@@ -1054,30 +1054,24 @@ Respond with ONLY the enhanced prompt text, nothing else."""
             
             try:
                 if source_image_path:
-                    # ========== IMAGE VARIATION MODE ==========
-                    # Using OpenAI's create_variation API which takes the actual source image
-                    # Note: This API creates variations but doesn't support text prompts for guided changes
-                    print(f"IMAGE GENERATION: Creating variation of source image: {source_image_path}", flush=True)
+                    # ========== IMAGE EDIT MODE ==========
+                    # Using OpenAI's images.edit API which accepts source image + prompt
+                    print(f"IMAGE GENERATION: Editing source image: {source_image_path}", flush=True)
                     print(f"IMAGE GENERATION: Source: '{source_image_caption}'", flush=True)
                     print(f"IMAGE GENERATION: User requested: '{base_prompt}'", flush=True)
                     
-                    # Prepare the source image for the variation API
+                    # Prepare source image (must be PNG, < 4MB)
                     temp_png_path = None
                     try:
                         with Image.open(source_image_path) as img:
-                            # Convert to RGBA (variation API accepts RGBA PNG)
-                            if img.mode != 'RGBA':
-                                # If no alpha, add one
-                                if img.mode == 'RGB':
-                                    # Add alpha channel
-                                    img = img.convert('RGBA')
-                                elif img.mode in ('L', 'LA', 'P'):
-                                    img = img.convert('RGBA')
+                            # Convert to RGBA for PNG
+                            if img.mode not in ('RGBA', 'RGB'):
+                                img = img.convert('RGBA')
                             
-                            # Save as PNG (required format)
-                            temp_png_path = os.path.join(IMAGE_FOLDER, f"temp_variation_{str(uuid.uuid4())}.png")
+                            # Save as PNG
+                            temp_png_path = os.path.join(IMAGE_FOLDER, f"temp_edit_{str(uuid.uuid4())}.png")
                             
-                            # Resize if needed (max 4MB, recommended < 1024x1024)
+                            # Resize if needed (max 50MB but keep under 4MB for best performance)
                             max_size = 1024
                             if img.width > max_size or img.height > max_size:
                                 print(f"IMAGE GENERATION: Resizing from {img.width}x{img.height} to fit {max_size}x{max_size}", flush=True)
@@ -1087,14 +1081,14 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                             
                             # Check file size
                             file_size = os.path.getsize(temp_png_path)
-                            if file_size > 4 * 1024 * 1024:  # 4MB limit
-                                print(f"IMAGE GENERATION: File too large ({file_size} bytes), reducing quality...", flush=True)
-                                # Resize more aggressively
-                                scale = 0.8
-                                while file_size > 4 * 1024 * 1024 and scale > 0.3:
-                                    new_size = (int(img.width * scale), int(img.height * scale))
-                                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                                    img.save(temp_png_path, 'PNG', optimize=True, quality=85)
+                            if file_size > 4 * 1024 * 1024:  # 4MB
+                                print(f"IMAGE GENERATION: File too large ({file_size} bytes), compressing...", flush=True)
+                                scale = 0.9
+                                while file_size > 4 * 1024 * 1024 and scale > 0.5:
+                                    new_width = int(img.width * scale)
+                                    new_height = int(img.height * scale)
+                                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                                    img.save(temp_png_path, 'PNG', optimize=True)
                                     file_size = os.path.getsize(temp_png_path)
                                     scale -= 0.1
                             
@@ -1105,15 +1099,21 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                         return jsonify({"error": f"Failed to prepare source image: {str(convert_error)}"}), 500
                     
                     try:
-                        # Call OpenAI's create_variation API with the actual source image
-                        print(f"IMAGE GENERATION: Calling create_variation API...", flush=True)
+                        # Call OpenAI's images.edit API with source image + prompt
+                        # Use base_prompt (not enhanced_prompt) for more direct control
+                        edit_prompt = f"Modify this image: {base_prompt}"
+                        print(f"IMAGE GENERATION: Calling images.edit API...", flush=True)
+                        print(f"IMAGE GENERATION: Edit prompt: '{edit_prompt}'", flush=True)
+                        
                         with open(temp_png_path, 'rb') as image_file:
-                            image_generation_response = openai.images.create_variation(
+                            image_generation_response = openai.images.edit(
+                                model="gpt-image-1",
                                 image=image_file,
+                                prompt=edit_prompt,
                                 n=1,
                                 size="1024x1024"
                             )
-                        print(f"IMAGE GENERATION: Successfully created variation", flush=True)
+                        print(f"IMAGE GENERATION: Successfully edited image", flush=True)
                     finally:
                         # Clean up temp file
                         if temp_png_path and os.path.exists(temp_png_path):
@@ -1177,11 +1177,7 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                     response_text = f"I've edited the source image based on your request.\n\n"
                     response_text += f"**Source image:** {source_image_caption}\n\n"
                     response_text += f"**Source ID:** `{source_image_id}`\n\n"
-                    if context_for_prompt:
-                        response_text += f"I used relevant information from the knowledge base to enhance the edit prompt.\n\n"
                     response_text += f"**Edit request:** {base_prompt}\n\n"
-                    if enhanced_prompt != base_prompt:
-                        response_text += f"**Enhanced edit prompt:** {enhanced_prompt}\n\n"
                     response_text += f"![Edited Image]({image_url})"
                 else:
                     response_text = f"I've generated an image based on your request.\n\n"
@@ -1235,9 +1231,10 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                         "source_image_path": source_image_path,
                         "source_image_caption": source_image_caption,
                         "base_prompt": base_prompt,
-                        "enhanced_prompt": enhanced_prompt,
-                        "context_used": bool(context_for_prompt),
-                        "context_length": len(context_for_prompt) if context_for_prompt else 0
+                        "edit_prompt": f"Modify this image: {base_prompt}" if source_image_path else None,
+                        "enhanced_prompt": enhanced_prompt if not source_image_path else None,
+                        "context_used": bool(context_for_prompt) if not source_image_path else False,
+                        "context_length": len(context_for_prompt) if context_for_prompt and not source_image_path else 0
                     } if debug_mode else None
                 }), 200
             else:
