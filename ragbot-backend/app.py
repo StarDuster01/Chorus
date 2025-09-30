@@ -899,6 +899,63 @@ def chat_with_bot(user_data, bot_id):
                     "error": "Please provide a description after 'Generate'. For example: 'Generate a sunset over mountains'"
                 }), 400
             
+            # ========== CHECK FOR IMAGE ID REFERENCE ==========
+            # Look for patterns like:
+            # - "Generate from <image-id>: description"
+            # - "Generate using <image-id>: description"
+            # - "Generate with <image-id>: description"
+            source_image_id = None
+            source_image_path = None
+            source_image_caption = None
+            
+            # Try to extract image ID from the prompt
+            import re
+            id_patterns = [
+                r"(?:from|using|with)\s+([a-f0-9-]{36})\s*[:\-]?\s*(.*)",  # UUID format
+                r"(?:from|using|with)\s+image\s+([a-f0-9-]{36})\s*[:\-]?\s*(.*)",  # "image UUID"
+            ]
+            
+            for pattern in id_patterns:
+                match = re.search(pattern, base_prompt, re.IGNORECASE)
+                if match:
+                    source_image_id = match.group(1)
+                    base_prompt = match.group(2).strip() or base_prompt  # Use remaining text as prompt
+                    print(f"IMAGE GENERATION: Detected source image ID: {source_image_id}", flush=True)
+                    break
+            
+            # If an image ID was found, retrieve the image from the RAG database
+            if source_image_id:
+                print(f"IMAGE GENERATION: Looking up source image {source_image_id}", flush=True)
+                
+                # Search through all datasets to find the image
+                found_image = False
+                for dataset_id, images_metadata in image_processor.image_metadata.items():
+                    for img_meta in images_metadata:
+                        if img_meta.get("id") == source_image_id:
+                            source_image_path = img_meta.get("path")
+                            source_image_caption = img_meta.get("caption", "Unknown")
+                            found_image = True
+                            print(f"IMAGE GENERATION: Found source image in dataset {dataset_id}: {source_image_path}", flush=True)
+                            break
+                    if found_image:
+                        break
+                
+                if not found_image:
+                    return jsonify({
+                        "error": f"Source image with ID '{source_image_id}' not found. Please check the ID and try again.",
+                        "conversation_id": conversation_id
+                    }), 404
+                
+                # Verify the image file exists
+                if not os.path.exists(source_image_path):
+                    return jsonify({
+                        "error": f"Source image file not found on disk. The image may have been deleted.",
+                        "conversation_id": conversation_id
+                    }), 404
+                
+                print(f"IMAGE GENERATION: Will use source image for editing: {source_image_path}", flush=True)
+            # ========== END IMAGE ID REFERENCE CHECK ==========
+            
             # Get dataset IDs from the bot to gather context
             dataset_ids = bot.get("dataset_ids", [])
             
@@ -964,22 +1021,72 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                     print(f"IMAGE GENERATION: Error enhancing prompt, using base prompt: {str(enhancement_error)}", flush=True)
                     enhanced_prompt = base_prompt
             
-            # Generate the image using OpenAI's image generation API
-            print(f"IMAGE GENERATION: Calling image generation API with prompt: '{enhanced_prompt}'", flush=True)
+            # Generate or edit the image based on whether we have a source image
+            # Set dedicated API key for image generation
+            original_api_key = openai.api_key
+            openai.api_key = "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"
             
-            # Build the API request params with only supported parameters
-            generation_params = {
-                "model": "gpt-image-1",
-                "prompt": enhanced_prompt,
-                "n": 1,
-                "size": "1024x1024",
-                "quality": "auto",
-                "moderation": "auto"
-            }
+            try:
+                if source_image_path:
+                    # ========== IMAGE EDIT MODE ==========
+                    print(f"IMAGE GENERATION: Using EDIT API with source image: {source_image_path}", flush=True)
+                    print(f"IMAGE GENERATION: Edit prompt: '{enhanced_prompt}'", flush=True)
+                    
+                    # OpenAI's edit API requires PNG format
+                    # Convert image to PNG if needed
+                    temp_png_path = None
+                    try:
+                        with Image.open(source_image_path) as img:
+                            # Convert to RGBA (required for edit API)
+                            if img.mode != 'RGBA':
+                                img = img.convert('RGBA')
+                            
+                            # Save as temporary PNG
+                            temp_png_path = os.path.join(IMAGE_FOLDER, f"temp_edit_{str(uuid.uuid4())}.png")
+                            img.save(temp_png_path, 'PNG')
+                            print(f"IMAGE GENERATION: Converted source to PNG: {temp_png_path}", flush=True)
+                    except Exception as convert_error:
+                        print(f"IMAGE GENERATION: Error converting image: {str(convert_error)}", flush=True)
+                        openai.api_key = original_api_key  # Restore API key
+                        return jsonify({"error": f"Failed to prepare source image: {str(convert_error)}"}), 500
+                    
+                    try:
+                        # Call OpenAI's edit API
+                        with open(temp_png_path, 'rb') as image_file:
+                            image_generation_response = openai.images.edit(
+                                image=image_file,
+                                prompt=enhanced_prompt,
+                                n=1,
+                                size="1024x1024"
+                            )
+                    finally:
+                        # Clean up temp file
+                        if temp_png_path and os.path.exists(temp_png_path):
+                            os.remove(temp_png_path)
+                            print(f"IMAGE GENERATION: Cleaned up temp file", flush=True)
+                    
+                else:
+                    # ========== IMAGE GENERATE MODE ==========
+                    print(f"IMAGE GENERATION: Using GENERATE API (no source image)", flush=True)
+                    print(f"IMAGE GENERATION: Generation prompt: '{enhanced_prompt}'", flush=True)
+                    
+                    # Build the API request params with only supported parameters
+                    generation_params = {
+                        "model": "gpt-image-1",
+                        "prompt": enhanced_prompt,
+                        "n": 1,
+                        "size": "1024x1024",
+                        "quality": "auto",
+                        "moderation": "auto"
+                    }
+                    
+                    image_generation_response = openai.images.generate(**generation_params)
+            finally:
+                # Always restore the original API key
+                openai.api_key = original_api_key
             
-            image_generation_response = openai.images.generate(**generation_params)
-            
-            # Extract the generated image
+            # ========== EXTRACT GENERATED/EDITED IMAGE ==========
+            # Extract the generated image (same for both generate and edit)
             if image_generation_response.data and len(image_generation_response.data) > 0:
                 image_obj = image_generation_response.data[0]
                 
@@ -1010,14 +1117,25 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                 # Create the URL for accessing the image
                 image_url = f"/api/images/{filename}"
                 
-                # Prepare response text
-                response_text = f"I've generated an image based on your request.\n\n"
-                if context_for_prompt:
-                    response_text += f"I used relevant information from the knowledge base to enhance the prompt.\n\n"
-                response_text += f"**Original request:** {base_prompt}\n\n"
-                if enhanced_prompt != base_prompt:
-                    response_text += f"**Enhanced prompt:** {enhanced_prompt}\n\n"
-                response_text += f"![Generated Image]({image_url})"
+                # Prepare response text based on mode
+                if source_image_path:
+                    response_text = f"I've edited the source image based on your request.\n\n"
+                    response_text += f"**Source image:** {source_image_caption}\n\n"
+                    response_text += f"**Source ID:** `{source_image_id}`\n\n"
+                    if context_for_prompt:
+                        response_text += f"I used relevant information from the knowledge base to enhance the edit prompt.\n\n"
+                    response_text += f"**Edit request:** {base_prompt}\n\n"
+                    if enhanced_prompt != base_prompt:
+                        response_text += f"**Enhanced edit prompt:** {enhanced_prompt}\n\n"
+                    response_text += f"![Edited Image]({image_url})"
+                else:
+                    response_text = f"I've generated an image based on your request.\n\n"
+                    if context_for_prompt:
+                        response_text += f"I used relevant information from the knowledge base to enhance the prompt.\n\n"
+                    response_text += f"**Original request:** {base_prompt}\n\n"
+                    if enhanced_prompt != base_prompt:
+                        response_text += f"**Enhanced prompt:** {enhanced_prompt}\n\n"
+                    response_text += f"![Generated Image]({image_url})"
                 
                 # Save the bot response to conversation
                 bot_response = {
@@ -1026,28 +1144,41 @@ Respond with ONLY the enhanced prompt text, nothing else."""
                     "content": response_text,
                     "timestamp": datetime.datetime.now(UTC).isoformat(),
                     "image_generation": True,
+                    "image_edit_mode": bool(source_image_path),
+                    "source_image_id": source_image_id if source_image_path else None,
                     "generated_image_url": image_url
                 }
                 conversation["messages"].append(bot_response)
                 with open(conversation_file, 'w') as f:
                     json.dump(conversation, f)
                 
+                # Prepare image details for response
+                image_detail_caption = f"Edited from: {source_image_caption}" if source_image_path else f"Generated: {base_prompt}"
+                image_detail_index = "Edited Image" if source_image_path else "Generated Image"
+                
                 # Return the response
                 return jsonify({
                     "response": response_text,
                     "conversation_id": conversation_id,
                     "image_generated": True,
+                    "image_edit_mode": bool(source_image_path),
+                    "source_image_id": source_image_id if source_image_path else None,
                     "image_details": [{
-                        "index": "Generated Image",
-                        "caption": f"Generated: {base_prompt}",
+                        "index": image_detail_index,
+                        "caption": image_detail_caption,
                         "url": image_url,
                         "download_url": f"{image_url}?download=true",
                         "id": str(uuid.uuid4()),
                         "dataset_id": "",
                         "prompt_used": enhanced_prompt,
-                        "original_prompt": base_prompt
+                        "original_prompt": base_prompt,
+                        "source_image_id": source_image_id if source_image_path else None
                     }],
                     "debug": {
+                        "mode": "edit" if source_image_path else "generate",
+                        "source_image_id": source_image_id,
+                        "source_image_path": source_image_path,
+                        "source_image_caption": source_image_caption,
                         "base_prompt": base_prompt,
                         "enhanced_prompt": enhanced_prompt,
                         "context_used": bool(context_for_prompt),

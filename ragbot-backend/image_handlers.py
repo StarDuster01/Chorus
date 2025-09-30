@@ -79,8 +79,16 @@ def generate_image_handler(user_data, image_folder):
             "moderation": moderation
         }
         
-        # Generate image with OpenAI
-        response = openai.images.generate(**generation_params)
+        # Set dedicated API key for image generation
+        original_api_key = openai.api_key
+        openai.api_key = "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"
+        
+        try:
+            # Generate image with OpenAI
+            response = openai.images.generate(**generation_params)
+        finally:
+            # Always restore the original API key
+            openai.api_key = original_api_key
         
         results = []
         # Process all generated images
