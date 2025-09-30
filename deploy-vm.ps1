@@ -154,10 +154,6 @@ if ($netstat) {
     Start-Sleep -Seconds 1
 }
 
-# Prune any dangling Docker resources
-Write-Host "  Cleaning up Docker resources..." -ForegroundColor White
-docker system prune -f 2>$null
-
 Write-Host "  ✓ Containers stopped and removed" -ForegroundColor Green
 Write-Host ""
 

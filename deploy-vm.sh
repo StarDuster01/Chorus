@@ -148,10 +148,6 @@ if [ ! -z "$PIDS" ]; then
     sleep 1
 fi
 
-# Prune any dangling Docker resources
-echo "  Cleaning up Docker resources..."
-docker system prune -f 2>/dev/null || true
-
 echo "  ✓ Containers stopped and removed"
 echo ""
 
