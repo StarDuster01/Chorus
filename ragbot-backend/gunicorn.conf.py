@@ -13,8 +13,8 @@ port = os.getenv("PORT", "50506")
 bind = f"0.0.0.0:{port}"
 
 # Reduced workers to prevent OOM with heavy ML models
-workers = 2
-threads = 4
+workers = 1
+threads = 1
 
 # Increased timeouts for image processing operations
 timeout = 7200
@@ -22,6 +22,7 @@ keepalive = 30
 
 # Memory optimization
 worker_class = "sync"
+preload_app = False
 worker_connections = 100
 max_worker_connections = 1000
 
