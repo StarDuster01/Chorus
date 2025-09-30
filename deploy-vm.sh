@@ -135,14 +135,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Step 1: Stopping existing containers..."
 echo ""
 
-# Stop and remove containers
-echo "  Stopping ragbot-backend container..."
-docker stop ragbot-backend 2>/dev/null || true
-docker rm ragbot-backend 2>/dev/null || true
-
-echo "  Stopping ragbot-frontend container..."
-docker stop ragbot-frontend 2>/dev/null || true
-docker rm ragbot-frontend 2>/dev/null || true
+# Use docker-compose down to properly clean up all containers and networks
+echo "  Running docker-compose down..."
+docker-compose down 2>/dev/null || true
 
 echo "  ✓ Containers stopped and removed"
 echo ""
@@ -231,8 +226,8 @@ echo "   Frontend:     http://localhost:80"
 echo ""
 
 echo "📋 Useful Commands:"
-echo "   View logs (backend):  docker logs -f ragbot-backend"
-echo "   View logs (frontend): docker logs -f ragbot-frontend"
+echo "   View logs (backend):  docker-compose logs -f backend"
+echo "   View logs (frontend): docker-compose logs -f frontend"
 echo "   Stop services:        docker-compose down"
 echo "   Restart services:     docker-compose restart"
 echo "   View status:          docker-compose ps"

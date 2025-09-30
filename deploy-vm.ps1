@@ -136,15 +136,9 @@ Write-Host "━━━━━━━━━━━━━━━━━━━━━━�
 Write-Host "Step 1: Stopping existing containers..." -ForegroundColor Cyan
 Write-Host ""
 
-# Stop and remove the backend container
-Write-Host "  Stopping ragbot-backend container..." -ForegroundColor White
-docker stop ragbot-backend 2>$null
-docker rm ragbot-backend 2>$null
-
-# Stop and remove the frontend container
-Write-Host "  Stopping ragbot-frontend container..." -ForegroundColor White
-docker stop ragbot-frontend 2>$null
-docker rm ragbot-frontend 2>$null
+# Use docker-compose down to properly clean up all containers and networks
+Write-Host "  Running docker-compose down..." -ForegroundColor White
+docker-compose down 2>$null
 
 Write-Host "  ✓ Containers stopped and removed" -ForegroundColor Green
 Write-Host ""
@@ -235,8 +229,8 @@ Write-Host "   Frontend:     http://localhost:80" -ForegroundColor White
 Write-Host ""
 
 Write-Host "📋 Useful Commands:" -ForegroundColor Cyan
-Write-Host "   View logs (backend):  docker logs -f ragbot-backend" -ForegroundColor Gray
-Write-Host "   View logs (frontend): docker logs -f ragbot-frontend" -ForegroundColor Gray
+Write-Host "   View logs (backend):  docker-compose logs -f backend" -ForegroundColor Gray
+Write-Host "   View logs (frontend): docker-compose logs -f frontend" -ForegroundColor Gray
 Write-Host "   Stop services:        docker-compose down" -ForegroundColor Gray
 Write-Host "   Restart services:     docker-compose restart" -ForegroundColor Gray
 Write-Host "   View status:          docker-compose ps" -ForegroundColor Gray
