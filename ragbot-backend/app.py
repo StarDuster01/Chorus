@@ -128,14 +128,24 @@ CORS(app)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Configure Anthropic
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", "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"))
+anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+if not anthropic_api_key:
+    print("WARNING: ANTHROPIC_API_KEY not set in environment variables")
+anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key) if anthropic_api_key else None
 
 # Configure Groq
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    print("WARNING: GROQ_API_KEY not set in environment variables")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Configure JWT
-app.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET", "default-dev-secret")
+jwt_secret = os.getenv("JWT_SECRET")
+if not jwt_secret:
+    print("ERROR: JWT_SECRET environment variable is required!")
+    print("Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"")
+    sys.exit(1)
+app.config['JWT_SECRET_KEY'] = jwt_secret
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(hours=24)
 
 # Configure upload folders
@@ -1050,7 +1060,11 @@ Respond with ONLY the enhanced prompt text, nothing else."""
             # Generate or edit the image based on whether we have a source image
             # Set dedicated API key for image generation
             original_api_key = openai.api_key
-            openai.api_key = "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"
+            image_gen_api_key = os.getenv("OPENAI_IMAGE_API_KEY")
+            if not image_gen_api_key:
+                print("WARNING: OPENAI_IMAGE_API_KEY not set, using default OPENAI_API_KEY", flush=True)
+                image_gen_api_key = openai.api_key
+            openai.api_key = image_gen_api_key
             
             try:
                 if source_image_path:

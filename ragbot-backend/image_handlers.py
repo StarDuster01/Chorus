@@ -80,8 +80,13 @@ def generate_image_handler(user_data, image_folder):
         }
         
         # Set dedicated API key for image generation
+        import os
         original_api_key = openai.api_key
-        openai.api_key = "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"
+        image_gen_api_key = os.getenv("OPENAI_IMAGE_API_KEY")
+        if not image_gen_api_key:
+            print("WARNING: OPENAI_IMAGE_API_KEY not set, using default OPENAI_API_KEY")
+            image_gen_api_key = openai.api_key
+        openai.api_key = image_gen_api_key
         
         try:
             # Generate image with OpenAI

@@ -1,10 +1,13 @@
 # RagBot: Unified Container Deployment Guide
 
+> ⚠️ **SECURITY NOTICE:** Before deploying, read [SECURITY.md](SECURITY.md) for important security best practices!
+
 ## 1. Prerequisites
 
 - Docker installed
 - Node.js and npm installed
 - Azure account with Azure CLI installed (`az`)
+- **Required:** Set up environment variables (see [ENV_SETUP.md](ragbot-backend/ENV_SETUP.md))
 
 ## 2. Project Structure
 
@@ -275,6 +278,39 @@ az containerapp update --name chorusbotfull --resource-group viridity_tech --ima
 # 6. Get application URL
 az containerapp show --name chorusbotfull --resource-group viridity_tech --query "properties.configuration.ingress.fqdn" --output tsv
 ```
+
+---
+
+## 11. Security & Environment Setup
+
+### 🔒 **IMPORTANT: Environment Variables Required**
+
+Before running the application, you **must** set up environment variables:
+
+1. **Read the setup guide:** [ragbot-backend/ENV_SETUP.md](ragbot-backend/ENV_SETUP.md)
+2. **Create `.env` file** in `ragbot-backend/` with:
+   - `JWT_SECRET` (REQUIRED - app won't start without this!)
+   - `OPENAI_API_KEY`
+   - Other API keys as needed
+
+3. **Generate secure JWT secret:**
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+### 📋 Security Checklist Before Going Public
+
+- [ ] `.env` file created and NOT committed to git
+- [ ] `users.json` NOT committed to git
+- [ ] Strong JWT_SECRET generated and set
+- [ ] All API keys in environment variables
+- [ ] Read [SECURITY.md](SECURITY.md) for full security guide
+
+### 📚 Documentation
+
+- **[SECURITY.md](SECURITY.md)** - Complete security guide and best practices
+- **[ENV_SETUP.md](ragbot-backend/ENV_SETUP.md)** - Environment variables setup
+- **[QUICK_START_V2.md](QUICK_START_V2.md)** - Quick start guide for v2.0
 
 ---
 
