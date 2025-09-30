@@ -106,7 +106,17 @@ image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
 
 # Set up necessary directories
 app_base_dir = os.path.dirname(os.path.abspath(__file__))
-DATA_FOLDER = os.path.join(app_base_dir, "data")
+
+# Support external data directory via environment variable (e.g., for Azure VM mounts)
+# Default to local "data" folder if EXTERNAL_DATA_DIR is not set
+external_data_dir = os.getenv("EXTERNAL_DATA_DIR")
+if external_data_dir and os.path.exists(external_data_dir):
+    DATA_FOLDER = external_data_dir
+    print(f"Using external data directory: {DATA_FOLDER}")
+else:
+    DATA_FOLDER = os.path.join(app_base_dir, "data")
+    print(f"Using local data directory: {DATA_FOLDER}")
+    
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
 # Initialize Flask app
@@ -3522,4 +3532,6 @@ def bulk_upload(user_data, dataset_id):
     return bulk_upload_handler(user_data, dataset_id)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=50505, debug=True)
+    # Support configurable port via environment variable
+    port = int(os.getenv("PORT", "50506"))
+    app.run(host='0.0.0.0', port=port, debug=True)

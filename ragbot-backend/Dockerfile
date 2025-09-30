@@ -26,8 +26,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend codee
 COPY . .
 
-# Expose the port Flask runs on
-EXPOSE 50505
+# Expose the port Flask runs on (configurable via PORT env var, default 50506)
+EXPOSE 50506
 
 # Create Directory
 RUN mkdir -p /code/uploads/images /code/uploads/documents

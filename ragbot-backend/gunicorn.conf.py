@@ -6,7 +6,11 @@ max_requests_jitter = 50
 
 log_file = "-"
 
-bind = "0.0.0.0:50505"
+import os
+
+# Support configurable port via environment variable
+port = os.getenv("PORT", "50506")
+bind = f"0.0.0.0:{port}"
 
 # Reduced workers to prevent OOM with heavy ML models
 workers = 2
@@ -21,4 +25,4 @@ worker_class = "sync"
 worker_connections = 100
 max_worker_connections = 1000
 
-# NOTE: Port 50505 is used for production in Azure Container Apps. Make sure this matches the exposed port in your Azure configuration. 
+# NOTE: Port is configurable via PORT environment variable (default: 50506). Make sure this matches the exposed port in your Azure configuration. 

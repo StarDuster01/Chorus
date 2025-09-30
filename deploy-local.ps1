@@ -41,14 +41,14 @@ Write-Host "  Docker image built successfully" -ForegroundColor Green
 # Step 6: Run the New Unified Docker Container
 Write-Host ""
 Write-Host "Step 6: Starting new unified Docker container..." -ForegroundColor Green
-docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
+docker run -d -p 50506:50506 -e PORT=50506 --name ragbot-local-instance ragbot-local-unified
 Start-Sleep -Seconds 3
 Write-Host "  Container started successfully" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "=== DEPLOYMENT COMPLETED SUCCESSFULLY ===" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Application is now running at: http://localhost:50505" -ForegroundColor Yellow
+Write-Host "Application is now running at: http://localhost:50506" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Useful commands:" -ForegroundColor White
 Write-Host "  - Check container status: docker ps" -ForegroundColor Gray
@@ -57,4 +57,4 @@ Write-Host "  - Stop container:        docker stop ragbot-local-instance" -Foreg
 Write-Host "  - Remove container:      docker rm ragbot-local-instance" -ForegroundColor Gray
 
 # Open browser
-Start-Process "http://localhost:50505"
+Start-Process "http://localhost:50506"
