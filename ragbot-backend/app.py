@@ -967,24 +967,38 @@ Respond with ONLY the enhanced prompt text, nothing else."""
             # Generate the image using OpenAI's image generation API
             print(f"IMAGE GENERATION: Calling image generation API with prompt: '{enhanced_prompt}'", flush=True)
             
-            image_generation_response = openai.images.generate(
-                model="gpt-image-1",
-                prompt=enhanced_prompt,
-                n=1,
-                size="1024x1024",
-                quality="auto",
-                response_format="b64_json"  # Get base64 to save locally
-            )
+            # Build the API request params with only supported parameters
+            generation_params = {
+                "model": "gpt-image-1",
+                "prompt": enhanced_prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "quality": "auto",
+                "moderation": "auto"
+            }
+            
+            image_generation_response = openai.images.generate(**generation_params)
             
             # Extract the generated image
             if image_generation_response.data and len(image_generation_response.data) > 0:
                 image_obj = image_generation_response.data[0]
                 
-                # Get the base64 content
+                # Get the base64 content from OpenAI response (if available)
                 if hasattr(image_obj, 'b64_json') and image_obj.b64_json:
+                    # Decode base64 content
                     image_content = base64.b64decode(image_obj.b64_json)
+                elif hasattr(image_obj, 'url') and image_obj.url:
+                    # For backward compatibility if URL is provided
+                    image_url_from_api = image_obj.url
+                    
+                    # Download the image from the URL
+                    image_response = requests.get(image_url_from_api)
+                    if image_response.status_code != 200:
+                        return jsonify({"error": "Failed to download generated image"}), 500
+                    
+                    image_content = image_response.content
                 else:
-                    return jsonify({"error": "Failed to generate image"}), 500
+                    return jsonify({"error": "Failed to generate image - no image data found in response"}), 500
                 
                 # Save the generated image
                 filename = f"generated_{str(uuid.uuid4())}.png"
