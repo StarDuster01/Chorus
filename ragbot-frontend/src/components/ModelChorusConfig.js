@@ -12,8 +12,19 @@ import {
 } from 'react-icons/fa';
 import botService from '../services/botService';
 
+// Safe UUID generator for older environments without crypto.randomUUID
+const generateId = () => {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (_) {}
+  const rand = Math.random().toString(16).slice(2);
+  return `id_${Date.now()}_${rand}`;
+};
+
 const MODEL_OPTIONS = [
-  { provider: 'OpenAI', models: ['gpt-4.1-nano-2025-04-14'] },
+  { provider: 'OpenAI', models: ['gpt-5-2025-08-07', 'gpt-4.1-nano-2025-04-14'] },
   { provider: 'Anthropic', models: ['claude-3-7-sonnet-latest'] },
   { provider: 'Groq', models: ['llama3-70b-8192', 'llama3-8b-8192'] },
   { provider: 'Mistral', models: ['mistral-large', 'mistral-medium', 'mistral-small'] },
@@ -75,10 +86,11 @@ const ModelChorusConfig = () => {
           setIsActive(false);
           setUseDiverseRag(false);
           setResponseModels([
-            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.7, weight: 1 }
+            { id: generateId(), provider: 'OpenAI', model: 'gpt-5-2025-08-07', temperature: 0.6, weight: 1 },
+            { id: generateId(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.7, weight: 1 }
           ]);
           setEvaluatorModels([
-            { id: crypto.randomUUID(), provider: 'OpenAI', model: 'gpt-4.1-nano-2025-04-14', temperature: 0.2, weight: 1 }
+            { id: generateId(), provider: 'OpenAI', model: 'gpt-5-2025-08-07', temperature: 0.2, weight: 1 }
           ]);
         }
       } catch (err) {
@@ -93,7 +105,7 @@ const ModelChorusConfig = () => {
   
   const handleAddModel = () => {
     const newModel = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       provider: newModelProvider,
       model: newModelName,
       temperature: parseFloat(newModelTemperature),
