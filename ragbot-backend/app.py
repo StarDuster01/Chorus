@@ -884,6 +884,185 @@ def chat_with_bot(user_data, bot_id):
             
     if not bot:
         return jsonify({"error": "Bot not found"}), 404
+    
+    # ========== IMAGE GENERATION DETECTION ==========
+    # Check if the query starts with "Generate" (case-insensitive)
+    if message.lower().strip().startswith("generate"):
+        try:
+            print(f"IMAGE GENERATION: Detected generation request: '{message}'", flush=True)
+            
+            # Extract the prompt (remove "generate" prefix)
+            base_prompt = message[8:].strip()  # Remove "generate" and whitespace
+            
+            if not base_prompt:
+                return jsonify({
+                    "error": "Please provide a description after 'Generate'. For example: 'Generate a sunset over mountains'"
+                }), 400
+            
+            # Get dataset IDs from the bot to gather context
+            dataset_ids = bot.get("dataset_ids", [])
+            
+            # Gather relevant context from datasets to enhance the prompt
+            context_for_prompt = ""
+            if dataset_ids:
+                try:
+                    all_context_chunks = []
+                    for dataset_id in dataset_ids:
+                        try:
+                            collection = chroma_client.get_collection(name=dataset_id, embedding_function=openai_ef)
+                            collection_count = collection.count()
+                            
+                            if collection_count > 0:
+                                # Search for relevant context using the base prompt
+                                n_results = min(3, collection_count)  # Get up to 3 relevant chunks
+                                results = collection.query(
+                                    query_texts=[base_prompt],
+                                    n_results=n_results
+                                )
+                                
+                                if results and results["documents"] and results["documents"][0]:
+                                    all_context_chunks.extend(results["documents"][0])
+                        except Exception as dataset_error:
+                            print(f"IMAGE GENERATION: Error querying dataset {dataset_id}: {str(dataset_error)}", flush=True)
+                            continue
+                    
+                    # If we found context, create a summary
+                    if all_context_chunks:
+                        context_for_prompt = "\n".join(all_context_chunks[:3])  # Limit to 3 chunks
+                        print(f"IMAGE GENERATION: Found {len(all_context_chunks)} context chunks", flush=True)
+                except Exception as context_error:
+                    print(f"IMAGE GENERATION: Error gathering context: {str(context_error)}", flush=True)
+            
+            # Enhance the prompt with context if available
+            enhanced_prompt = base_prompt
+            if context_for_prompt:
+                try:
+                    # Use LLM to enhance the prompt with relevant context
+                    enhancement_system_message = """You are an expert at creating detailed image generation prompts.
+You will be given a user's image request and relevant context from their knowledge base.
+Your task is to create a detailed, vivid image generation prompt that:
+1. Incorporates the user's original intent
+2. Adds relevant details from the provided context
+3. Includes artistic style, lighting, mood, and composition details
+4. Is optimized for AI image generation
+
+Respond with ONLY the enhanced prompt text, nothing else."""
+
+                    enhancement_response = openai.chat.completions.create(
+                        model=DEFAULT_LLM_MODEL,
+                        messages=[
+                            {"role": "system", "content": enhancement_system_message},
+                            {"role": "user", "content": f"User's request: {base_prompt}\n\nRelevant context from knowledge base:\n{context_for_prompt}\n\nCreate an enhanced image generation prompt:"}
+                        ],
+                        temperature=0.7,
+                        max_tokens=300
+                    )
+                    
+                    enhanced_prompt = enhancement_response.choices[0].message.content.strip()
+                    print(f"IMAGE GENERATION: Enhanced prompt: '{enhanced_prompt}'", flush=True)
+                except Exception as enhancement_error:
+                    print(f"IMAGE GENERATION: Error enhancing prompt, using base prompt: {str(enhancement_error)}", flush=True)
+                    enhanced_prompt = base_prompt
+            
+            # Generate the image using OpenAI's image generation API
+            print(f"IMAGE GENERATION: Calling image generation API with prompt: '{enhanced_prompt}'", flush=True)
+            
+            image_generation_response = openai.images.generate(
+                model="gpt-image-1",
+                prompt=enhanced_prompt,
+                n=1,
+                size="1024x1024",
+                quality="auto",
+                response_format="b64_json"  # Get base64 to save locally
+            )
+            
+            # Extract the generated image
+            if image_generation_response.data and len(image_generation_response.data) > 0:
+                image_obj = image_generation_response.data[0]
+                
+                # Get the base64 content
+                if hasattr(image_obj, 'b64_json') and image_obj.b64_json:
+                    image_content = base64.b64decode(image_obj.b64_json)
+                else:
+                    return jsonify({"error": "Failed to generate image"}), 500
+                
+                # Save the generated image
+                filename = f"generated_{str(uuid.uuid4())}.png"
+                filepath = os.path.join(IMAGE_FOLDER, filename)
+                
+                with open(filepath, 'wb') as f:
+                    f.write(image_content)
+                
+                # Create the URL for accessing the image
+                image_url = f"/api/images/{filename}"
+                
+                # Prepare response text
+                response_text = f"I've generated an image based on your request.\n\n"
+                if context_for_prompt:
+                    response_text += f"I used relevant information from the knowledge base to enhance the prompt.\n\n"
+                response_text += f"**Original request:** {base_prompt}\n\n"
+                if enhanced_prompt != base_prompt:
+                    response_text += f"**Enhanced prompt:** {enhanced_prompt}\n\n"
+                response_text += f"![Generated Image]({image_url})"
+                
+                # Save the bot response to conversation
+                bot_response = {
+                    "id": str(uuid.uuid4()),
+                    "role": "assistant",
+                    "content": response_text,
+                    "timestamp": datetime.datetime.now(UTC).isoformat(),
+                    "image_generation": True,
+                    "generated_image_url": image_url
+                }
+                conversation["messages"].append(bot_response)
+                with open(conversation_file, 'w') as f:
+                    json.dump(conversation, f)
+                
+                # Return the response
+                return jsonify({
+                    "response": response_text,
+                    "conversation_id": conversation_id,
+                    "image_generated": True,
+                    "image_details": [{
+                        "index": "Generated Image",
+                        "caption": f"Generated: {base_prompt}",
+                        "url": image_url,
+                        "download_url": f"{image_url}?download=true",
+                        "id": str(uuid.uuid4()),
+                        "dataset_id": "",
+                        "prompt_used": enhanced_prompt,
+                        "original_prompt": base_prompt
+                    }],
+                    "debug": {
+                        "base_prompt": base_prompt,
+                        "enhanced_prompt": enhanced_prompt,
+                        "context_used": bool(context_for_prompt),
+                        "context_length": len(context_for_prompt) if context_for_prompt else 0
+                    } if debug_mode else None
+                }), 200
+            else:
+                return jsonify({"error": "No image was generated"}), 500
+                
+        except Exception as gen_error:
+            print(f"IMAGE GENERATION ERROR: {str(gen_error)}", flush=True)
+            
+            # Save error response to conversation
+            error_response = {
+                "id": str(uuid.uuid4()),
+                "role": "assistant",
+                "content": f"I apologize, but I encountered an error while generating the image: {str(gen_error)}",
+                "timestamp": datetime.datetime.now(UTC).isoformat(),
+                "image_generation_error": True
+            }
+            conversation["messages"].append(error_response)
+            with open(conversation_file, 'w') as f:
+                json.dump(conversation, f)
+            
+            return jsonify({
+                "error": f"Image generation failed: {str(gen_error)}",
+                "conversation_id": conversation_id
+            }), 500
+    # ========== END IMAGE GENERATION DETECTION ==========
         
     # Get dataset IDs from the bot
     dataset_ids = bot.get("dataset_ids", [])
