@@ -1,317 +1,213 @@
-# RagBot: Unified Container Deployment Guide
+# RagBot: VM Deployment Guide
 
 > ⚠️ **SECURITY NOTICE:** Before deploying, read [SECURITY.md](SECURITY.md) for important security best practices!
 
-## 1. Prerequisites
+## 📋 Overview
 
-- Docker installed
+This application uses Docker Compose to run both the backend (Flask) and frontend (React) services on an Azure VM. The deployment script handles everything automatically, including environment setup.
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose installed on the VM
 - Node.js and npm installed
-- Azure account with Azure CLI installed (`az`)
-- **Required:** Set up environment variables (see [ENV_SETUP.md](ragbot-backend/ENV_SETUP.md))
+- Python 3.x installed
+- This repository cloned to the VM
 
-## 2. Project Structure
+### Deploy the Application
 
-```
-ragbot-backend/      # Flask backend + serves React frontend
-ragbot-frontend/     # React frontend (builds into backend)
-deploy-local.ps1     # Local deployment script
-```
+Simply run the deployment script from the project root:
 
-## 3. Architecture
-
-**Unified Container Design:**
-- Single Docker container runs Flask backend
-- Flask serves the React frontend as static files
-- Frontend build is copied into backend before Docker build
-- One container = Complete application
-
-## 4. Local Development & Testing
-
-### Quick Local Deployment
-Run the automated script:
 ```powershell
-.\deploy-local.ps1
+.\deploy-vm.ps1
 ```
 
-This script automatically:
-1. Stops/removes existing container
-2. Builds React frontend (`npm install` + `npm run build`)
-3. Copies frontend build to backend
-4. Builds unified Docker image
-5. Runs container on `http://localhost:50505`
+**On first run**, the script will:
+1. Detect that `.env` is missing
+2. Prompt you for each required environment variable
+3. Auto-generate a secure JWT secret if you leave it blank
+4. Create the `.env` file automatically
+5. Build and deploy the application
 
-### Manual Local Deployment
-If you prefer manual steps:
+**On subsequent runs**, the script will:
+1. Use the existing `.env` file
+2. Rebuild the frontend
+3. Rebuild and restart the Docker containers
 
+## 🔧 Environment Variables
+
+The deployment script will prompt you for these variables if `.env` doesn't exist:
+
+### Required
+- **JWT_SECRET**: Leave blank to auto-generate a secure token
+- **OPENAI_API_KEY**: Your OpenAI API key (format: `sk-proj-...`)
+
+### Optional
+- **OPENAI_IMAGE_API_KEY**: Separate key for image generation (falls back to OPENAI_API_KEY)
+- **ANTHROPIC_API_KEY**: For Claude models in Model Chorus
+- **GROQ_API_KEY**: For Groq models in Model Chorus
+- **PORT**: Application port (default: 50506)
+- **EXTERNAL_DATA_DIR**: Path to external data (e.g., `../ChorusAllData2` or `/mnt/ChorusAllData2`)
+
+## 📦 What the Script Does
+
+1. **Environment Check**: Verifies `.env` exists, creates it if needed
+2. **Container Cleanup**: Stops and removes old containers
+3. **Frontend Build**: Installs dependencies and builds React app
+4. **File Copy**: Copies frontend build to backend directory
+5. **Docker Deployment**: Starts all services with Docker Compose
+
+## 🌐 Access the Application
+
+After deployment:
+- **Frontend**: http://localhost:80
+- **Backend API**: http://localhost:50506
+
+## 🛠️ Useful Commands
+
+### View Logs
 ```bash
-# 1. Build React frontend
-cd ragbot-frontend
-npm install
-npm run build
-cd ..
+# Backend logs
+docker logs -f ragbot-backend
 
-# 2. Copy frontend to backend
-Remove-Item -Recurse -Force "ragbot-backend\frontend" -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path "ragbot-backend\frontend" -Force
-Copy-Item -Path "ragbot-frontend\build\*" -Destination "ragbot-backend\frontend\" -Recurse -Force
+# Frontend logs
+docker logs -f ragbot-frontend
 
-# 3. Build and run unified container
-cd ragbot-backend
-docker build -t ragbot-local-unified .
-cd ..
-docker run -d -p 50505:50505 --name ragbot-local-instance ragbot-local-unified
+# All logs
+docker-compose logs -f
 ```
 
-## 5. Azure Deployment (Manual Steps)
-
-### Step 1: Azure Login and Setup
-```powershell
-# Login to Azure
-az login
-
-# Set your subscription (replace with your subscription name/ID)
-az account set --subscription "Azure subscription 1"
-
-# Verify login
-az account show
-```
-
-### Step 2: Build React Frontend
-```powershell
-# Navigate to frontend directory
-cd ragbot-frontend
-
-# Install dependencies and build
-npm install
-npm run build
-
-# Return to root directory
-cd ..
-```
-
-### Step 3: Copy Frontend to Backend
-```powershell
-# Remove existing frontend directory in backend
-if (Test-Path "ragbot-backend\frontend") { Remove-Item -Recurse -Force "ragbot-backend\frontend" }
-
-# Create new frontend directory
-New-Item -ItemType Directory -Path "ragbot-backend\frontend" -Force
-
-# Copy built frontend files
-Copy-Item -Path "ragbot-frontend\build\*" -Destination "ragbot-backend\frontend\" -Recurse -Force
-```
-
-### Step 4: Setup Azure Container Registry (ACR)
-```powershell
-# Enable admin user for ACR
-az acr update --name viriditytech --resource-group viridity_tech --admin-enabled true
-
-# Get ACR credentials (optional - for verification)
-az acr credential show --name viriditytech --resource-group viridity_tech
-
-# Login to ACR
-az acr login --name viriditytech
-```
-
-### Step 5: Build and Push Docker Image
-```powershell
-# Navigate to backend directory
-cd ragbot-backend
-
-# Build Docker image with ACR tag
-docker build -t viriditytech.azurecr.io/ragbot-unified:latest .
-
-# Push image to ACR
-docker push viriditytech.azurecr.io/ragbot-unified:latest
-
-# Return to root directory
-cd ..
-```
-
-### Step 6: Update Azure Container App
-```powershell
-# First, configure the registry authentication using managed identity
-az containerapp registry set --name chorusbotfull --resource-group viridity_tech --server viriditytech.azurecr.io --identity system
-
-# Then update the container app with the new image
-az containerapp update --name chorusbotfull --resource-group viridity_tech --image viriditytech.azurecr.io/ragbot-unified:latest
-```
-
-### Step 7: Monitor Deployment
-```powershell
-# Check deployment status
-az containerapp revision list --name chorusbotfull --resource-group viridity_tech --output table
-
-# Get application URL
-az containerapp show --name chorusbotfull --resource-group viridity_tech --query "properties.configuration.ingress.fqdn" --output tsv
-
-# View logs (optional)
-az containerapp logs show --name chorusbotfull --resource-group viridity_tech --follow
-```
-
-### Azure Resources Used
-- **Resource Group**: `viridity_tech`
-- **Container App**: `chorusbotfull`
-- **Container Registry**: `viriditytech.azurecr.io`
-- **Environment**: `viriditytech`
-
-## 6. Key Features
-
-### Tesseract Loading Animations
-- 3D tesseract animations using Three.js
-- Dark green color for visibility
-- Used in upload buttons, chat interface, and loading states
-
-### Single Container Benefits
-- ✅ Simplified deployment
-- ✅ No cross-origin issues
-- ✅ Single point of configuration
-- ✅ Easier scaling and management
-
-## 7. Troubleshooting
-
-### Container Issues
+### Manage Services
 ```bash
-# Check if container is running
-docker ps
+# Check status
+docker-compose ps
 
-# View container logs
-docker logs ragbot-local-instance
+# Restart services
+docker-compose restart
 
-# Stop and remove container
-docker stop ragbot-local-instance
-docker rm ragbot-local-instance
+# Stop services
+docker-compose down
+
+# Redeploy
+.\deploy-vm.ps1
 ```
 
-### Azure Issues
+## 🏗️ Architecture
+
+### Docker Compose Setup
+The application uses two containers:
+- **Backend Container**: Flask API (port 50506)
+  - Serves API endpoints
+  - Handles authentication, RAG, chat, image generation
+  - Mounts persistent volumes for data
+- **Frontend Container**: Nginx serving React build (port 80)
+  - Serves the React web interface
+  - Proxies API requests to backend
+
+### Persistent Data
+The following directories are mounted as volumes:
+- `uploads/` - Uploaded files
+- `data/` - Application data
+- `conversations/` - Chat history
+- `chroma_db/` - Vector database
+- `datasets/` - Dataset files
+- `bots/` - Bot configurations
+- `image_indices/` - Image search indices
+
+## 🔒 Security
+
+### Important Security Practices
+- ✅ `.env` file is automatically gitignored
+- ✅ Never commit API keys to version control
+- ✅ JWT secret is auto-generated securely
+- ✅ All sensitive data is in environment variables
+
+### If You Accidentally Expose Keys
+1. Immediately rotate all API keys
+2. Update the `.env` file with new keys
+3. Redeploy: `.\deploy-vm.ps1`
+
+## 🐛 Troubleshooting
+
+### Port Already in Use
 ```bash
-# Check Container App status
-az containerapp show --name chorusbotfull --resource-group viridity_tech
+# Stop all containers
+docker-compose down
 
-# View Container App logs
-az containerapp logs show --name chorusbotfull --resource-group viridity_tech --follow
+# Check what's using the port
+netstat -ano | findstr :80
+netstat -ano | findstr :50506
 
-# Check revisions
-az containerapp revision list --name chorusbotfull --resource-group viridity_tech --output table
-
-# Check ACR images
-az acr repository list --name viriditytech --output table
-az acr repository show-tags --name viriditytech --repository ragbot-unified --output table
+# Redeploy
+.\deploy-vm.ps1
 ```
 
-### Common Solutions
-
-**"Container name already in use":**
+### Frontend Changes Not Appearing
+The script automatically rebuilds the frontend on each run. Just run:
 ```bash
-docker stop ragbot-local-instance
-docker rm ragbot-local-instance
+.\deploy-vm.ps1
 ```
 
-**Azure authentication errors:**
+### Container Won't Start
 ```bash
-# Re-login to Azure
-az login
+# Check logs
+docker logs ragbot-backend
+docker logs ragbot-frontend
 
-# Re-login to ACR
-az acr login --name viriditytech
+# Check if .env exists
+ls ragbot-backend\.env
+
+# Rebuild from scratch
+docker-compose down
+docker-compose up -d --build
 ```
 
-**Frontend changes not appearing:**
-- Ensure you rebuild the frontend: `cd ragbot-frontend && npm run build`
-- Copy frontend to backend before Docker build
-- Build and push new Docker image with updated tag
+### Need to Update .env
+1. Edit the file: `notepad ragbot-backend\.env`
+2. Save your changes
+3. Restart containers: `docker-compose restart`
 
-**Docker push fails:**
-```bash
-# Check if logged into ACR
-az acr login --name viriditytech
+Or delete `.env` and run `.\deploy-vm.ps1` to be prompted again.
 
-# Verify image name matches ACR format
-docker images | grep viriditytech.azurecr.io
-```
+## 📚 Additional Documentation
 
-## 8. Development Workflow
+- **[SECURITY.md](SECURITY.md)** - Complete security guide
+- **[ENV_SETUP.md](ragbot-backend/ENV_SETUP.md)** - Detailed environment variable documentation
+- **[SECURITY_CLEANUP.md](SECURITY_CLEANUP.md)** - Security cleanup notes
 
-### For Local Testing:
-1. Make changes to React frontend or Flask backend
-2. Run `.\deploy-local.ps1`
-3. Test at `http://localhost:50505`
+## 🔄 Update Workflow
 
-### For Azure Deployment:
-1. Test locally first with `.\deploy-local.ps1`
-2. Follow manual Azure deployment steps (Steps 1-7 above)
-3. Application available at: `https://chorusbotfull.wonderfulocean-4a90a562.westus2.azurecontainerapps.io`
+To deploy a new version:
 
-## 9. Application URLs
+1. **Pull latest code** (if from git):
+   ```bash
+   git pull origin main
+   ```
 
-- **Local**: `http://localhost:50505`
-- **Azure**: `https://chorusbotfull.wonderfulocean-4a90a562.westus2.azurecontainerapps.io`
+2. **Run deployment script**:
+   ```bash
+   .\deploy-vm.ps1
+   ```
 
-## 10. Quick Reference Commands
+The script handles everything else automatically!
 
-### Complete Azure Deployment (Copy-Paste Ready)
-```powershell
-# 1. Login and setup
-az login
-az account set --subscription "Azure subscription 1"
+## 📊 System Requirements
 
-# 2. Build frontend
-cd ragbot-frontend; npm install; npm run build; cd ..
+- **RAM**: 6GB+ recommended (backend container limit: 6GB)
+- **CPU**: 4+ cores recommended
+- **Storage**: Depends on dataset size
+- **GPU**: Optional (NVIDIA GPU support configured in docker-compose)
 
-# 3. Copy frontend to backend
-if (Test-Path "ragbot-backend\frontend") { Remove-Item -Recurse -Force "ragbot-backend\frontend" }
-New-Item -ItemType Directory -Path "ragbot-backend\frontend" -Force
-Copy-Item -Path "ragbot-frontend\build\*" -Destination "ragbot-backend\frontend\" -Recurse -Force
+## ✨ Features
 
-# 4. Setup ACR and build/push image
-az acr update --name viriditytech --resource-group viridity_tech --admin-enabled true
-az acr login --name viriditytech
-cd ragbot-backend
-docker build -t viriditytech.azurecr.io/ragbot-unified:latest .
-docker push viriditytech.azurecr.io/ragbot-unified:latest
-cd ..
-
-# 5. Update container app
-az containerapp registry set --name chorusbotfull --resource-group viridity_tech --server viriditytech.azurecr.io --identity system
-az containerapp update --name chorusbotfull --resource-group viridity_tech --image viriditytech.azurecr.io/ragbot-unified:latest
-
-# 6. Get application URL
-az containerapp show --name chorusbotfull --resource-group viridity_tech --query "properties.configuration.ingress.fqdn" --output tsv
-```
+- **Unified Deployment**: Single script deploys everything
+- **Environment Auto-Setup**: Guided prompts for first-time setup
+- **Persistent Data**: Volumes preserve data across deployments
+- **Health Checks**: Automatic container health monitoring
+- **GPU Support**: NVIDIA GPU acceleration when available
+- **External Data**: Support for mounted external data directories
 
 ---
 
-## 11. Security & Environment Setup
-
-### 🔒 **IMPORTANT: Environment Variables Required**
-
-Before running the application, you **must** set up environment variables:
-
-1. **Read the setup guide:** [ragbot-backend/ENV_SETUP.md](ragbot-backend/ENV_SETUP.md)
-2. **Create `.env` file** in `ragbot-backend/` with:
-   - `JWT_SECRET` (REQUIRED - app won't start without this!)
-   - `OPENAI_API_KEY`
-   - Other API keys as needed
-
-3. **Generate secure JWT secret:**
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-### 📋 Security Checklist Before Going Public
-
-- [ ] `.env` file created and NOT committed to git
-- [ ] `users.json` NOT committed to git
-- [ ] Strong JWT_SECRET generated and set
-- [ ] All API keys in environment variables
-- [ ] Read [SECURITY.md](SECURITY.md) for full security guide
-
-### 📚 Documentation
-
-- **[SECURITY.md](SECURITY.md)** - Complete security guide and best practices
-- **[ENV_SETUP.md](ragbot-backend/ENV_SETUP.md)** - Environment variables setup
-- **[QUICK_START_V2.md](QUICK_START_V2.md)** - Quick start guide for v2.0
-
----
-
-**Note**: This application uses a unified container architecture where the Flask backend serves the React frontend. The manual deployment process ensures you have full control over each step and can troubleshoot issues as they arise. 
+**Ready to deploy?** Just run `.\deploy-vm.ps1` and follow the prompts!
