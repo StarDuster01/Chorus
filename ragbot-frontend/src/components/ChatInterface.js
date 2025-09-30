@@ -485,74 +485,23 @@ const ChatInterface = () => {
       }
       
       // Create bot response message with source documents if available
-      const botResponseContent = response.source_documents ? (
-        <div>
-          <div className="mb-3">{response.response}</div>
-          {response.source_documents.length > 0 && (
-            <div className="source-documents mt-2 p-2 border-top">
-              <div className="text-muted mb-2">Source Documents:</div>
-              {response.source_documents.map((doc, index) => (
-                <div key={index} className="source-document">
-                  <Button
-                    variant="link"
-                    className="p-0 text-decoration-none"
-                    onClick={() => handleDownloadDocument(doc)}
-                  >
-                    <FaFileAlt className="me-1" />
-                    {doc.filename}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          {/* Add support for displaying referenced images */}
-          {response.image_details && response.image_details.length > 0 && (
-            <div className="source-images mt-3 p-2 border-top">
-              <div className="text-muted mb-2">Referenced Images:</div>
-              <div className="d-flex flex-wrap gap-3">
-                {response.image_details.map((img, index) => (
-                  <div key={index} className="source-image">
-                    <div className="mb-1 text-center small fw-bold">
-                      {img.index}
-                    </div>
-                    <a 
-                      href={img.download_url || img.url} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      title={img.caption || "View full image"}
-                    >
-                      <img 
-                        src={img.url} 
-                        alt={img.caption || "Referenced image"} 
-                        style={{ 
-                          maxWidth: '100%', 
-                          maxHeight: '200px', 
-                          borderRadius: '8px', 
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
-                        }}
-                      />
-                    </a>
-                    {img.caption && (
-                      <div className="mt-1 small text-muted">
-                        {img.caption}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : response.response;
+      // Always use the response string for content (will be rendered as markdown)
+      const botResponseContent = response.response || 'No response received';
+      
+      // Prepare additional metadata for rendering
+      const botMetadata = {
+        source_documents: response.source_documents || [],
+        image_details: response.image_details || [],
+        image_generated: response.image_generated || false,
+        image_edit_mode: response.image_edit_mode || false
+      };
 
       const botMessage = {
         id: uuid(),
         role: 'assistant',
         content: botResponseContent,
         timestamp: new Date().toISOString(),
-        source_documents: response.source_documents,
-        image_details: response.image_details // Store image details in the message
+        ...botMetadata // Spread all metadata properties
       };
 
       setMessages(prev => [...prev, botMessage]);
@@ -1047,6 +996,29 @@ const ChatInterface = () => {
                                       {children}
                                     </pre>
                                   ),
+                                  img: ({node, ...props}) => (
+                                    <img 
+                                      {...props} 
+                                      style={{ 
+                                        maxWidth: '100%', 
+                                        height: 'auto', 
+                                        borderRadius: '8px',
+                                        marginTop: '1rem',
+                                        marginBottom: '1rem',
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                                      }} 
+                                      alt={props.alt || 'Generated or referenced image'}
+                                      onError={(e) => {
+                                        console.error('Image load error:', props.src);
+                                        e.target.style.display = 'block';
+                                        e.target.style.border = '2px dashed #dee2e6';
+                                        e.target.style.padding = '20px';
+                                        e.target.style.textAlign = 'center';
+                                        e.target.style.color = '#6c757d';
+                                      }}
+                                      loading="lazy"
+                                    />
+                                  ),
                                   blockquote: ({node, children, ...props}) => (
                                     <blockquote style={markdownStyles.blockquote} {...props}>
                                       {children}
@@ -1069,7 +1041,7 @@ const ChatInterface = () => {
                                   )
                                 }}
                               >
-                                {msg.content}
+                                {typeof msg.content === 'string' ? msg.content : ''}
                               </ReactMarkdown>
                               
                               {/* Display images from bot response if any */}
@@ -1077,7 +1049,7 @@ const ChatInterface = () => {
                                 <div className="source-images mt-3 p-2 border-top">
                                   <div className="d-flex flex-wrap gap-3">
                                     {msg.image_details.map((img, index) => (
-                                      <div key={index} className="source-image">
+                                      <div key={index} className="source-image" style={{ maxWidth: '250px' }}>
                                         <div className="mb-1 text-center small fw-bold">
                                           {img.index}
                                         </div>
@@ -1099,8 +1071,46 @@ const ChatInterface = () => {
                                           />
                                         </a>
                                         {img.caption && (
-                                          <div className="mt-1 small text-muted">
+                                          <div className="mt-1 small text-muted" style={{ fontSize: '0.75rem' }}>
                                             {img.caption}
+                                          </div>
+                                        )}
+                                        {img.id && (
+                                          <div className="mt-2 p-2 bg-light rounded" style={{ fontSize: '0.65rem' }}>
+                                            <div className="d-flex align-items-center justify-content-between">
+                                              <span className="text-muted me-1">ID:</span>
+                                              <Button
+                                                variant="outline-secondary"
+                                                size="sm"
+                                                style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                                                onClick={() => {
+                                                  navigator.clipboard.writeText(img.id);
+                                                  // Optional: show a toast or alert
+                                                  alert('Image ID copied! Use: Generate from ' + img.id + ': <your changes>');
+                                                }}
+                                                title="Copy image ID"
+                                              >
+                                                Copy ID
+                                              </Button>
+                                            </div>
+                                            <code 
+                                              className="d-block mt-1 text-break" 
+                                              style={{ 
+                                                fontSize: '0.6rem',
+                                                backgroundColor: '#fff',
+                                                padding: '4px',
+                                                borderRadius: '4px',
+                                                wordBreak: 'break-all',
+                                                cursor: 'pointer'
+                                              }}
+                                              onClick={() => {
+                                                navigator.clipboard.writeText(img.id);
+                                                alert('Image ID copied!');
+                                              }}
+                                              title="Click to copy"
+                                            >
+                                              {img.id}
+                                            </code>
                                           </div>
                                         )}
                                       </div>
@@ -1398,20 +1408,30 @@ const ChatInterface = () => {
                   </div>
                 </Form>
 
-                {/* Image Retrieval Instruction Card */}
+                {/* Image Generation & Retrieval Tips */}
                 {!imageAttachment && (
                   <div className="mt-3 p-2 bg-light rounded border" style={{ fontSize: '0.85rem' }}>
-                    <div className="d-flex align-items-center mb-1">
-                      <FaLightbulb className="text-warning me-1" />
-                      <strong>Image Search Tips:</strong>
+                    <div className="d-flex align-items-center mb-2">
+                      <FaMagic className="text-primary me-1" />
+                      <strong>Image Commands:</strong>
                     </div>
-                    <p className="mb-1">To retrieve images, include these phrases in your message:</p>
-                    <ul className="ps-3 mb-0">
-                      <li><em>"show me image"</em></li>
-                      <li><em>"find a picture of"</em></li>
-                      <li><em>"display the visual"</em></li>
-                      <li><em>"include the diagram"</em></li>
-                    </ul>
+                    
+                    {/* Image Generation */}
+                    <div className="mb-2">
+                      <div className="text-primary fw-bold" style={{ fontSize: '0.8rem' }}>Generate Images:</div>
+                      <ul className="ps-3 mb-1" style={{ fontSize: '0.75rem' }}>
+                        <li><code>Generate &lt;description&gt;</code></li>
+                        <li><code>Generate from &lt;image-id&gt;: &lt;changes&gt;</code> (edit existing)</li>
+                      </ul>
+                    </div>
+                    
+                    {/* Image Retrieval */}
+                    <div>
+                      <div className="text-info fw-bold" style={{ fontSize: '0.8rem' }}>Retrieve Images:</div>
+                      <ul className="ps-3 mb-0" style={{ fontSize: '0.75rem' }}>
+                        <li><em>"show me image"</em> or <em>"find a picture of"</em></li>
+                      </ul>
+                    </div>
                   </div>
                 )}
               </Card.Footer>
