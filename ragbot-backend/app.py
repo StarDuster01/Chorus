@@ -1403,11 +1403,30 @@ def chat_with_bot(user_data, bot_id):
             anonymized_responses = []
             response_metadata = []
             
+            # Helper to normalize temperature per model/provider
+            def _adjust_temperature(provider_name: str, model_name: str, temp_value, log_list):
+                try:
+                    t = float(temp_value)
+                except Exception:
+                    t = 1.0
+                # Clamp to [0,1]
+                if t < 0.0:
+                    t = 0.0
+                if t > 1.0:
+                    t = 1.0
+                # Certain models (e.g., OpenAI gpt-5 family) only support default=1
+                if provider_name == 'OpenAI' and (model_name.startswith('gpt-5') or model_name == 'gpt-5-2025-08-07'):
+                    if t != 1.0:
+                        if log_list is not None:
+                            log_list.append(f"{provider_name} {model_name} requires default temperature=1; overriding {t} -> 1.0")
+                    return 1.0
+                return t
+
             # Process response models
             for model in response_models:
                 provider = model.get('provider')
                 model_name = model.get('model')
-                temperature = float(model.get('temperature', 0.7))
+                temperature = _adjust_temperature(provider, model_name, model.get('temperature', 0.7), logs)
                 weight = int(model.get('weight', 1))
                 
                 # If diverse RAG is enabled, generate a unique context for this model
@@ -1600,6 +1619,48 @@ def chat_with_bot(user_data, bot_id):
                     except Exception as e:
                         logs.append(f"Error with {provider} {model_name}: {str(e)}")
             
+            # Process evaluator models
+            votes = []
+            try:
+                for model in evaluator_models:
+                    provider = model.get('provider')
+                    model_name = model.get('model')
+                    eval_temp = _adjust_temperature(provider, model_name, model.get('temperature', 0.2), logs)
+                    # Simple voting: ask each evaluator to pick best response index
+                    try:
+                        if provider == 'OpenAI':
+                            prompt = f"Given these candidate answers, choose the best one by index (starting at 1) and explain briefly. Candidates:\n" + "\n".join([f"[{i+1}] {r['response']}" for i, r in enumerate(all_responses)])
+                            evaluation = openai.chat.completions.create(
+                                model=model_name,
+                                messages=[{"role":"system","content":"You are an evaluation assistant."},{"role":"user","content":prompt}],
+                                temperature=eval_temp
+                            )
+                            text = evaluation.choices[0].message.content
+                        elif provider == 'Anthropic':
+                            prompt = f"Given these candidate answers, choose the best one by index (starting at 1) and explain briefly. Candidates:\n" + "\n".join([f"[{i+1}] {r['response']}" for i, r in enumerate(all_responses)])
+                            evaluation = anthropic_client.messages.create(
+                                model=model_name,
+                                system="You are an evaluation assistant.",
+                                messages=[{"role":"user","content":prompt}],
+                                temperature=eval_temp,
+                                max_tokens=512
+                            )
+                            text = evaluation.content[0].text
+                        else:
+                            # Fallback simple heuristic
+                            text = "1"
+                        # Extract chosen index
+                        import re
+                        match = re.search(r"\[(\d+)\]|\b(\d+)\b", text)
+                        if match:
+                            idx = int(match.group(1) or match.group(2)) - 1
+                            if 0 <= idx < len(all_responses):
+                                votes.append(idx)
+                    except Exception as e:
+                        logs.append(f"Error with evaluator {provider} {model_name}: {str(e)}")
+            except Exception as e:
+                logs.append(f"Evaluator processing error: {str(e)}")
+
             # If no responses, use fallback
             if not all_responses:
                 # Save the response in the conversation
